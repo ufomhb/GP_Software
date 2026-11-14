@@ -42,7 +42,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 
 // 局域网访问用：列出本机所有非内网回环的 IPv4，手机连同一个 Wi-Fi 就能打开。
 function lanAddresses() {
@@ -7411,9 +7411,8 @@ async function handlePushApi(req, res, url) {
     };
   }
   if (p === '/api/push/config' && req.method === 'POST') {
-    // 推送配置是全局的（消息发到同一个微信），只有主账号能改，避免其它账号覆盖。
-    const user = currentUser(req);
-    if (!user || !user.primary) throw Object.assign(new Error('只有主账号可以修改微信推送配置'), { status: 403 });
+    // 推送配置是全局的（消息发到同一个微信），只有管理员能改，避免其它账号覆盖。
+    requireAdmin(req);
     const body = req.body || {};
     const patch = {};
     for (const key of ['enabled', 'channel', 'token', 'webhook', 'weekdaysOnly', 'funds', 'holdings']) {
@@ -7464,8 +7463,7 @@ async function handlePushApi(req, res, url) {
   }
   if (p === '/api/push/test' && req.method === 'POST') {
     // 允许把当前表单值一起带上来，避免「改了密钥但没点保存就直接测试」。
-    const user = currentUser(req);
-    if (!user || !user.primary) throw Object.assign(new Error('只有主账号可以测试推送'), { status: 403 });
+    requireAdmin(req);
     const body = req.body || {};
     const patch = {};
     for (const key of ['channel', 'token', 'webhook', 'enabled']) {
@@ -7504,8 +7502,7 @@ async function handlePushApi(req, res, url) {
     return { ok: true, sent, slot, title: report.title, pushid: sent.pushid || null, hint: pushChannelHint(loadPushConfig()) };
   }
   if (p === '/api/push/run' && req.method === 'POST') {
-    const user = currentUser(req);
-    if (!user || !user.primary) throw Object.assign(new Error('只有主账号可以触发推送'), { status: 403 });
+    requireAdmin(req);
     await runPushTick();
     return { ok: true, lastResult: loadPushConfig().lastResult, slots: loadPushConfig().slots };
   }
@@ -7555,6 +7552,15 @@ function writeJsonSafe(file, data) {
 function loadUsers() {
   const store = readJsonSafe(USERS_FILE, { users: [] });
   if (!store || !Array.isArray(store.users)) return { users: [] };
+  // 兼容旧数据：没有 role 字段时，主账号视为管理员、其余为普通用户，并落盘一次。
+  let migrated = false;
+  for (const user of store.users) {
+    if (user.role !== 'admin' && user.role !== 'user') {
+      user.role = user.primary ? 'admin' : 'user';
+      migrated = true;
+    }
+  }
+  if (migrated) saveUsers(store);
   return store;
 }
 
@@ -7616,7 +7622,21 @@ function currentUser(req) {
 }
 
 function publicUser(user) {
-  return { id: user.id, username: user.username, primary: !!user.primary, createdAt: user.createdAt };
+  return {
+    id: user.id,
+    username: user.username,
+    primary: !!user.primary,
+    role: user.role === 'admin' ? 'admin' : 'user',
+    createdAt: user.createdAt,
+  };
+}
+
+// 需要管理员权限的接口统一用这个校验
+function requireAdmin(req) {
+  const user = currentUser(req);
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  if (user.role !== 'admin') throw Object.assign(new Error('需要管理员权限'), { status: 403 });
+  return user;
 }
 
 function issueSession(req, res, user) {
@@ -7745,6 +7765,7 @@ function handleAuth(req, res, url) {
       salt,
       hash: hashPassword(password, salt),
       primary: store.users.length === 0,
+      role: store.users.length === 0 ? 'admin' : 'user',
       createdAt: new Date().toISOString(),
     };
     store.users.push(user);
@@ -7785,10 +7806,103 @@ function handleAuth(req, res, url) {
   throw Object.assign(new Error('未知接口'), { status: 404 });
 }
 
+/* ---------------------------------------------------------
+   管理员接口：用户与权限、系统（NAS）状态、版本履历
+   --------------------------------------------------------- */
+function shellOut(cmd, timeout = 6000) {
+  return new Promise((resolve) => {
+    try {
+      exec(cmd, { timeout, windowsHide: true, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+        resolve(String(stdout || '').trim());
+      });
+    } catch {
+      resolve('');
+    }
+  });
+}
+
+async function getSystemStatus() {
+  const status = {
+    platform: process.platform,
+    version: VERSION,
+    uptime: Math.round(process.uptime()),
+    repo: 'https://github.com/ufomhb/GP_Software',
+    services: {},
+    timers: {},
+    disk: '',
+    backups: [],
+    deployedAt: null,
+  };
+  if (process.platform !== 'linux') return status;
+  for (const name of ['gp-terminal', 'gp-tunnel', 'gp-root-shell', 'dockerctl']) {
+    status.services[name] = (await shellOut(`systemctl is-active ${name}`)) || 'unknown';
+  }
+  for (const name of ['gp-plugin-keep.timer', 'gp-data-backup.timer']) {
+    status.timers[name] = (await shellOut(`systemctl is-active ${name}`)) || 'unknown';
+  }
+  status.disk = await shellOut('df -h /data 2>/dev/null | tail -1');
+  status.backups = (await shellOut('ls -1t /data/backup/gp-data/data-*.tar.gz 2>/dev/null | head -7'))
+    .split('\n')
+    .filter(Boolean)
+    .map((item) => item.split('/').pop());
+  try {
+    status.deployedAt = fs.statSync(path.join(__dirname, 'server.js')).mtime.toISOString();
+  } catch {
+    status.deployedAt = null;
+  }
+  return status;
+}
+
+async function handleAdmin(req, res, url) {
+  requireAdmin(req);
+  const p = url.pathname;
+  if (p === '/api/admin/users' && req.method === 'GET') {
+    return {
+      ok: true,
+      users: loadUsers().users.map((u) => ({
+        id: u.id,
+        username: u.username,
+        role: u.role === 'admin' ? 'admin' : 'user',
+        primary: !!u.primary,
+        createdAt: u.createdAt,
+      })),
+    };
+  }
+  if (p === '/api/admin/users/role' && req.method === 'POST') {
+    const body = req.body || {};
+    const id = String(body.id || '');
+    const role = body.role === 'admin' ? 'admin' : 'user';
+    const store = loadUsers();
+    const target = store.users.find((u) => u.id === id);
+    if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
+    if (target.primary && role !== 'admin') {
+      throw Object.assign(new Error('主账号必须保留管理员权限'), { status: 400 });
+    }
+    const admins = store.users.filter((u) => u.role === 'admin').length;
+    if (target.role === 'admin' && role === 'user' && admins <= 1) {
+      throw Object.assign(new Error('至少要保留一个管理员'), { status: 400 });
+    }
+    target.role = role;
+    saveUsers(store);
+    return { ok: true, user: { id: target.id, username: target.username, role } };
+  }
+  if (p === '/api/admin/system' && req.method === 'GET') {
+    return { ok: true, ...(await getSystemStatus()) };
+  }
+  throw Object.assign(new Error('未知接口'), { status: 404 });
+}
+
+function getChangelog() {
+  const list = readJsonSafe(path.join(__dirname, 'data', 'changelog.json'), []);
+  return { ok: true, versions: Array.isArray(list) ? list : [] };
+}
+
 async function handleApi(req, res, url) {
   const p = url.pathname;
   const q = url.searchParams;
   if (p.startsWith('/api/auth/')) return handleAuth(req, res, url);
+  if (p.startsWith('/api/admin/')) return handleAdmin(req, res, url);
+  if (p === '/api/changelog') return getChangelog();
   if (p === '/api/health') {
     return { ok: true, version: VERSION, uptime: process.uptime(), port: PORT, time: new Date().toISOString() };
   }

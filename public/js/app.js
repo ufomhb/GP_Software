@@ -26,7 +26,7 @@ import {
    ========================================================= */
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 const WATCH_KEY = 'gp.watchlist.v1';
 const ALERTS_KEY = 'gp.alerts.v1';
@@ -205,6 +205,7 @@ function todayText() {
    状态   ========================================================= */
 const state = {
   view: 'dashboard',
+  auth: null,
   overview: null,
   news: null,
   advice: null,
@@ -6957,6 +6958,151 @@ function debounce(fn, wait) {
    启动
    ========================================================= */
 // 账号状态：填充当前用户、绑定退出登录；未登录时服务端会把页面 302 到登录页。
+/* ---------------------------------------------------------
+   管理员面板 & 更新履历
+   --------------------------------------------------------- */
+function adminEsc(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function fmtDuration(sec) {
+  const n = Number(sec) || 0;
+  const d = Math.floor(n / 86400);
+  const h = Math.floor((n % 86400) / 3600);
+  const m = Math.floor((n % 3600) / 60);
+  if (d) return `${d} 天 ${h} 小时`;
+  if (h) return `${h} 小时 ${m} 分`;
+  return `${m} 分`;
+}
+
+async function openChangelog() {
+  let versions = [];
+  try {
+    const data = await api('/api/changelog', 8000);
+    versions = data.versions || [];
+  } catch (err) {
+    toast(`读取更新履历失败：${err.message}`, 'err');
+    return;
+  }
+  const items = versions
+    .map(
+      (v) => `
+    <div class="changelog-item">
+      <div class="changelog-head">
+        <span class="changelog-ver">v${adminEsc(v.version)}</span>
+        <span class="changelog-date">${adminEsc(v.date || '')}</span>
+        <b class="changelog-title">${adminEsc(v.title || '')}</b>
+      </div>
+      <ul>${(v.items || []).map((i) => `<li>${adminEsc(i)}</li>`).join('')}</ul>
+    </div>`,
+    )
+    .join('');
+  mountOverlay(`
+    <div class="drawer changelog-drawer">
+      <div class="drawer-head"><div><div class="eyebrow">CHANGELOG</div><h2>更新履历</h2></div><button class="modal-close" data-close>×</button></div>
+      <div class="changelog-list">${items || '<div class="empty">暂无记录</div>'}</div>
+    </div>`);
+}
+
+async function openAdmin() {
+  let users = [];
+  let sys = null;
+  try {
+    const [u, s] = await Promise.all([api('/api/admin/users', 10000), api('/api/admin/system', 20000)]);
+    users = u.users || [];
+    sys = s;
+  } catch (err) {
+    toast(`读取系统状态失败：${err.message}`, 'err');
+    return;
+  }
+
+  const sysRows = Object.entries(sys.services || {})
+    .map(([k, v]) => `<div class="admin-kv"><span>${adminEsc(k)}</span><b class="${v === 'active' ? 'ok' : 'bad'}">${adminEsc(v)}</b></div>`)
+    .join('');
+  const timerRows = Object.entries(sys.timers || {})
+    .map(([k, v]) => `<div class="admin-kv"><span>${adminEsc(k)}</span><b class="${v === 'active' ? 'ok' : 'bad'}">${adminEsc(v)}</b></div>`)
+    .join('');
+  const backupRows =
+    (sys.backups || [])
+      .slice(0, 5)
+      .map((b) => `<div class="admin-commit"><code>${adminEsc(b)}</code></div>`)
+      .join('') || '<div class="empty">暂无备份</div>';
+  const userRows = users
+    .map(
+      (u) => `
+    <div class="admin-user">
+      <div><b>${adminEsc(u.username)}</b>${u.primary ? ' <span class="badge">主账号</span>' : ''}</div>
+      <div class="admin-user-role">
+        <select data-role-user="${adminEsc(u.id)}" ${u.primary ? 'disabled' : ''}>
+          <option value="user" ${u.role === 'user' ? 'selected' : ''}>普通用户</option>
+          <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>管理员</option>
+        </select>
+      </div>
+    </div>`,
+    )
+    .join('');
+
+  mountOverlay(`
+    <div class="drawer admin-drawer">
+      <div class="drawer-head"><div><div class="eyebrow">SYSTEM ADMIN</div><h2>系统管理</h2></div><button class="modal-close" data-close>×</button></div>
+
+      <div class="setting-group">
+        <h3>账号与权限</h3>
+        <p class="setting-note">管理员可以修改设置、管理用户；普通用户只能操作行情、自选与持仓。主账号必须保留管理员。</p>
+        <div class="admin-users">${userRows}</div>
+      </div>
+
+      <div class="setting-group">
+        <h3>NAS 部署状态</h3>
+        <div class="admin-kv"><span>服务版本</span><b>v${adminEsc(sys.version)}</b></div>
+        <div class="admin-kv"><span>运行时长</span><b>${adminEsc(fmtDuration(sys.uptime))}</b></div>
+        <div class="admin-kv"><span>最近部署</span><b>${adminEsc(sys.deployedAt || '-')}</b></div>
+        <div class="admin-kv"><span>磁盘</span><b>${adminEsc(sys.disk || '-')}</b></div>
+        <div class="admin-sub">服务</div>${sysRows || '<div class="empty">本机非 Linux 部署</div>'}
+        <div class="admin-sub">定时任务</div>${timerRows}
+        <div class="admin-sub">最近备份</div>${backupRows}
+      </div>
+
+      <div class="setting-group">
+        <h3>GitHub 提交</h3>
+        <div class="admin-kv"><span>仓库</span><b><a href="${adminEsc(sys.repo)}" target="_blank" rel="noreferrer">${adminEsc(sys.repo)}</a></b></div>
+        <div id="adminCommits"><div class="empty">正在读取…</div></div>
+      </div>
+    </div>`);
+
+  document.querySelectorAll('[data-role-user]').forEach((sel) => {
+    sel.addEventListener('change', async (ev) => {
+      const id = ev.target.getAttribute('data-role-user');
+      const role = ev.target.value;
+      try {
+        await apiPost('/api/admin/users/role', { id, role });
+        toast('权限已更新', 'ok');
+      } catch (err) {
+        toast(`修改失败：${err.message}`, 'err');
+        ev.target.value = role === 'admin' ? 'user' : 'admin';
+      }
+    });
+  });
+
+  const box = document.getElementById('adminCommits');
+  try {
+    const res = await fetch('https://api.github.com/repos/ufomhb/GP_Software/commits?per_page=5', { cache: 'no-store' });
+    if (res.ok && box) {
+      const list = await res.json();
+      box.innerHTML = list
+        .map(
+          (c) =>
+            `<div class="admin-commit"><code>${adminEsc(c.sha.slice(0, 7))}</code> ${adminEsc((c.commit.message || '').split('\n')[0])} <span class="muted">${adminEsc((c.commit.author && c.commit.author.date) || '')}</span></div>`,
+        )
+        .join('');
+    } else if (box) {
+      box.innerHTML = '<div class="empty">GitHub API 不可达（网络限制），点上方链接直接查看</div>';
+    }
+  } catch {
+    if (box) box.innerHTML = '<div class="empty">GitHub API 不可达（网络限制），点上方链接直接查看</div>';
+  }
+}
+
 async function loadAuthState() {
   try {
     const data = await api('/api/auth/me', 8000);
@@ -6965,13 +7111,17 @@ async function loadAuthState() {
       redirectToLogin();
       return null;
     }
+    state.auth = user;
+    const isAdmin = user.role === 'admin';
     const nameEl = $('#accountName');
     const chip = $('#accountChip');
     const out = $('#logoutBtn');
     if (nameEl) nameEl.textContent = user.username;
     if (chip) {
       chip.hidden = false;
-      chip.title = user.primary ? '主账号：持仓与微信推送共用同一份数据' : '普通账号：持仓独立保存';
+      chip.title = isAdmin
+        ? '管理员：可以修改设置、管理用户、查看系统状态'
+        : '普通用户：可以操作行情、自选与持仓，设置仅管理员可用';
     }
     if (out) {
       out.hidden = false;
@@ -6980,6 +7130,20 @@ async function loadAuthState() {
         try { await fetch('/api/auth/logout', { method: 'POST' }); } catch { /* 忽略 */ }
         location.replace('/login.html');
       });
+    }
+    // 设置（推送 / 数据源 / 用户管理）仅管理员可见
+    const settingsBtn = $('#settingsBtn');
+    if (settingsBtn) settingsBtn.hidden = !isAdmin;
+    const adminBtn = $('#adminBtn');
+    if (adminBtn) {
+      adminBtn.hidden = !isAdmin;
+      if (isAdmin) adminBtn.addEventListener('click', openAdmin);
+    }
+    // 更新履历所有登录用户都能看
+    const changelogBtn = $('#changelogBtn');
+    if (changelogBtn) {
+      changelogBtn.hidden = false;
+      changelogBtn.addEventListener('click', openChangelog);
     }
     return user;
   } catch (err) {

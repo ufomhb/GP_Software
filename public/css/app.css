@@ -2573,3 +2573,72 @@ strong { font-weight: 650; }
 @media (max-width: 720px) {
   .account-chip { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
 }
+
+/* =========================================================
+   权限 / 系统管理 / 更新履历
+   ========================================================= */
+button[hidden] { display: none !important; }
+
+.admin-users { display: flex; flex-direction: column; gap: 8px; }
+.admin-user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.04);
+}
+.admin-user-role select {
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(7, 11, 18, 0.72);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+}
+.admin-user-role select[disabled] { opacity: 0.55; }
+.admin-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  font-size: 12.5px;
+  border-bottom: 1px dashed var(--line);
+}
+.admin-kv span { color: var(--muted); }
+.admin-kv b { font-weight: 600; word-break: break-all; text-align: right; }
+.admin-kv b.ok { color: var(--down); }
+.admin-kv b.bad { color: var(--up); }
+.admin-sub {
+  margin: 12px 0 4px;
+  font-size: 10.5px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.admin-commit {
+  font-size: 12px;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--line);
+  color: var(--text-2);
+}
+.admin-commit code { color: var(--gold); font-family: var(--num); }
+.muted { color: var(--muted); }
+
+.changelog-list { display: flex; flex-direction: column; gap: 16px; }
+.changelog-item { border-left: 2px solid var(--accent); padding-left: 12px; }
+.changelog-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.changelog-ver { color: var(--accent); font-weight: 700; font-family: var(--num); }
+.changelog-date { color: var(--muted); font-size: 12px; }
+.changelog-title { color: var(--text); font-size: 13px; }
+.changelog-item ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-2);
+}
+
