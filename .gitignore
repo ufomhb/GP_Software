@@ -15,6 +15,10 @@ gp-terminal.tar.gz
 cleanup-*.sh
 recover-index-*.html
 
+# ===== 运行时自动生成的行情快照（每天变化，不入库）=====
+data/auction-*.json
+data/us-sessions.json
+
 # ===== 环境与备份 =====
 .dsh/
 .dsh-project-memory/
