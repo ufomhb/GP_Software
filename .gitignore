@@ -1,0 +1,27 @@
+# ===== 敏感数据（绝不提交）=====
+# 账号密码哈希 / 会话 token / 微信推送密钥 / 隧道凭证
+data/users.json
+data/sessions.json
+data/push-config.json
+data/userdata/
+.cf-home/
+
+# ===== 本地运维脚本与二进制 =====
+tools/
+server.out.log
+server.err.log
+*.log
+gp-terminal.tar.gz
+cleanup-*.sh
+recover-index-*.html
+
+# ===== 环境与备份 =====
+.dsh/
+.dsh-project-memory/
+.backup-*/
+node_modules/
+
+# ===== 系统 =====
+Thumbs.db
+desktop.ini
+.DS_Store
