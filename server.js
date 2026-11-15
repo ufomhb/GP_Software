@@ -42,7 +42,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 
 // 局域网访问用：列出本机所有非内网回环的 IPv4，手机连同一个 Wi-Fi 就能打开。
 function lanAddresses() {
@@ -7401,6 +7401,8 @@ async function handlePushApi(req, res, url) {
   const p = url.pathname;
   const q = url.searchParams;
   if (p === '/api/push/config' && req.method === 'GET') {
+    // 2026-11-15：推送属于全局配置，已移到后台管理，普通用户不可读。
+    requireAdmin(req);
     const cfg = loadPushConfig();
     return {
       ok: true,
@@ -7455,6 +7457,7 @@ async function handlePushApi(req, res, url) {
     return { ok: true, funds: (has('funds') ? cleaned.funds : current.funds).length };
   }
   if (p === '/api/push/preview') {
+    requireAdmin(req);
     const slotKey = q.get('slot') === 'valuation' ? 'valuation' : 'strategy';
     const pcfg = loadPushConfig();
     const pslot = (pcfg.slots || []).find((x) => x.key === slotKey) || {};
@@ -7533,8 +7536,25 @@ const PUBLIC_API = new Set([
   '/api/auth/register',
   '/api/auth/logout',
   '/api/auth/me',
+  '/api/auth/password',
   '/api/health',
 ]);
+// 角色等级：super（超级管理员）> admin（管理员）> user（普通用户）
+const ROLE_RANK = { user: 0, admin: 1, super: 2 };
+
+function roleOf(user) {
+  if (!user) return 'user';
+  if (user.role === 'super' || user.role === 'admin' || user.role === 'user') return user.role;
+  return user.primary ? 'admin' : 'user';
+}
+
+function isAdminUser(user) {
+  return ROLE_RANK[roleOf(user)] >= ROLE_RANK.admin;
+}
+
+function isSuperUser(user) {
+  return roleOf(user) === 'super';
+}
 
 function readJsonSafe(file, fallback) {
   try {
@@ -7555,7 +7575,7 @@ function loadUsers() {
   // 兼容旧数据：没有 role 字段时，主账号视为管理员、其余为普通用户，并落盘一次。
   let migrated = false;
   for (const user of store.users) {
-    if (user.role !== 'admin' && user.role !== 'user') {
+    if (user.role !== 'super' && user.role !== 'admin' && user.role !== 'user') {
       user.role = user.primary ? 'admin' : 'user';
       migrated = true;
     }
@@ -7626,17 +7646,41 @@ function publicUser(user) {
     id: user.id,
     username: user.username,
     primary: !!user.primary,
-    role: user.role === 'admin' ? 'admin' : 'user',
+    role: roleOf(user),
     createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt || null,
+    loginCount: Number(user.loginCount) || 0,
   };
 }
 
-// 需要管理员权限的接口统一用这个校验
+// 需要管理员权限的接口统一用这个校验（admin / super 都通过）
 function requireAdmin(req) {
   const user = currentUser(req);
   if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
-  if (user.role !== 'admin') throw Object.assign(new Error('需要管理员权限'), { status: 403 });
+  if (!isAdminUser(user)) throw Object.assign(new Error('需要管理员权限'), { status: 403 });
   return user;
+}
+
+// 只有超级管理员（以及超级管理员创建的 admin）能进入的后台能力用这个
+function requireSuper(req) {
+  const user = currentUser(req);
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  if (!isSuperUser(user)) throw Object.assign(new Error('需要超级管理员权限'), { status: 403 });
+  return user;
+}
+
+// 改密码 / 强制下线后，让该账号所有旧会话立即失效。
+function invalidateUserSessions(userId) {
+  const sessions = loadSessions();
+  let changed = false;
+  for (const [token, session] of Object.entries(sessions)) {
+    if (session && session.userId === userId) {
+      delete sessions[token];
+      changed = true;
+    }
+  }
+  if (changed) saveSessions(sessions);
+  return changed;
 }
 
 function issueSession(req, res, user) {
@@ -7737,6 +7781,170 @@ function clientIp(req) {
   return fwd || (req.socket && req.socket.remoteAddress) || 'unknown';
 }
 
+/* =========================================================
+   使用统计（2026-11-15）
+   - data/stats.json：按天 × 账号记录请求数、字节流量、使用时长、页面访问
+   - 登录 / 改密 / 强制下线等事件记在 logins（最多 2000 条）
+   - 写入是防抖的：请求只改内存，3 秒后落盘，避免每请求写文件
+   ========================================================= */
+const STATS_FILE = path.join(__dirname, 'data', 'stats.json');
+const STATS_KEEP_DAYS = 120;
+const STATS_LOGIN_LIMIT = 2000;
+const STATS_ONLINE_WINDOW = 5 * 60 * 1000;
+
+function shanghaiDateKey(date = new Date()) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  } catch {
+    return new Date(date.getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+  }
+}
+
+function lastDateKeys(days) {
+  const count = Math.max(1, Math.min(STATS_KEEP_DAYS, Number(days) || 7));
+  const out = [];
+  const now = Date.now();
+  for (let i = count - 1; i >= 0; i -= 1) out.push(shanghaiDateKey(new Date(now - i * 86400000)));
+  return out;
+}
+
+function loadStatsStore() {
+  const raw = readJsonSafe(STATS_FILE, { days: {}, logins: [] });
+  const store = { days: {}, logins: [] };
+  if (raw && raw.days && typeof raw.days === 'object' && !Array.isArray(raw.days)) store.days = raw.days;
+  if (raw && Array.isArray(raw.logins)) store.logins = raw.logins;
+  const keep = new Set(lastDateKeys(STATS_KEEP_DAYS));
+  for (const key of Object.keys(store.days)) {
+    if (!keep.has(key)) delete store.days[key];
+  }
+  if (store.logins.length > STATS_LOGIN_LIMIT) store.logins = store.logins.slice(-STATS_LOGIN_LIMIT);
+  return store;
+}
+
+const statsStore = loadStatsStore();
+let statsFlushTimer = null;
+
+function flushStats() {
+  if (statsFlushTimer) {
+    clearTimeout(statsFlushTimer);
+    statsFlushTimer = null;
+  }
+  try {
+    writeJsonSafe(STATS_FILE, statsStore);
+  } catch (err) {
+    console.error('[STATS] 写入失败', err.message);
+  }
+}
+
+function scheduleStatsSave() {
+  if (statsFlushTimer) return;
+  statsFlushTimer = setTimeout(() => {
+    statsFlushTimer = null;
+    try { writeJsonSafe(STATS_FILE, statsStore); } catch { /* 下次再写 */ }
+  }, 3000);
+}
+
+function ensureStat(dayKey, user, req) {
+  if (!user || !user.id) return null;
+  if (!statsStore.days[dayKey] || typeof statsStore.days[dayKey] !== 'object') statsStore.days[dayKey] = {};
+  let entry = statsStore.days[dayKey][user.id];
+  if (!entry || typeof entry !== 'object') {
+    entry = { username: user.username || '', requests: 0, api: 0, assets: 0, bytes: 0, activeMs: 0, firstSeen: Date.now(), lastSeen: 0, logins: 0, views: {}, ips: {}, ua: '' };
+    statsStore.days[dayKey][user.id] = entry;
+  }
+  entry.username = user.username || entry.username || '';
+  if (req) {
+    const ua = String(req.headers['user-agent'] || '').slice(0, 180);
+    if (ua) entry.ua = ua;
+    const ip = clientIp(req);
+    entry.ips[ip] = (Number(entry.ips[ip]) || 0) + 1;
+  }
+  return entry;
+}
+
+function recordTraffic(req, bytes, kind) {
+  const user = req && req.gpUser;
+  const size = Number(bytes) || 0;
+  if (!user || size <= 0) return;
+  const entry = ensureStat(shanghaiDateKey(), user, req);
+  if (!entry) return;
+  const isPing = String(req.gpPath || '') === '/api/activity/ping';
+  if (!isPing) {
+    entry.requests += 1;
+    if (kind === 'api') entry.api += 1;
+    else entry.assets += 1;
+  }
+  entry.bytes += size;
+  entry.lastSeen = Date.now();
+  scheduleStatsSave();
+}
+
+function recordLoginEvent(req, { user = null, username = '', ok = false, action = 'login', reason = '' } = {}) {
+  statsStore.logins.push({
+    at: Date.now(),
+    userId: user ? user.id : null,
+    username: username || (user && user.username) || '',
+    ok: !!ok,
+    action,
+    reason: String(reason || '').slice(0, 120),
+    ip: req ? clientIp(req) : '',
+    ua: String((req && req.headers['user-agent']) || '').slice(0, 180),
+  });
+  if (statsStore.logins.length > STATS_LOGIN_LIMIT) statsStore.logins = statsStore.logins.slice(-STATS_LOGIN_LIMIT);
+  if (user && ok && action === 'login') {
+    const entry = ensureStat(shanghaiDateKey(), user, req);
+    if (entry) entry.logins += 1;
+  }
+  scheduleStatsSave();
+}
+
+function recordViewPing(req, user, view, activeSec, event) {
+  const entry = ensureStat(shanghaiDateKey(), user, req);
+  if (!entry) return;
+  entry.lastSeen = Date.now();
+  const sec = Math.max(0, Math.min(180, Number(activeSec) || 0));
+  if (sec) entry.activeMs += sec * 1000;
+  const page = String(view || '').slice(0, 32);
+  if (event === 'view' && page) entry.views[page] = (Number(entry.views[page]) || 0) + 1;
+  scheduleStatsSave();
+}
+
+function statsForDayUser(dayKey, userId) {
+  const day = statsStore.days[dayKey];
+  return (day && day[userId]) || null;
+}
+
+function userStatsSummary(userId, days) {
+  const out = { days: 0, requests: 0, bytes: 0, activeMs: 0, logins: 0, lastSeen: 0, views: {} };
+  const keys = lastDateKeys(days);
+  out.days = keys.length;
+  for (const key of keys) {
+    const entry = statsForDayUser(key, userId);
+    if (!entry) continue;
+    out.requests += Number(entry.requests) || 0;
+    out.bytes += Number(entry.bytes) || 0;
+    out.activeMs += Number(entry.activeMs) || 0;
+    out.logins += Number(entry.logins) || 0;
+    out.lastSeen = Math.max(out.lastSeen, Number(entry.lastSeen) || 0);
+    for (const [view, count] of Object.entries(entry.views || {})) {
+      out.views[view] = (Number(out.views[view]) || 0) + (Number(count) || 0);
+    }
+  }
+  return out;
+}
+
+function topIpOf(entry) {
+  const ips = Object.entries((entry && entry.ips) || {});
+  if (!ips.length) return '';
+  ips.sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0));
+  return ips[0][0];
+}
+
 function handleAuth(req, res, url) {
   const p = url.pathname;
   if (p === '/api/auth/me') {
@@ -7773,6 +7981,7 @@ function handleAuth(req, res, url) {
     // 主账号沿用推送配置里的持仓；其它账号从空白开始。
     if (!user.primary) writeJsonSafe(userDataFile(user.id), { funds: [], holdings: {}, updatedAt: Date.now() });
     issueSession(req, res, user);
+    recordLoginEvent(req, { user, ok: true, action: 'register' });
     return { ok: true, user: publicUser(user) };
   }
   if (p === '/api/auth/login') {
@@ -7793,11 +8002,57 @@ function handleAuth(req, res, url) {
       fresh.count = Number(fresh.count || 0) + 1;
       fresh.until = fresh.count >= LOGIN_FAIL_LIMIT ? Date.now() + LOGIN_FAIL_WINDOW : 0;
       loginFails.set(ip, fresh);
+      recordLoginEvent(req, { user: user || null, username, ok: false, action: 'login', reason: '用户名或密码错误' });
       throw Object.assign(new Error('用户名或密码错误'), { status: 401 });
     }
     loginFails.delete(ip);
+    user.lastLoginAt = new Date().toISOString();
+    user.lastLoginIp = ip;
+    user.loginCount = (Number(user.loginCount) || 0) + 1;
+    saveUsers(store);
     issueSession(req, res, user);
+    recordLoginEvent(req, { user, ok: true, action: 'login' });
     return { ok: true, user: publicUser(user) };
+  }
+  // 登录页的「修改密码」：校验旧密码后重设，并让该账号所有旧会话失效。
+  if (p === '/api/auth/password') {
+    if (req.method !== 'POST') throw Object.assign(new Error('方法不允许'), { status: 405 });
+    const body = req.body || {};
+    const username = String(body.username || '').trim();
+    const oldPassword = String(body.oldPassword || '');
+    const newPassword = String(body.newPassword || '');
+    const ip = clientIp(req);
+    const fail = loginFails.get(ip);
+    if (fail && Number(fail.until) > Date.now()) {
+      const mins = Math.ceil((fail.until - Date.now()) / 60000);
+      throw Object.assign(new Error(`尝试次数过多，请 ${mins} 分钟后再试`), { status: 429 });
+    }
+    if (!username) throw Object.assign(new Error('请填写用户名'), { status: 400 });
+    if (newPassword.length < 6 || newPassword.length > 64) {
+      throw Object.assign(new Error('新密码长度需为 6-64 位'), { status: 400 });
+    }
+    const store = loadUsers();
+    const user = store.users.find((u) => String(u.username).toLowerCase() === username.toLowerCase());
+    if (!user || !verifyPassword(oldPassword, user.salt, user.hash)) {
+      const fresh = fail && fail.since > Date.now() - LOGIN_FAIL_WINDOW ? fail : { count: 0, since: Date.now() };
+      fresh.count = Number(fresh.count || 0) + 1;
+      fresh.until = fresh.count >= LOGIN_FAIL_LIMIT ? Date.now() + LOGIN_FAIL_WINDOW : 0;
+      loginFails.set(ip, fresh);
+      recordLoginEvent(req, { user: user || null, username, ok: false, action: 'password', reason: '原密码不正确' });
+      throw Object.assign(new Error('用户名或原密码不正确'), { status: 401 });
+    }
+    if (verifyPassword(newPassword, user.salt, user.hash)) {
+      throw Object.assign(new Error('新密码不能与原密码相同'), { status: 400 });
+    }
+    const salt = crypto.randomBytes(16).toString('hex');
+    user.salt = salt;
+    user.hash = hashPassword(newPassword, salt);
+    user.updatedAt = new Date().toISOString();
+    saveUsers(store);
+    invalidateUserSessions(user.id);
+    loginFails.delete(ip);
+    recordLoginEvent(req, { user, ok: true, action: 'password' });
+    return { ok: true, username: user.username };
   }
   if (p === '/api/auth/logout') {
     dropSession(req, res);
@@ -7854,41 +8109,272 @@ async function getSystemStatus() {
 }
 
 async function handleAdmin(req, res, url) {
-  requireAdmin(req);
+  const actor = requireAdmin(req);
+  const actorRank = ROLE_RANK[roleOf(actor)];
   const p = url.pathname;
+  const q = url.searchParams;
+
   if (p === '/api/admin/users' && req.method === 'GET') {
-    return {
-      ok: true,
-      users: loadUsers().users.map((u) => ({
-        id: u.id,
-        username: u.username,
-        role: u.role === 'admin' ? 'admin' : 'user',
-        primary: !!u.primary,
-        createdAt: u.createdAt,
-      })),
-    };
+    const todayKey = shanghaiDateKey();
+    const cutoff = Date.now() - STATS_ONLINE_WINDOW;
+    const users = loadUsers().users
+      .map((u) => {
+        const today = statsForDayUser(todayKey, u.id);
+        const week = userStatsSummary(u.id, 7);
+        return {
+          ...publicUser(u),
+          lastLoginIp: u.lastLoginIp || '',
+          today: today
+            ? {
+                requests: Number(today.requests) || 0,
+                bytes: Number(today.bytes) || 0,
+                activeMs: Number(today.activeMs) || 0,
+                logins: Number(today.logins) || 0,
+                lastSeen: Number(today.lastSeen) || 0,
+                ip: topIpOf(today),
+              }
+            : null,
+          week,
+          online: Boolean(today && Number(today.lastSeen) > cutoff),
+        };
+      })
+      .sort((a, b) => {
+        if (a.primary !== b.primary) return a.primary ? -1 : 1;
+        if (a.role !== b.role) return ROLE_RANK[b.role] - ROLE_RANK[a.role];
+        return String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+      });
+    return { ok: true, users, onlineWindowSec: STATS_ONLINE_WINDOW / 1000 };
   }
+
   if (p === '/api/admin/users/role' && req.method === 'POST') {
     const body = req.body || {};
     const id = String(body.id || '');
-    const role = body.role === 'admin' ? 'admin' : 'user';
+    const nextRole = ['user', 'admin', 'super'].includes(String(body.role)) ? String(body.role) : 'user';
     const store = loadUsers();
     const target = store.users.find((u) => u.id === id);
     if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
-    if (target.primary && role !== 'admin') {
+    const targetRole = roleOf(target);
+    if (target.id === actor.id) throw Object.assign(new Error('不能修改自己的角色'), { status: 400 });
+    if (targetRole === 'super' && actorRank < ROLE_RANK.super) {
+      throw Object.assign(new Error('只有超级管理员可以修改超级管理员'), { status: 403 });
+    }
+    if (nextRole === 'super' && actorRank < ROLE_RANK.super) {
+      throw Object.assign(new Error('只有超级管理员可以授予超级管理员'), { status: 403 });
+    }
+    if (target.primary && nextRole === 'user') {
       throw Object.assign(new Error('主账号必须保留管理员权限'), { status: 400 });
     }
-    const admins = store.users.filter((u) => u.role === 'admin').length;
-    if (target.role === 'admin' && role === 'user' && admins <= 1) {
+    const admins = store.users.filter((u) => ROLE_RANK[roleOf(u)] >= ROLE_RANK.admin).length;
+    if (ROLE_RANK[targetRole] >= ROLE_RANK.admin && ROLE_RANK[nextRole] < ROLE_RANK.admin && admins <= 1) {
       throw Object.assign(new Error('至少要保留一个管理员'), { status: 400 });
     }
-    target.role = role;
+    const supers = store.users.filter((u) => roleOf(u) === 'super').length;
+    if (targetRole === 'super' && nextRole !== 'super' && supers <= 1) {
+      throw Object.assign(new Error('至少要保留一个超级管理员'), { status: 400 });
+    }
+    target.role = nextRole;
+    target.updatedAt = new Date().toISOString();
     saveUsers(store);
-    return { ok: true, user: { id: target.id, username: target.username, role } };
+    recordLoginEvent(req, { user: actor, ok: true, action: 'role', reason: `${target.username}: ${targetRole} -> ${nextRole}` });
+    return { ok: true, user: { id: target.id, username: target.username, role: nextRole } };
   }
+
+  // 管理员重置某个用户的密码（不需要旧密码）；重置后该用户所有会话失效。
+  if (p === '/api/admin/users/password' && req.method === 'POST') {
+    const body = req.body || {};
+    const id = String(body.id || '');
+    const password = String(body.password || '');
+    if (password.length < 6 || password.length > 64) {
+      throw Object.assign(new Error('密码长度需为 6-64 位'), { status: 400 });
+    }
+    const store = loadUsers();
+    const target = store.users.find((u) => u.id === id);
+    if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
+    const targetRank = ROLE_RANK[roleOf(target)];
+    if (targetRank >= actorRank && !isSuperUser(actor)) {
+      throw Object.assign(new Error('不能重置同级或更高级别用户的密码'), { status: 403 });
+    }
+    const salt = crypto.randomBytes(16).toString('hex');
+    target.salt = salt;
+    target.hash = hashPassword(password, salt);
+    target.updatedAt = new Date().toISOString();
+    saveUsers(store);
+    invalidateUserSessions(target.id);
+    recordLoginEvent(req, { user: actor, ok: true, action: 'reset', reason: `重置 ${target.username} 的密码` });
+    return { ok: true, id: target.id, username: target.username };
+  }
+
+  // 强制下线：清掉该用户全部会话（不删账号）。
+  if (p === '/api/admin/users/kick' && req.method === 'POST') {
+    const body = req.body || {};
+    const id = String(body.id || '');
+    const target = loadUsers().users.find((u) => u.id === id);
+    if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
+    const targetRank = ROLE_RANK[roleOf(target)];
+    if (targetRank >= actorRank && !isSuperUser(actor)) {
+      throw Object.assign(new Error('不能强制同级或更高级别用户下线'), { status: 403 });
+    }
+    const changed = invalidateUserSessions(target.id);
+    recordLoginEvent(req, { user: actor, ok: true, action: 'kick', reason: `强制下线 ${target.username}` });
+    return { ok: true, username: target.username, sessions: changed };
+  }
+
+  // 概览：今日汇总 + 最近 N 天曲线 + 当前在线 + 最近登录事件
+  if (p === '/api/admin/overview' && req.method === 'GET') {
+    const days = Math.max(1, Math.min(30, Number(q.get('days') || 14)));
+    const keys = lastDateKeys(days);
+    const series = keys.map((date) => {
+      const day = statsStore.days[date] || {};
+      let requests = 0;
+      let bytes = 0;
+      let activeMs = 0;
+      let logins = 0;
+      let users = 0;
+      for (const entry of Object.values(day)) {
+        if (!entry) continue;
+        users += 1;
+        requests += Number(entry.requests) || 0;
+        bytes += Number(entry.bytes) || 0;
+        activeMs += Number(entry.activeMs) || 0;
+        logins += Number(entry.logins) || 0;
+      }
+      return { date, requests, bytes, activeMs, logins, users };
+    });
+    const todayKey = keys[keys.length - 1];
+    const today = statsStore.days[todayKey] || {};
+    const cutoff = Date.now() - STATS_ONLINE_WINDOW;
+    const online = Object.entries(today)
+      .filter(([, entry]) => entry && Number(entry.lastSeen) > cutoff)
+      .map(([userId, entry]) => ({
+        userId,
+        username: entry.username || userId,
+        lastSeen: Number(entry.lastSeen) || 0,
+        ip: topIpOf(entry),
+        ua: entry.ua || '',
+      }))
+      .sort((a, b) => b.lastSeen - a.lastSeen);
+    const allUsers = loadUsers().users;
+    let statsBytes = 0;
+    try { statsBytes = fs.statSync(STATS_FILE).size; } catch { statsBytes = 0; }
+    return {
+      ok: true,
+      serverTime: Date.now(),
+      today: series[series.length - 1],
+      series,
+      online,
+      onlineWindowSec: STATS_ONLINE_WINDOW / 1000,
+      users: {
+        total: allUsers.length,
+        admins: allUsers.filter((u) => roleOf(u) === 'admin').length,
+        supers: allUsers.filter((u) => roleOf(u) === 'super').length,
+        primary: allUsers.filter((u) => u.primary).length,
+      },
+      recentLogins: statsStore.logins.slice(-10).reverse(),
+      statsFileBytes: statsBytes,
+      statsDays: Object.keys(statsStore.days).length,
+    };
+  }
+
+  // 使用统计：按天 × 用户展开
+  if (p === '/api/admin/stats' && req.method === 'GET') {
+    const days = Math.max(1, Math.min(30, Number(q.get('days') || 14)));
+    const userId = String(q.get('userId') || '');
+    const keys = lastDateKeys(days);
+    const rows = [];
+    for (const date of keys.slice().reverse()) {
+      const day = statsStore.days[date] || {};
+      for (const [id, entry] of Object.entries(day)) {
+        if (userId && id !== userId) continue;
+        if (!entry) continue;
+        rows.push({
+          date,
+          userId: id,
+          username: entry.username || id,
+          requests: Number(entry.requests) || 0,
+          api: Number(entry.api) || 0,
+          assets: Number(entry.assets) || 0,
+          bytes: Number(entry.bytes) || 0,
+          activeMs: Number(entry.activeMs) || 0,
+          logins: Number(entry.logins) || 0,
+          lastSeen: Number(entry.lastSeen) || 0,
+          views: entry.views || {},
+          ip: topIpOf(entry),
+          ua: entry.ua || '',
+        });
+      }
+    }
+    const series = keys.map((date) => {
+      const day = statsStore.days[date] || {};
+      const out = { date, requests: 0, bytes: 0, activeMs: 0, logins: 0, users: 0 };
+      for (const [id, entry] of Object.entries(day)) {
+        if (!entry) continue;
+        if (userId && id !== userId) continue;
+        out.users += 1;
+        out.requests += Number(entry.requests) || 0;
+        out.bytes += Number(entry.bytes) || 0;
+        out.activeMs += Number(entry.activeMs) || 0;
+        out.logins += Number(entry.logins) || 0;
+      }
+      return out;
+    });
+    const totals = series.reduce(
+      (acc, item) => ({
+        requests: acc.requests + item.requests,
+        bytes: acc.bytes + item.bytes,
+        activeMs: acc.activeMs + item.activeMs,
+        logins: acc.logins + item.logins,
+      }),
+      { requests: 0, bytes: 0, activeMs: 0, logins: 0 },
+    );
+    const known = new Map();
+    for (const u of loadUsers().users) known.set(u.id, u.username);
+    for (const day of Object.values(statsStore.days)) {
+      for (const [id, entry] of Object.entries(day || {})) {
+        if (entry && entry.username && !known.has(id)) known.set(id, entry.username);
+      }
+    }
+    return {
+      ok: true,
+      days,
+      userId,
+      series,
+      rows,
+      totals,
+      users: [...known.entries()].map(([id, username]) => ({ id, username })).sort((a, b) => String(a.username).localeCompare(String(b.username))),
+    };
+  }
+
+  // 登录 / 改密 / 强制下线等事件
+  if (p === '/api/admin/logins' && req.method === 'GET') {
+    const limit = Math.max(1, Math.min(500, Number(q.get('limit') || 80)));
+    const userId = String(q.get('userId') || '');
+    const action = String(q.get('action') || '');
+    const onlyFailed = q.get('ok') === '0';
+    const list = statsStore.logins.filter((item) => {
+      if (userId && item.userId !== userId) return false;
+      if (action && item.action !== action) return false;
+      if (onlyFailed && item.ok) return false;
+      return true;
+    });
+    return { ok: true, total: list.length, logins: list.slice(-limit).reverse() };
+  }
+
+  if (p === '/api/admin/logins/clear' && req.method === 'POST') {
+    requireSuper(req);
+    const count = statsStore.logins.length;
+    statsStore.logins = [];
+    flushStats();
+    recordLoginEvent(req, { user: actor, ok: true, action: 'clear', reason: `清空 ${count} 条登录日志` });
+    return { ok: true, cleared: count };
+  }
+
   if (p === '/api/admin/system' && req.method === 'GET') {
-    return { ok: true, ...(await getSystemStatus()) };
+    const status = await getSystemStatus();
+    let statsFileBytes = 0;
+    try { statsFileBytes = fs.statSync(STATS_FILE).size; } catch { statsFileBytes = 0; }
+    return { ...status, ok: true, statsFileBytes, statsDays: Object.keys(statsStore.days).length };
   }
+
   throw Object.assign(new Error('未知接口'), { status: 404 });
 }
 
@@ -7905,6 +8391,14 @@ async function handleApi(req, res, url) {
   if (p === '/api/changelog') return getChangelog();
   if (p === '/api/health') {
     return { ok: true, version: VERSION, uptime: process.uptime(), port: PORT, time: new Date().toISOString() };
+  }
+  // 前端心跳：记录页面访问与在线时长（每 60 秒一次；切页时额外记一次 view）
+  if (p === '/api/activity/ping' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    const body = req.body || {};
+    recordViewPing(req, user, body.view, body.activeSec, body.event);
+    return { ok: true };
   }
   // 手机 / 局域网访问地址（设置页「手机访问」用）
   if (p === '/api/net') {
@@ -7961,7 +8455,11 @@ async function handleApi(req, res, url) {
     };
   }
   if (p === '/api/source/status') return sourceStatus();
-  if (p === '/api/source/config') return applySourceConfig(req, q);
+  // 数据源切换属于全局配置，2026-11-15 起移到后台管理，只有管理员能改。
+  if (p === '/api/source/config') {
+    if (req.method === 'POST') requireAdmin(req);
+    return applySourceConfig(req, q);
+  }
   if (p === '/api/source/probe') return probeSource(q.get('cap') || '');
   if (p === '/api/overview') return getOverview();
   if (p === '/api/csi300-ratio') return getCsi300FundRatio(Number(q.get('top') || 10));
@@ -8204,8 +8702,9 @@ function readJsonBody(req, limit = 65536) {
   });
 }
 
-function sendJSON(res, status, data) {
+function sendJSON(req, res, status, data) {
   const body = JSON.stringify(data);
+  recordTraffic(req, Buffer.byteLength(body), 'api');
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
@@ -8236,6 +8735,7 @@ function serveStatic(req, res, pathname) {
       return res.end('404 Not Found');
     }
     const ext = path.extname(file).toLowerCase();
+    recordTraffic(req, Number(stat.size) || 0, 'static');
     const headers = {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Cache-Control': ext === '.html' ? 'no-cache' : ext === '.js' || ext === '.css' ? 'no-cache' : 'public, max-age=86400',
@@ -8254,6 +8754,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(400);
     return res.end('Bad Request');
   }
+  req.gpPath = url.pathname;
+  req.gpUser = currentUser(req);
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
@@ -8264,31 +8766,37 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
+  // 后台管理的短地址：/admin → /admin.html（页面本身公开，数据接口仍校验角色）。
+  if (url.pathname === '/admin' || url.pathname === '/admin/') {
+    res.writeHead(302, { Location: '/admin.html', 'Cache-Control': 'no-store' });
+    return res.end();
+  }
+
   if (url.pathname.startsWith('/api/')) {
     if (req.method === 'POST') {
       try {
         req.body = await readJsonBody(req);
       } catch {
-        sendJSON(res, 400, { error: '请求体不是合法 JSON' });
+        sendJSON(req, res, 400, { error: '请求体不是合法 JSON' });
         return;
       }
     }
     // 除登录相关接口外，其它 API 一律要求已登录。
-    if (!PUBLIC_API.has(url.pathname) && !currentUser(req)) {
-      sendJSON(res, 401, { error: '未登录', needAuth: true });
+    if (!PUBLIC_API.has(url.pathname) && !req.gpUser) {
+      sendJSON(req, res, 401, { error: '未登录', needAuth: true });
       return;
     }
     try {
       const data = url.pathname.startsWith('/api/push/')
         ? await handlePushApi(req, res, url)
         : await handleApi(req, res, url);
-      sendJSON(res, 200, data);
+      sendJSON(req, res, 200, data);
       if (process.env.LOG_API !== '0') {
         console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] ${url.pathname}${url.search} 200 ${Date.now() - started}ms`);
       }
     } catch (err) {
       const status = err.status || 502;
-      sendJSON(res, status, {
+      sendJSON(req, res, status, {
         error: err.message || '服务暂时不可用',
         path: url.pathname,
         time: new Date().toISOString(),
@@ -8302,11 +8810,12 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(405, { Allow: 'GET, HEAD' });
     return res.end('Method Not Allowed');
   }
-  // 页面鉴权：css/js/图片/字体等静态资源放行，登录页放行，其余（含首页）要求登录。
+  // 页面鉴权：css/js/图片/字体等静态资源放行，登录页 / 后台登录页放行，其余（含首页）要求登录。
   const assetPath =
     /^\/(css|js|vendor)\//.test(url.pathname) ||
     /\.(css|js|png|jpe?g|gif|svg|ico|webp|woff2?|map)$/i.test(url.pathname);
-  if (url.pathname !== '/login.html' && !assetPath && !currentUser(req)) {
+  const publicPage = url.pathname === '/login.html' || url.pathname === '/admin.html';
+  if (!publicPage && !assetPath && !req.gpUser) {
     res.writeHead(302, { Location: '/login.html', 'Cache-Control': 'no-store' });
     return res.end();
   }
@@ -8356,6 +8865,7 @@ server.listen(PORT, HOST, () => {
 
 process.on('SIGINT', () => {
   console.log('\n服务已停止。');
+  flushStats();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 800);
 });
@@ -8390,6 +8900,11 @@ process.on('unhandledRejection', (reason) => {
 process.on('SIGHUP', () => {
   // 关掉终端窗口时 Windows 可能直接结束进程；至少留一条记录。
   logCrash('SIGHUP', 'process received SIGHUP (terminal closed?)');
+  try { flushStats(); } catch { /* ignore */ }
   try { server.close(); } catch { /* ignore */ }
   process.exit(0);
+});
+// 正常退出 / 被强杀前，把内存里的统计落盘。
+process.on('exit', () => {
+  try { flushStats(); } catch { /* ignore */ }
 });

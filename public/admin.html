@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#070b12">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex,nofollow">
+  <title>寰球智投 · 后台管理</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/css/app.css?v=1.5.0">
+  <link rel="stylesheet" href="/css/admin.css?v=1.5.0">
+</head>
+<body class="admin-body">
+  <!-- 登录 -->
+  <div class="admin-login" id="adminLogin">
+    <div class="admin-login-card">
+      <div class="admin-brand-mark">寰</div>
+      <div class="admin-login-title">寰球智投 <span>ADMIN</span></div>
+      <p class="admin-login-sub">后台管理 · 仅管理员 / 超级管理员可登录</p>
+      <form id="adminLoginForm" autocomplete="on" novalidate>
+        <label class="admin-field">
+          <span>用户名</span>
+          <input id="adminUsername" name="username" type="text" maxlength="20" autocomplete="username" placeholder="管理员账号" required>
+        </label>
+        <label class="admin-field">
+          <span>密码</span>
+          <input id="adminPassword" name="password" type="password" maxlength="64" autocomplete="current-password" placeholder="登录密码" required>
+        </label>
+        <button type="submit" class="admin-login-btn" id="adminLoginBtn">登录后台</button>
+        <div class="admin-msg" id="adminLoginMsg" role="alert" aria-live="polite"></div>
+      </form>
+      <div class="admin-login-foot">
+        <a href="/login.html">← 返回终端登录</a>
+        <a href="/admin.html">刷新</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 后台主体 -->
+  <div class="admin-app" id="adminApp" hidden>
+    <aside class="admin-side">
+      <a class="admin-side-brand" href="/admin.html">
+        <span class="admin-brand-mark small">寰</span>
+        <span><b>寰球智投</b><small>GLOBAL PULSE ADMIN</small></span>
+      </a>
+      <nav class="admin-nav" id="adminNav" aria-label="后台导航">
+        <button type="button" data-sec="overview" class="is-active">概览</button>
+        <button type="button" data-sec="users">用户管理</button>
+        <button type="button" data-sec="logins">登录记录</button>
+        <button type="button" data-sec="stats">使用统计</button>
+        <button type="button" data-sec="system">系统状态</button>
+        <button type="button" data-sec="push">定时推送</button>
+        <button type="button" data-sec="source">数据源</button>
+        <button type="button" data-sec="net">手机访问</button>
+        <button type="button" data-sec="changelog">更新履历</button>
+      </nav>
+      <div class="admin-side-foot">
+        <div class="admin-who"><span class="admin-online-dot"></span><b id="adminUser">--</b><span class="admin-role" id="adminRole">--</span></div>
+        <a class="admin-side-link" href="/">返回行情终端 →</a>
+        <button type="button" class="admin-logout" id="adminLogout">退出登录</button>
+      </div>
+    </aside>
+
+    <main class="admin-main">
+      <header class="admin-top">
+        <div>
+          <div class="eyebrow">GLOBAL PULSE · ADMIN CONSOLE</div>
+          <h1 id="adminTitle">概览</h1>
+        </div>
+        <div class="admin-top-actions">
+          <span class="muted small" id="adminRefreshAt"></span>
+          <button type="button" class="admin-btn" id="adminRefresh">刷新</button>
+        </div>
+      </header>
+
+      <!-- 概览 -->
+      <section class="admin-section is-active" id="sec-overview">
+        <div class="admin-cards" id="ovCards"></div>
+        <div class="admin-grid2">
+          <article class="admin-card">
+            <div class="admin-card-head"><h2>近 14 天流量</h2><span class="muted small" id="ovChartNote"></span></div>
+            <div id="ovChart" class="admin-chart"><div class="admin-empty">加载中…</div></div>
+          </article>
+          <article class="admin-card">
+            <div class="admin-card-head"><h2>当前在线</h2><span class="muted small" id="ovOnlineNote"></span></div>
+            <div id="ovOnline" class="admin-list"><div class="admin-empty">加载中…</div></div>
+          </article>
+        </div>
+        <article class="admin-card">
+          <div class="admin-card-head"><h2>最近登录 / 账号操作</h2><button type="button" class="admin-link" data-goto-sec="logins">查看全部 →</button></div>
+          <div id="ovLogins" class="admin-table-wrap"><div class="admin-empty">加载中…</div></div>
+        </article>
+      </section>
+
+      <!-- 用户管理 -->
+      <section class="admin-section" id="sec-users">
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>账号与权限</h2>
+            <span class="muted small">超级管理员可授予 / 收回超级管理员；重置密码会强制该账号重新登录。</span>
+          </div>
+          <div id="usersTable" class="admin-table-wrap"><div class="admin-empty">加载中…</div></div>
+        </article>
+      </section>
+
+      <!-- 登录记录 -->
+      <section class="admin-section" id="sec-logins">
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>登录与账号操作记录</h2>
+            <div class="admin-filter">
+              <select id="loginUserFilter"><option value="">全部用户</option></select>
+              <select id="loginActionFilter">
+                <option value="">全部动作</option>
+                <option value="login">登录</option>
+                <option value="register">注册</option>
+                <option value="password">修改密码</option>
+                <option value="reset">管理员重置密码</option>
+                <option value="role">角色变更</option>
+                <option value="kick">强制下线</option>
+                <option value="clear">清空日志</option>
+              </select>
+              <button type="button" class="admin-btn" id="loginRefresh">刷新</button>
+              <button type="button" class="admin-btn danger" id="loginClear" hidden>清空日志</button>
+            </div>
+          </div>
+          <div id="loginsTable" class="admin-table-wrap"><div class="admin-empty">加载中…</div></div>
+        </article>
+      </section>
+
+      <!-- 使用统计 -->
+      <section class="admin-section" id="sec-stats">
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>每日流量与使用情况</h2>
+            <div class="admin-filter">
+              <select id="statsDays">
+                <option value="7">最近 7 天</option>
+                <option value="14" selected>最近 14 天</option>
+                <option value="30">最近 30 天</option>
+              </select>
+              <select id="statsUser"><option value="">全部用户</option></select>
+              <button type="button" class="admin-btn" id="statsRefresh">刷新</button>
+            </div>
+          </div>
+          <div class="admin-cards" id="statsCards"></div>
+          <div class="admin-chart" id="statsChart"><div class="admin-empty">加载中…</div></div>
+          <div id="statsTable" class="admin-table-wrap"><div class="admin-empty">加载中…</div></div>
+        </article>
+      </section>
+
+      <!-- 系统状态 -->
+      <section class="admin-section" id="sec-system">
+        <div class="admin-grid2">
+          <article class="admin-card"><div class="admin-card-head"><h2>运行状态</h2></div><div id="sysInfo" class="admin-kv-list"><div class="admin-empty">加载中…</div></div></article>
+          <article class="admin-card"><div class="admin-card-head"><h2>统计存储</h2></div><div id="sysStats" class="admin-kv-list"><div class="admin-empty">加载中…</div></div></article>
+        </div>
+        <article class="admin-card"><div class="admin-card-head"><h2>服务 / 定时任务 / 备份（NAS）</h2></div><div id="sysServices" class="admin-kv-list"><div class="admin-empty">加载中…</div></div></article>
+        <article class="admin-card"><div class="admin-card-head"><h2>GitHub 提交</h2><span class="muted small" id="sysRepo"></span></div><div id="sysCommits" class="admin-list"><div class="admin-empty">加载中…</div></div></article>
+      </section>
+
+      <!-- 定时推送 -->
+      <section class="admin-section" id="sec-push">
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>微信定时推送</h2>
+            <span class="muted small">全局配置，由服务端按点发送；推送用的自选基金 / 持仓是主账号那一份。</span>
+          </div>
+          <p class="admin-note">Server酱填 <b>SCT</b> 开头的 Turbo SendKey；<b>sctp</b> 开头只进 Server酱³ App，不会进微信。PushPlus 填 token，企业微信填机器人 webhook。</p>
+          <div class="admin-form">
+            <label class="admin-row"><span><b>开启推送</b><small>工作日按设定时间自动发送</small></span><input type="checkbox" id="pushEnabled"></label>
+            <label class="admin-row"><span><b>推送渠道</b><small>Server酱 / PushPlus / 企业微信 / 自定义</small></span>
+              <select id="pushChannel">
+                <option value="serverchan">Server酱</option>
+                <option value="pushplus">PushPlus</option>
+                <option value="wecom">企业微信群机器人</option>
+                <option value="custom">自定义 webhook</option>
+              </select>
+            </label>
+            <label class="admin-row"><span><b>密钥 / webhook</b><small id="pushTokenHint">Server酱 SendKey</small></span><input type="text" id="pushToken" placeholder="粘贴 SendKey 或 webhook 地址"></label>
+            <div class="admin-push-slots">
+              <div class="admin-push-slot">
+                <label class="admin-row"><span><b>持仓策略 · 加仓/减仓/不变</b><small>14:30 左右发，按当天口径给动作</small></span><input type="checkbox" id="slotStrategyEnabled"></label>
+                <div class="admin-slot-line"><input type="time" id="slotStrategyTime" value="14:30"><button type="button" class="admin-btn" data-push-preview="strategy">预览</button><button type="button" class="admin-btn" data-push-test="strategy">测试</button></div>
+              </div>
+              <div class="admin-push-slot">
+                <label class="admin-row"><span><b>当日基金净值 / 估值</b><small>19:30 后发，只认已公布净值</small></span><input type="checkbox" id="slotValuationEnabled"></label>
+                <div class="admin-slot-line"><input type="time" id="slotValuationTime" value="19:30"><button type="button" class="admin-btn" data-push-preview="valuation">预览</button><button type="button" class="admin-btn" data-push-test="valuation">测试</button></div>
+              </div>
+            </div>
+            <div class="admin-actions"><button type="button" class="admin-btn primary" id="pushSave">保存推送设置</button></div>
+            <p class="admin-note" id="pushStatus">--</p>
+            <pre class="admin-preview" id="pushPreview" hidden></pre>
+          </div>
+        </article>
+      </section>
+
+      <!-- 数据源 -->
+      <section class="admin-section" id="sec-source">
+        <article class="admin-card">
+          <div class="admin-card-head"><h2>行情数据源</h2><span class="muted small" id="sourceModeNote"></span></div>
+          <div class="seg admin-source-seg" id="srcMode">
+            <button type="button" data-mode="auto">自动容错</button>
+            <button type="button" data-mode="eastmoney">东方财富</button>
+            <button type="button" data-mode="tencent">腾讯</button>
+            <button type="button" data-mode="ths">同花顺</button>
+            <button type="button" data-mode="sina">新浪</button>
+          </div>
+          <div id="srcList" class="admin-list"><div class="admin-empty">加载中…</div></div>
+          <div class="admin-actions">
+            <label class="admin-inline"><input type="checkbox" id="srcStrict"> 不回退（仅用首选源）</label>
+            <button type="button" class="admin-btn" id="srcProbe">重新检测</button>
+          </div>
+        </article>
+      </section>
+
+      <!-- 手机访问 -->
+      <section class="admin-section" id="sec-net">
+        <article class="admin-card">
+          <div class="admin-card-head"><h2>手机 / 局域网访问</h2><span class="muted small" id="netNote"></span></div>
+          <div id="netUrls" class="admin-net-urls"><div class="admin-empty">加载中…</div></div>
+          <div class="admin-actions"><button type="button" class="admin-btn" id="netCopy">复制手机地址</button><button type="button" class="admin-btn" id="netReload">重新检测</button></div>
+          <p class="admin-note">打不开时检查：① 手机与电脑是否同一 Wi-Fi；② Windows 防火墙是否放行 node；③ 只想本机访问可用 <code>--host=127.0.0.1</code> 启动。</p>
+        </article>
+      </section>
+
+      <!-- 更新履历 -->
+      <section class="admin-section" id="sec-changelog">
+        <article class="admin-card"><div id="changelogList" class="admin-changelog"><div class="admin-empty">加载中…</div></div></article>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/admin.js?v=1.5.0"></script>
+</body>
+</html>

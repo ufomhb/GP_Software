@@ -5848,78 +5848,28 @@ function openSettings() {
         <div class="setting-row"><div><div class="sr-label">清空本地数据</div><div class="sr-sub">自选、预警和设置全部重置</div></div><button class="btn small danger" id="setReset">重置</button></div>
       </div>
       <div class="setting-group">
-        <h3>行情数据源</h3>
-        <p class="setting-note" id="sourceModeNote">自动容错：按「东方财富 → 腾讯 → 同花顺 → 新浪」依次尝试，失败自动切换。</p>
-        <div class="seg source-mode" id="sourceModeSeg">
-          <button data-mode="auto">自动容错</button>
-          <button data-mode="eastmoney">东方财富</button>
-          <button data-mode="tencent">腾讯</button>
-          <button data-mode="ths">同花顺</button>
-          <button data-mode="sina">新浪</button>
-        </div>
-        <div class="source-list" id="sourceList"><div class="empty">正在检测数据源…</div></div>
-        <div class="source-foot">
-          <label class="source-strict"><input type="checkbox" id="sourceStrict"> 不回退（仅用首选源）</label>
-          <button class="btn small" id="sourceProbeBtn">重新检测</button>
-        </div>
-        <p class="setting-note">东方财富口径最全；腾讯 / 新浪覆盖价格行情，但主力净流入、涨跌家数、ETF 资金流排行会缺失或降级。</p>
-      </div>
-      <div class="setting-group">
-        <h3>微信定时推送</h3>
-        <p class="setting-note">每天固定时间把「自选基金 + 持仓」的当日策略推到微信。由服务端按时发送，不需要浏览器开着。<br><b>注意</b>：Server酱要填 <b>SCT</b> 开头的 SendKey（Turbo，通道可选微信服务号）；<b>sctp</b> 开头的是 Server酱³，消息只进「Server酱³」App，不会进微信。</p>
-        <div class="setting-row"><div><div class="sr-label">开启推送</div><div class="sr-sub">工作日按设定时间自动发送</div></div><input type="checkbox" id="pushEnabled"></div>
-        <div class="setting-row"><div><div class="sr-label">推送渠道</div><div class="sr-sub">Server酱 / PushPlus / 企业微信机器人</div></div>
-          <select id="pushChannel">
-            <option value="serverchan">Server酱</option>
-            <option value="pushplus">PushPlus</option>
-            <option value="wecom">企业微信群机器人</option>
-            <option value="custom">自定义 webhook</option>
-          </select></div>
-        <div class="setting-row"><div><div class="sr-label">密钥 / webhook</div><div class="sr-sub" id="pushTokenHint">Server酱 SendKey</div></div>
-          <input type="text" id="pushToken" placeholder="粘贴 SendKey 或 webhook 地址"></div>
-        <div class="push-slots">
-          <div class="push-slot">
-            <label class="push-slot-head"><input type="checkbox" id="slotStrategyEnabled"> <b>持仓策略 · 加仓/减仓/不变</b></label>
-            <div class="push-slot-row">
-              <input type="time" id="slotStrategyTime" value="14:30">
-              <button class="btn small" data-push-preview="strategy">预览</button>
-              <button class="btn small" data-push-test="strategy">测试</button>
-            </div>
-            <p class="setting-note">14:30 左右发：按「当天」的涨跌 + 技术评分给逐只加仓/减仓/不变、具体份额与明日展望。当日净值还没出时，用重仓股穿透估算当日估值；连估算都给不出的基金单独标「当日未更新」，不给动作。</p>
-          </div>
-          <div class="push-slot">
-            <label class="push-slot-head"><input type="checkbox" id="slotValuationEnabled"> <b>当日基金净值/估值</b></label>
-            <div class="push-slot-row">
-              <input type="time" id="slotValuationTime" value="19:30">
-              <button class="btn small" data-push-preview="valuation">预览</button>
-              <button class="btn small" data-push-test="valuation">测试</button>
-            </div>
-            <p class="setting-note">19:30 后发：只报已公布的当日净值与当日盈亏。还没公布的基金不显示涨跌、只标最新净值日期；等净值出来后自动补发一条更新（最多 3 次）。</p>
-          </div>
-        </div>
-        <div class="push-actions">
-          <button class="btn small primary" id="pushSave">保存设置</button>
-        </div>
-        <p class="setting-note" id="pushStatus">--</p>
-      </div>
-      <div class="setting-group">
-        <h3>手机 / 局域网访问</h3>
-        <p class="setting-note" id="netNote">手机与电脑连同一个 Wi-Fi，用下面的地址打开即可；页面已按手机屏宽自适应，自选基金与持仓会自动从服务端同步。</p>
-        <div class="net-urls" id="netUrls"><span class="muted small">正在读取本机地址…</span></div>
-        <div class="push-actions">
-          <button class="btn small" id="netCopy">复制手机地址</button>
-          <button class="btn small" id="netReload">重新检测</button>
-        </div>
-        <p class="setting-note">打不开时检查：① 电脑与手机是否同一 Wi-Fi；② Windows 防火墙是否放行了 node（首次运行会弹窗，选「允许专用网络」）；③ 只想本机访问可加 <code>--host=127.0.0.1</code> 启动。</p>
+        <h3>账号</h3>
+        <div class="setting-row"><div><div class="sr-label">当前账号</div><div class="sr-sub" id="setAccountRole">--</div></div><b id="setAccountName">--</b></div>
+        <div class="setting-row"><div><div class="sr-label">修改密码</div><div class="sr-sub">修改后其它设备需要重新登录</div></div><button class="btn small" id="setPassword">修改</button></div>
+        <div class="setting-row" id="setAdminRow" hidden><div><div class="sr-label">后台管理</div><div class="sr-sub">用户、登录记录、流量统计、推送与数据源</div></div><a class="btn small primary" href="/admin.html" target="_blank" rel="noreferrer">打开</a></div>
+        <div class="setting-row"><div><div class="sr-label">更新履历</div><div class="sr-sub">查看每个版本改了什么</div></div><button class="btn small" id="setChangelog">查看</button></div>
       </div>
       <div class="setting-group">
         <h3>关于</h3>
-        <p class="setting-note">寰球智投 v${APP_VERSION} · 数据来源：东方财富/ 腾讯 / 新浪公开行情接口，可在上方“行情数据源”中切换。行情可能延迟、缺失或调整口径；本工具仅用于学习研究，不构成投资建议。市场有风险，决策需独立判断。</p>
+        <p class="setting-note">寰球智投 v${APP_VERSION} · 数据来源：东方财富 / 腾讯 / 新浪公开行情接口。行情可能延迟、缺失或调整口径；本工具仅用于学习研究，不构成投资建议。<br>行情数据源、微信定时推送、手机访问地址已移到「后台管理」。</p>
       </div>
     </div>`, 'drawer-overlay');
 
-  loadPushSettings();
-  loadNetInfo();
+  const authUser = state.auth;
+  if ($('#setAccountName')) $('#setAccountName').textContent = authUser ? authUser.username : '--';
+  if ($('#setAccountRole')) {
+    $('#setAccountRole').textContent = authUser
+      ? (authUser.role === 'super' ? '超级管理员' : authUser.role === 'admin' ? '管理员' : '普通用户')
+      : '--';
+  }
+  if ($('#setAdminRow')) $('#setAdminRow').hidden = !(authUser && (authUser.role === 'admin' || authUser.role === 'super'));
+  $('#setChangelog') && $('#setChangelog').addEventListener('click', () => { closeOverlay(); openChangelog(); });
+  $('#setPassword') && $('#setPassword').addEventListener('click', openPasswordModal);
   $('#netCopy') && $('#netCopy').addEventListener('click', async () => {
     const urls = (state.netInfo && state.netInfo.mobile) || [];
     if (!urls.length) { toast('当前没有可用的手机地址', 'warn'); return; }
@@ -6071,7 +6021,6 @@ function openSettings() {
   });
   $('#setExport').addEventListener('click', exportAll);
   $('#setReset').addEventListener('click', resetAll);
-  bindSourceSettings();
 }
 
 function saveSettings() {
