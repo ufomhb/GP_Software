@@ -205,3 +205,32 @@ test('DOM：策略页组合建议渲染，恶意基金名不注入', () => {
   assert.ok(box.textContent.trim().length > 20, '面板应有内容');
   assert.match(box.textContent, /债基/, '基金名应作为文本出现');
 });
+
+test('DOM：基金页三个持仓/资金流面板都能渲染（拆模块后回归）', () => {
+  const evil = '基金<b>炸弹</b>';
+  app.state.fundWatchlist = [{ code: '510300', name: evil, type: 'etf' }];
+  app.state.fundWatchData = {
+    items: [{
+      code: '510300', name: evil, type: 'etf',
+      price: 3.9, pct: 1.5, pctKind: 'nav', mainYi: 2.2, score: 61,
+    }],
+  };
+  app.state.fundHoldings = { '510300': { shares: 1000, cost: 3.5 } };
+  app.state.fundFlow = {
+    items: [
+      { code: '510300', name: '沪深300ETF', mainYi: 5.2, pct: 1.1 },
+      { code: '512880', name: '证券ETF', mainYi: -3.4, pct: -0.8 },
+    ],
+    topInflow: { code: '510300', name: '沪深300ETF', mainYi: 5.2, pct: 1.1 },
+    topOutflow: { code: '512880', name: '证券ETF', mainYi: -3.4, pct: -0.8 },
+  };
+
+  for (const fn of ['renderFundHoldSummary', 'renderFundHoldTable', 'renderFundSummary']) {
+    assert.doesNotThrow(() => app[fn](), `${fn} 不应抛错`);
+  }
+  const holdTable = document.querySelector('#fundHoldTable');
+  assert.ok(holdTable.querySelectorAll('tbody tr').length >= 1, '持仓表应有行');
+  assert.equal(holdTable.querySelectorAll('b').length, 0, '基金名里的 <b> 必须被转义');
+  assert.match(document.querySelector('#fundHoldSummary').textContent, /持有市值/);
+  assert.match(document.querySelector('#fundSummary').textContent, /ETF|资金/);
+});
