@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.5.1",
+    "date": "2026-11-15",
+    "title": "修复作战中心无法加载",
+    "items": [
+      "修复服务端使用统计的日期函数与作战中心同名，导致 /api/battle、/api/sector-confirm、/api/money-moves、/api/ladder、/api/timeline 全部返回 502「Invalid time value」",
+      "将作战中心日期函数改名为 battleDateKey（YYYYMMDD），使用统计改名为 statsDateKey（YYYY-MM-DD），两套日期口径彻底分离",
+      "已验证作战总览、板块确认、资金异动、连板梯队、十日异动、时间轴复盘、策略研判均可正常显示"
+    ]
+  },
+  {
     "version": "1.5.0",
     "date": "2026-11-15",
     "title": "后台管理、使用统计与手机端优化",

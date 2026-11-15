@@ -26,7 +26,7 @@ import {
    ========================================================= */
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 
 const WATCH_KEY = 'gp.watchlist.v1';
 const ALERTS_KEY = 'gp.alerts.v1';

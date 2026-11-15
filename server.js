@@ -42,7 +42,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '1.5.0';
+const VERSION = '1.5.1';
 
 // 局域网访问用：列出本机所有非内网回环的 IPv4，手机连同一个 Wi-Fi 就能打开。
 function lanAddresses() {
@@ -4844,7 +4844,9 @@ function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
-function shanghaiDateKey(offsetDays = 0) {
+// 作战中心的交易日 key：返回 YYYYMMDD（紧凑格式，供东财涨停池 / 日期回退使用）。
+// 注意不要与使用统计的 statsDateKey 混用：后者返回 YYYY-MM-DD，重名会让涨停池日期解析失败。
+function battleDateKey(offsetDays = 0) {
   const p = zonedParts('Asia/Shanghai');
   const d = new Date(`${p.date}T12:00:00+08:00`);
   d.setUTCDate(d.getUTCDate() + offsetDays);
@@ -4934,7 +4936,7 @@ let poolDateHint = '';
 
 async function getPools() {
   return cached('battle:pools', 15000, async () => {
-    const today = shanghaiDateKey();
+    const today = battleDateKey();
     let dateKey = poolDateHint || today;
     let zt = null;
     for (let i = 0; i < 10; i += 1) {
@@ -6269,7 +6271,7 @@ async function buildTenDayUniverse() {
 async function runTenDayJob(job) {
   const universe = await buildTenDayUniverse();
   job.total = universe.length;
-  const dateKey = poolDateHint || shanghaiDateKey();
+  const dateKey = poolDateHint || battleDateKey();
   const rows = [];
   await mapLimit(universe, 4, async (stock) => {
     try {
@@ -6359,7 +6361,7 @@ async function runTenDayJob(job) {
 
 async function getTenDay(dir = 'up', force = false) {
   const pools = await getPools().catch(() => null);
-  const dateKey = pools ? pools.dateKey : shanghaiDateKey();
+  const dateKey = pools ? pools.dateKey : battleDateKey();
   const key = `${dateKey}:${dir}`;
   if (tenDayJob) {
     return {
@@ -7794,6 +7796,7 @@ const STATS_KEEP_DAYS = 120;
 const STATS_LOGIN_LIMIT = 2000;
 const STATS_ONLINE_WINDOW = 5 * 60 * 1000;
 
+// 使用统计的日期 key：返回 YYYY-MM-DD（与作战中心的 battleDateKey 区分开）。
 function statsDateKey(date = new Date()) {
   try {
     return new Intl.DateTimeFormat('en-CA', {
