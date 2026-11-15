@@ -509,7 +509,7 @@ async function loadSystem() {
     const info = [
       ['服务版本', `v${sys.version || '-'}`, ''],
       ['运行时长', fmtDuration(n(sys.uptime) * 1000), ''],
-      ['最近部署', sys.deployedAt || '-', ''],
+      ['最近部署', sys.deployedAt ? fmtDateTime(new Date(sys.deployedAt).getTime()) : '-', ''],
       ['系统平台', sys.platform || '-', ''],
       ['磁盘', sys.disk || '本机非 Linux 部署，未读取', ''],
     ];
