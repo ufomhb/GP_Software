@@ -6,8 +6,6 @@ const os = require('node:os');
 const path = require('node:path');
 const { exec } = require('node:child_process');
 const crypto = require('node:crypto');
-const net = require('node:net');
-const dns = require('node:dns');
 
 const { computeSeries } = require('./lib/indicators');
 const { analyze, stockAdvice, marketAdvice, aggregateNews, shanghaiToday, nf, pctText } = require('./lib/engine');
@@ -71,9 +69,10 @@ const {
   sessionCookie: buildSessionCookie,
 } = require('./src/lib/security');
 const { assertSafeOutboundUrl } = require('./src/lib/net-safety');
+const securityLib = require('./src/lib/security');
 
 function setSecurityHeaders(req, res) {
-  require('./src/lib/security').setSecurityHeaders(req, res, CSP_ENFORCE);
+  securityLib.setSecurityHeaders(req, res, CSP_ENFORCE);
 }
 
 function inviteMatches(code) {
@@ -7222,74 +7221,7 @@ async function buildReportForSlot(slotKey, opts = {}) {
   return buildStrategyReport(port, pulse, opts);
 }
 
-/* ---------------------------------------------------------
-   出站地址校验（P0）
-   webhook 由管理员填写，必须挡住内网 / 回环 / 云元数据地址：
-   否则管理员账号一旦被拿下，推送配置就变成打 NAS 内网的跳板（192.168.31.x、dockerctl:9302）。
-   --------------------------------------------------------- */
-// 配置类错误统一按 400 返回（否则前端只会看到「服务暂时不可用」）。
-function outboundError(message) {
-  return Object.assign(new Error(message), { status: 400 });
-}
-
-function isPrivateAddress(ip) {
-  const raw = String(ip || '').trim().toLowerCase();
-  if (!raw) return true;
-  const v = raw.startsWith('::ffff:') ? raw.slice(7) : raw;
-  if (net.isIPv4(v)) {
-    const [a, b] = v.split('.').map(Number);
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && (b === 0 || b === 168)) return true;
-    if (a === 198 && (b === 18 || b === 19)) return true;
-    if (a >= 224) return true;
-    return false;
-  }
-  if (net.isIPv6(v)) {
-    if (v === '::' || v === '::1' || v === '0:0:0:0:0:0:0:1') return true;
-    if (/^f[cd][0-9a-f]{2}:/.test(v)) return true; // fc00::/7 唯一本地地址
-    if (/^fe[89ab][0-9a-f]:/.test(v)) return true; // fe80::/10 链路本地
-    return false;
-  }
-  return true;
-}
-
-async function assertSafeOutboundUrl(rawUrl) {
-  let parsed;
-  try {
-    parsed = new URL(String(rawUrl || ''));
-  } catch {
-    throw outboundError('webhook 地址格式不正确');
-  }
-  if (parsed.protocol !== 'https:') throw outboundError('webhook 必须是 https 地址');
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (!host) throw outboundError('webhook 缺少主机名');
-  if (
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host.endsWith('.local') ||
-    host.endsWith('.internal') ||
-    host.endsWith('.lan')
-  ) {
-    throw outboundError('webhook 不能指向内网地址');
-  }
-  if (net.isIP(host)) {
-    if (isPrivateAddress(host)) throw outboundError('webhook 不能指向内网地址');
-    return;
-  }
-  let addrs = [];
-  try {
-    addrs = await dns.promises.lookup(host, { all: true });
-  } catch {
-    throw outboundError('webhook 域名无法解析');
-  }
-  if (!addrs.length) throw outboundError('webhook 域名无法解析');
-  for (const item of addrs) {
-    if (isPrivateAddress(item.address)) throw outboundError('webhook 不能指向内网地址');
-  }
-}
+// 出站地址校验（webhook 防 SSRF）见 src/lib/net-safety.js。
 
 async function sendPushMessage({ title, content }) {
   const cfg = loadPushConfig();
@@ -7707,10 +7639,6 @@ function verifyPassword(password, salt, hash) {
   return crypto.timingSafeEqual(got, want);
 }
 
-// 会话文件只存 sha256(token)：文件泄露不等于可以直接登录。
-function sessionKey(token) {
-  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
-}
 
 function loadSessions() {
   return dataStore.loadSessions();
@@ -7793,14 +7721,6 @@ function invalidateUserSessions(userId) {
   }
   if (changed) saveSessions(sessions);
   return changed;
-}
-
-function sessionCookie(req, token, maxAgeSec) {
-  const parts = [`${SESSION_COOKIE}=${token}`, 'Path=/', 'HttpOnly', 'SameSite=Lax'];
-  if (maxAgeSec !== undefined) parts.push(`Max-Age=${maxAgeSec}`);
-  // 只有 HTTPS 才加 Secure：否则本机 http://127.0.0.1 会直接登录不上。
-  if (requestIsHttps(req)) parts.push('Secure');
-  return parts.join('; ');
 }
 
 function issueSession(req, res, user) {
@@ -7891,13 +7811,6 @@ function loginKey(req, username) {
   return `${clientIp(req)}|${String(username || '').trim().toLowerCase().slice(0, 64)}`;
 }
 
-// 邀请码用哈希比较，避免长度不同时抛错、也不泄露前缀。
-function inviteMatches(code) {
-  if (!INVITE_CODE) return true;
-  const got = crypto.createHash('sha256').update(String(code || '')).digest();
-  const want = crypto.createHash('sha256').update(INVITE_CODE).digest();
-  return crypto.timingSafeEqual(got, want);
-}
 
 // 注册限流：同一 IP 一小时最多 5 次尝试（与登录限流分开统计）。
 function registerAllowed(req) {

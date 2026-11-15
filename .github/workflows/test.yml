@@ -1,0 +1,28 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: 语法检查
+        run: |
+          node --check server.js
+          node --check lib/store.js
+          node --check src/lib/security.js
+          node --check src/lib/net-safety.js
+      - name: 单元 + 集成测试
+        run: node --test
+      - name: 安全基线自测（隔离实例）
+        run: node scripts/selfcheck-p0.mjs
+      - name: 存储层自测（隔离实例）
+        run: node scripts/selfcheck-store.mjs

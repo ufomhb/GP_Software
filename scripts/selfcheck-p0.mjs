@@ -23,7 +23,7 @@ const DATA = join(work, 'data');
 for (const name of ['server.js', 'package.json']) {
   cpSync(join(ROOT, name), join(work, name));
 }
-for (const dir of ['lib', 'public']) {
+for (const dir of ['lib', 'src', 'public']) {
   cpSync(join(ROOT, dir), join(work, dir), { recursive: true });
 }
 mkdirSync(DATA, { recursive: true });

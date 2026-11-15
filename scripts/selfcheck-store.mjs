@@ -68,7 +68,7 @@ function client(port, cookie) {
 
 console.log('准备隔离环境…');
 for (const name of ['server.js', 'package.json']) cpSync(join(ROOT, name), join(work, name));
-for (const dir of ['lib', 'public']) cpSync(join(ROOT, dir), join(work, dir), { recursive: true });
+for (const dir of ['lib', 'src', 'public']) cpSync(join(ROOT, dir), join(work, dir), { recursive: true });
 mkdirSync(DATA, { recursive: true });
 for (const name of ['users.json', 'sessions.json', 'push-config.json', 'stats.json']) {
   const src = join(ROOT, 'data', name);

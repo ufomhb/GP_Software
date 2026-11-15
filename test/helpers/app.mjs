@@ -62,7 +62,7 @@ export async function startApp(opts = {}) {
   for (const name of ['server.js', 'package.json']) {
     cpSync(join(ROOT, name), join(work, name));
   }
-  for (const dir of ['lib', 'public', 'scripts']) {
+  for (const dir of ['lib', 'src', 'public', 'scripts']) {
     if (existsSync(join(ROOT, dir))) cpSync(join(ROOT, dir), join(work, dir), { recursive: true });
   }
   const dataDir = join(work, 'data');
