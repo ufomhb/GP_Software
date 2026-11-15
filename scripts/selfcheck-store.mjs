@@ -159,29 +159,90 @@ db2.close();
 s1.child.kill();
 await new Promise((r) => setTimeout(r, 400));
 
-// ---------- 3. 回退到 STORE=json ----------
-console.log('\n3. 回退 STORE=json');
+// ---------- 4. 并发登录（改造前 JSON 会丢会话） ----------
+console.log('\n4. 并发登录 / 统计持久化');
+{
+  const { scryptSync, randomBytes } = require('node:crypto');
+  const salt = randomBytes(16).toString('hex');
+  const hash = scryptSync('storecheck-pass', salt, 64).toString('hex');
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(join(DATA, 'gp.sqlite'));
+  db.prepare(`INSERT OR REPLACE INTO users
+    (id, username, username_lc, salt, hash, is_primary, role, created_at, login_count)
+    VALUES ('ustorecheck','storecheck','storecheck',?,?,0,'user',?,0)`).run(salt, hash, new Date().toISOString());
+  db.close();
+}
+const s3 = startServer(PORT_SQLITE, { STORE: 'sqlite' });
+await waitReady(PORT_SQLITE, s3.logs);
+const loginResults = await Promise.all(Array.from({ length: 20 }, () => fetch(`http://127.0.0.1:${PORT_SQLITE}/api/auth/login`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ username: 'storecheck', password: 'storecheck-pass' }),
+})));
+const cookies = (await Promise.all(loginResults.map(async (r) => {
+  const body = await r.text();
+  void body;
+  return (r.headers.get('set-cookie') || '').split(';')[0];
+}))).filter(Boolean);
+ok('20 次并发登录全部成功', loginResults.every((r) => r.status === 200) && cookies.length === 20, `cookies=${cookies.length}`);
+const meAll = await Promise.all(cookies.map((c) => fetch(`http://127.0.0.1:${PORT_SQLITE}/api/auth/me`, { headers: { Cookie: c } })));
+const meOk = await Promise.all(meAll.map(async (r) => (r.status === 200 ? (await r.json()).user?.username === 'storecheck' : false)));
+ok('20 个会话全部可用（没有互相覆盖）', meOk.every(Boolean), `ok=${meOk.filter(Boolean).length}/20`);
+
+// 触发统计写入（3 秒防抖）后重启，确认统计是从库里恢复的
+await fetch(`http://127.0.0.1:${PORT_SQLITE}/api/health`);
+const adminCookie = `gp_sid=${token}`;
+const statsBefore = await (await fetch(`http://127.0.0.1:${PORT_SQLITE}/api/admin/stats`, { headers: { Cookie: adminCookie } })).json();
+await new Promise((r) => setTimeout(r, 3500));
+s3.child.kill();
+await new Promise((r) => setTimeout(r, 500));
+{
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(join(DATA, 'gp.sqlite'), { readOnly: true });
+  const row = db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(requests),0) AS req FROM stats_daily").get();
+  ok('统计已写入 stats_daily', Number(row.n) > 0, `rows=${row.n} requests=${row.req}`);
+  db.close();
+}
+
+// ---------- 5. 重启后数据仍在 ----------
+console.log('\n5. 重启后数据仍在');
+const s4 = startServer(PORT_SQLITE, { STORE: 'sqlite' });
+await waitReady(PORT_SQLITE, s4.logs);
+const apiReload = client(PORT_SQLITE, adminCookie);
+const meReload = await apiReload('/api/auth/me');
+ok('会话重启后仍有效', meReload.status === 200, String(meReload.status));
+const pfReload = await apiReload('/api/portfolio');
+ok('自选重启后仍在（含自测基金）', (pfReload.json?.funds || []).some((f) => f.code === '110022'));
+const statsReload = await apiReload('/api/admin/stats');
+ok('统计重启后仍有数据', statsReload.status === 200 && (statsReload.json?.series || []).some((d) => Number(d.requests) > 0),
+  `series=${(statsReload.json?.series || []).length}`);
+void statsBefore;
+s4.child.kill();
+await new Promise((r) => setTimeout(r, 400));
+
+// ---------- 6. 回退到 STORE=json ----------
+console.log('\n6. 回退 STORE=json');
 const s2 = startServer(PORT_JSON, { STORE: 'json' });
 await waitReady(PORT_JSON, s2.logs);
-const apiJson = client(PORT_JSON, `gp_sid=${token}`);
-const meJson = await apiJson('/api/auth/me');
-ok('json 模式启动正常', s2.logs().includes('JSON 文件'), '');
-ok('json 模式下 store 变量已切换', true);
+ok('json 模式启动正常', s2.logs().includes('JSON 文件'));
 s2.child.kill();
 await new Promise((r) => setTimeout(r, 300));
-void meJson;
 
-// ---------- 4. 备份 ----------
-console.log('\n4. VACUUM INTO 快照');
+// ---------- 7. 备份 ----------
+console.log('\n7. VACUUM INTO 快照');
 process.env.STORE = 'sqlite';
 const store2 = require(join(work, 'lib', 'store.js'));
 const snap = join(work, 'snap.sqlite');
 store2.backupTo(snap);
 ok('快照文件已生成', existsSync(snap));
 if (existsSync(snap)) {
-  const snapDb = new (require('node:sqlite').DatabaseSync)(snap, { readOnly: true });
+  const { DatabaseSync } = require('node:sqlite');
+  const liveDb = new DatabaseSync(join(DATA, 'gp.sqlite'), { readOnly: true });
+  const liveUsers = Number(liveDb.prepare('SELECT COUNT(*) AS n FROM users').get().n);
+  liveDb.close();
+  const snapDb = new DatabaseSync(snap, { readOnly: true });
   const n = snapDb.prepare('SELECT COUNT(*) AS n FROM users').get().n;
-  ok('快照里账号数正确', Number(n) === users.length, `n=${n}`);
+  ok('快照里账号数与主库一致', Number(n) === liveUsers, `snap=${n} live=${liveUsers}`);
   snapDb.close();
 }
 store2.close();

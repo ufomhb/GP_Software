@@ -84,14 +84,32 @@ node scripts/superadmin.js --user=superadmin --password='自定义密码'
 
 ### 数据与备份
 
-- 运行时数据：`data/`
-  - `users.json` 账号（scrypt 加盐哈希）
-  - `sessions.json` 会话
-  - `userdata/<id>.json` 各账号自选与持仓
-  - `push-config.json` 推送配置 + 主账号持仓
-  - `stats.json` 每日流量 / 使用时长 / 页面访问 / 登录日志（保留 120 天，日志最多 2000 条）
-- **以上文件已加入 `.gitignore`，不会进入仓库**（含推送密钥与密码哈希）
-- NAS 上每天 03:30 自动备份到 `/data/backup/gp-data/`，保留 7 天
+运行数据有两种后端，由环境变量 `STORE` 决定（默认 `json`）：
+
+| `STORE` | 存放位置 | 说明 |
+| --- | --- | --- |
+| `json`（默认） | `data/users.json`、`sessions.json`、`userdata/<id>.json`、`push-config.json`、`stats.json` | 旧行为，改造前一直用的方式，随时可回退 |
+| `sqlite`（线上） | `data/gp.sqlite` | 事务写入，防并发丢写与崩溃损坏；账号 / 会话 / 自选 / 持仓 / 推送配置 / 统计全在库里 |
+
+无论哪种后端，以下内容都不进数据库（可再生或内容类）：
+
+- `data/boards.json` 板块清单、`data/sector-members.json` 板块成分、`data/us-sessions.json` 美股延时快照、`data/auction-YYYYMMDD.json` 竞价快照（自动保留最近 30 天）、`data/source-config.json` 数据源选择、`data/changelog.json` 更新履历。
+- 行情数据只做内存 + 文件缓存，不进库。
+
+**迁移与备份命令**（Node ≥ 22.5，`node:sqlite` 内置）：
+
+```bash
+node scripts/migrate-json-to-sqlite.mjs --dry-run   # 预演：只统计不写库
+node scripts/migrate-json-to-sqlite.mjs --verify    # 正式导入并逐项比对
+node scripts/backup-sqlite.mjs [输出路径]            # VACUUM INTO 一致性快照
+STORE=sqlite node server.js                          # 用数据库启动
+node server.js                                       # 去掉 STORE 即回退到 JSON
+```
+
+- **源 JSON 文件在迁移过程中只读**，所以回退只需去掉 `STORE=sqlite` 重启；代价是回退会丢掉切换之后写进库的新改动（真要回退，先 `node scripts/migrate-json-to-sqlite.mjs --dry-run` 看一眼再决定，或直接用迁移前的 tar 备份恢复）。
+- 以上数据文件均已加入 `.gitignore`，不会进入仓库（含推送密钥与密码哈希）。
+- NAS 上每天 03:30 自动备份到 `/data/backup/gp-data/`：`gp-YYYYMMDD.sqlite`（库快照）+ `data-YYYYMMDD.tar.gz`（其余文件，已排除库文件），各保留 7 份。
+- 自测：`node scripts/selfcheck-p0.mjs`（安全基线 34 项）、`node scripts/selfcheck-store.mjs`（存储层 23 项，含迁移校验、并发登录、重启保持、回退）。
 
 ### 部署拓扑（当前线上）
 
@@ -427,16 +445,24 @@ node server.js --port=8091
 .
 ├─ server.js                  # 零依赖 Node HTTP 服务 + 行情聚合 + 缓存/降级
 ├─ lib/
+│  ├─ store.js                # 存储层：json / sqlite 双后端 + 迁移与快照
 │  ├─ indicators.js           # MA / EMA / RSI / MACD / ATR
 │  ├─ engine.js               # 技术评分、个股建议、市场复盘/明日策略
 │  ├─ source.js               # 数据源注册、优先级、健康度/冷却与切换
 │  └─ marketdata.js           # 东方财富 / 腾讯 / 新浪的行情、板块、资金流实现
+├─ scripts/
+│  ├─ migrate-json-to-sqlite.mjs # JSON → SQLite 迁移与校验
+│  ├─ backup-sqlite.mjs       # VACUUM INTO 一致性快照
+│  ├─ selfcheck-p0.mjs        # 安全基线自测（隔离实例，34 项）
+│  ├─ selfcheck-store.mjs     # 存储层自测（迁移/并发/重启/回退，23 项）
+│  └─ superadmin.js           # 超级管理员账号创建与重置
 ├─ public/
 │  ├─ index.html              # 单页终端
 │  ├─ css/app.css             # 深色行情终端样式
 │  ├─ js/app.js               # 视图、交互、自选/预警、设置
 │  ├─ js/charts.js            # ECharts 图表封装
 │  └─ vendor/echarts.min.js   # 本地 ECharts
+├─ data/gp.sqlite             # STORE=sqlite 时的数据库（含账号/会话/持仓/统计）
 ├─ data/boards.json           # 行业/概念/地域板块清单快照
 ├─ data/source-config.json    # 数据源选择（首次切换后生成）
 ├─ preview-dashboard.png      # 全景页预览
