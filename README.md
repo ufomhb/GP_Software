@@ -158,14 +158,16 @@ Environment=TRUST_PROXY=cloudflare
 ### 测试与结构（P2，2026-11-15）
 
 ```bash
-npm test                                  # 单元 + 集成测试（33 项，起隔离实例，不碰 data/）
+npm install                               # 只装测试依赖 jsdom（运行时仍然零依赖）
+npm test                                  # 单元 + 集成 + DOM（46 项，起隔离实例，不碰 data/）
 npm run selfcheck                         # 安全基线 34 项 + 存储层 23 项
 ```
 
-- 测试在 `test/`：`auth`（注册/登录/改密/会话失效）、`portfolio`（清洗、跨账号隔离、sqlite 模式）、`security`（安全头、同源校验、穿越、SSRF、后台权限、日志脱敏）、`unit-security`（`src/lib/*` 纯函数）。
+- 测试在 `test/`：`auth`（注册/登录/改密/会话失效）、`portfolio`（清洗、跨账号隔离、sqlite 模式）、`security`（安全头、同源校验、穿越、SSRF、后台权限、日志脱敏）、`unit-security`（`src/lib/*` 纯函数）、`unit-push`（时段判断/幂等/配置归一）、`dom-smoke`（jsdom 载入真实 index.html，驱动渲染函数）。
 - 测试脚手架 `test/helpers/app.mjs` 会把代码复制到临时目录、用随机端口起一个实例，所以**不会改动仓库里的 `data/`**。
-- 纯逻辑已从 `server.js` 抽到 `src/lib/`：`security.js`（HTTPS 判定、安全头、脱敏、同源校验、会话键/Cookie、邀请码）、`net-safety.js`（内网地址识别、webhook 出站校验）。`server.js` 保留薄包装，调用方签名不变。
-- 前端渲染约定：**任何来自服务端/上游的文本进 `innerHTML` 前必须 `esc()`**。2026-11-15 审计了 225 处模板插值，35 处「文本型」全部确认安全（要么已在渲染处 `esc()`，要么走 `textContent`/`toast`/剪贴板/`encodeURIComponent`），未发现可利用的注入点。
+- 服务端纯逻辑在 `src/lib/`（`security.js` / `net-safety.js`），推送子系统在 `src/services/push.js`（由 `createPushService(deps)` 注入依赖，便于单测）。
+- 前端通用工具在 `public/js/util.js`（格式化、`esc`、`safeUrl`），`app.js` 只保留视图与交互。
+- 前端渲染约定：**外部文本进 `innerHTML` 前必须 `esc()`；进 `href`/`src` 前必须再过 `safeUrl()`**（`esc` 挡不住 `javascript:` 协议）。2026-11-15 审计了 225 处模板插值，35 处文本型全部安全，并补了 `safeUrl` 覆盖快讯链接等 2 处 href。
 - CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
 
 ### v1.5 更新（2026-11-15）
@@ -464,15 +466,18 @@ node server.js --port=8091
 │  ├─ engine.js               # 技术评分、个股建议、市场复盘/明日策略
 │  ├─ source.js               # 数据源注册、优先级、健康度/冷却与切换
 │  └─ marketdata.js           # 东方财富 / 腾讯 / 新浪的行情、板块、资金流实现
-├─ src/lib/
-│  ├─ security.js             # HTTPS 判定、安全响应头、脱敏、同源校验、会话键与 Cookie
-│  └─ net-safety.js           # 内网地址识别、webhook 出站地址校验（防 SSRF）
+├─ src/
+│  ├─ lib/security.js         # HTTPS 判定、安全响应头、脱敏、同源校验、会话键与 Cookie
+│  ├─ lib/net-safety.js       # 内网地址识别、webhook 出站地址校验（防 SSRF）
+│  └─ services/push.js        # 推送子系统：配置归一、持仓聚合、报告生成、渠道发送、时段调度、/api/push/*
 ├─ test/
 │  ├─ helpers/app.mjs         # 测试脚手架（临时目录 + 随机端口起隔离实例）
 │  ├─ auth.test.mjs           # 注册 / 登录 / 改密 / 会话失效
 │  ├─ portfolio.test.mjs      # 自选与持仓的清洗、隔离、sqlite 模式
 │  ├─ security.test.mjs       # 安全头、同源、穿越、SSRF、后台权限、日志脱敏
-│  └─ unit-security.test.mjs  # src/lib 纯函数单测
+│  ├─ unit-security.test.mjs  # src/lib 纯函数单测
+│  ├─ unit-push.test.mjs      # 推送时段/幂等/配置归一
+│  └─ dom-smoke.test.mjs      # jsdom 载入真实页面，验证渲染与转义
 ├─ .github/workflows/test.yml # CI：语法检查 + npm test + 两个 selfcheck
 ├─ scripts/
 │  ├─ migrate-json-to-sqlite.mjs # JSON → SQLite 迁移与校验
@@ -483,6 +488,7 @@ node server.js --port=8091
 ├─ public/
 │  ├─ index.html              # 单页终端
 │  ├─ css/app.css             # 深色行情终端样式
+│  ├─ js/util.js              # 纯工具：格式化、esc、safeUrl（P2 从 app.js 抽出）
 │  ├─ js/app.js               # 视图、交互、自选/预警、设置
 │  ├─ js/charts.js            # ECharts 图表封装
 │  └─ vendor/echarts.min.js   # 本地 ECharts
