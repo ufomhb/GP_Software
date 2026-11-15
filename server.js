@@ -8088,6 +8088,11 @@ async function getSystemStatus() {
     backups: [],
     deployedAt: null,
   };
+  try {
+    status.deployedAt = fs.statSync(path.join(__dirname, 'server.js')).mtime.toISOString();
+  } catch {
+    status.deployedAt = null;
+  }
   if (process.platform !== 'linux') return status;
   for (const name of ['gp-terminal', 'gp-tunnel', 'gp-root-shell', 'dockerctl']) {
     status.services[name] = (await shellOut(`systemctl is-active ${name}`)) || 'unknown';
@@ -8100,11 +8105,6 @@ async function getSystemStatus() {
     .split('\n')
     .filter(Boolean)
     .map((item) => item.split('/').pop());
-  try {
-    status.deployedAt = fs.statSync(path.join(__dirname, 'server.js')).mtime.toISOString();
-  } catch {
-    status.deployedAt = null;
-  }
   return status;
 }
 

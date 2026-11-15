@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#070b12">
 <title>寰球智投 · 登录</title>
-<link rel="stylesheet" href="/css/app.css?v=1.4.0">
+<link rel="stylesheet" href="/css/app.css?v=1.5.0">
 <style>
   .auth-wrap {
     min-height: 100vh;
@@ -48,7 +48,7 @@
   }
   .auth-tabs {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 4px;
     padding: 4px;
     margin-bottom: 22px;
@@ -149,6 +149,7 @@
       <div class="auth-tabs" role="tablist">
         <button type="button" class="auth-tab is-active" data-mode="login" role="tab">登录</button>
         <button type="button" class="auth-tab" data-mode="register" role="tab">注册</button>
+        <button type="button" class="auth-tab" data-mode="change" role="tab">修改密码</button>
       </div>
 
       <form id="authForm" autocomplete="on" novalidate>
@@ -158,9 +159,14 @@
                  placeholder="3-20 位中文 / 字母 / 数字 / 下划线" required>
         </label>
         <label class="auth-field">
-          <span>密码</span>
+          <span id="passwordLabel">密码</span>
           <input id="password" name="password" type="password" maxlength="64" autocomplete="current-password"
                  placeholder="至少 6 位" required>
+        </label>
+        <label class="auth-field" id="newPasswordRow" hidden>
+          <span>新密码</span>
+          <input id="newPassword" name="newPassword" type="password" maxlength="64" autocomplete="new-password"
+                 placeholder="至少 6 位，不能与原密码相同">
         </label>
         <label class="auth-field" id="confirmRow" hidden>
           <span>确认密码</span>
@@ -173,7 +179,8 @@
 
       <div class="auth-hint">
         第一个注册的账号是<b>主账号</b>，会继承现有的自选基金与持仓，并继续使用 <code>14:30 / 19:30</code> 的微信推送；
-        之后注册的账号各自保存自己的持仓，互不影响。
+        之后注册的账号各自保存自己的持仓，互不影响。<br>
+        忘记密码可用上方「修改密码」；管理员入口在 <a href="/admin.html" style="color:var(--accent)">后台管理</a>。
       </div>
     </div>
   </div>
@@ -188,14 +195,18 @@
   var btn = $('submitBtn');
   var msg = $('authMsg');
   var confirmRow = $('confirmRow');
+  var newPasswordRow = $('newPasswordRow');
+  var passwordLabel = $('passwordLabel');
 
   function setMode(next) {
     mode = next;
     document.querySelectorAll('.auth-tab').forEach(function (t) {
       t.classList.toggle('is-active', t.dataset.mode === mode);
     });
-    confirmRow.hidden = mode !== 'register';
-    btn.textContent = mode === 'register' ? '注册并登录' : '登录';
+    confirmRow.hidden = mode === 'login';
+    newPasswordRow.hidden = mode !== 'change';
+    passwordLabel.textContent = mode === 'change' ? '原密码' : '密码';
+    btn.textContent = mode === 'register' ? '注册并登录' : mode === 'change' ? '确认修改' : '登录';
     $('password').setAttribute('autocomplete', mode === 'register' ? 'new-password' : 'current-password');
     show('', false);
     $('username').focus();
@@ -215,10 +226,10 @@
     location.replace(target);
   }
 
-  function submit(payload) {
+  function request(path, payload) {
     btn.disabled = true;
     show('', false);
-    return fetch('/api/auth/' + mode, {
+    return fetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -229,14 +240,32 @@
           return data;
         });
       })
-      .then(function () {
-        show(mode === 'register' ? '注册成功，正在进入…' : '登录成功，正在进入…', true);
-        setTimeout(goHome, 220);
-      })
       .catch(function (err) {
         show(err.message || '网络错误，请稍后重试', false);
         btn.disabled = false;
+        throw err;
       });
+  }
+
+  function submitLogin(payload) {
+    return request('/api/auth/' + mode, payload).then(function () {
+      show(mode === 'register' ? '注册成功，正在进入…' : '登录成功，正在进入…', true);
+      setTimeout(goHome, 220);
+    }).catch(function () { /* 错误已显示 */ });
+  }
+
+  function submitChange() {
+    var username = $('username').value.trim();
+    var oldPassword = $('password').value;
+    var newPassword = $('newPassword').value;
+    return request('/api/auth/password', { username: username, oldPassword: oldPassword, newPassword: newPassword })
+      .then(function () {
+        show('密码已修改，请用新密码登录', true);
+        $('password').value = '';
+        $('newPassword').value = '';
+        $('confirm').value = '';
+        setTimeout(function () { setMode('login'); }, 1200);
+      }).catch(function () { /* 错误已显示 */ });
   }
 
   document.querySelectorAll('.auth-tab').forEach(function (t) {
@@ -249,15 +278,33 @@
     var password = $('password').value;
     if (username.length < 3) { show('用户名至少 3 位'); return; }
     if (password.length < 6) { show('密码至少 6 位'); return; }
+
+    if (mode === 'change') {
+      var newPassword = $('newPassword').value;
+      if (newPassword.length < 6) { show('新密码至少 6 位'); return; }
+      if (newPassword !== $('confirm').value) { show('两次输入的新密码不一致'); return; }
+      if (newPassword === password) { show('新密码不能与原密码相同'); return; }
+      submitChange();
+      return;
+    }
+
     if (mode === 'register' && password !== $('confirm').value) { show('两次输入的密码不一致'); return; }
-    submit({ username: username, password: password });
+    submitLogin({ username: username, password: password });
   });
 
-  // 已登录就直接进首页，省一次输入。
-  fetch('/api/auth/me', { cache: 'no-store' })
-    .then(function (r) { return r.json(); })
-    .then(function (d) { if (d && d.user) goHome(); })
-    .catch(function () { /* 离线时留在登录页 */ });
+  var params = new URLSearchParams(location.search);
+  if (params.get('changed') === '1') {
+    show('密码已修改，请用新密码登录', true);
+  }
+  if (params.get('mode') === 'change') setMode('change');
+
+  // 已登录且不是来改密码的，就直接进首页，省一次输入。
+  if (mode !== 'change' && params.get('changed') !== '1') {
+    fetch('/api/auth/me', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && d.user) goHome(); })
+      .catch(function () { /* 离线时留在登录页 */ });
+  }
 })();
 </script>
 </body>

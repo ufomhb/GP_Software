@@ -268,14 +268,14 @@ strong { font-weight: 650; }
   z-index: 90;
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
   height: 70px;
   padding: 0 22px;
   border-bottom: 1px solid var(--line);
   background: rgba(7, 11, 18, 0.86);
   backdrop-filter: blur(20px) saturate(130%);
 }
-.brand { display: flex; align-items: center; gap: 11px; min-width: 214px; text-decoration: none; }
+.brand { display: flex; align-items: center; gap: 11px; min-width: 196px; text-decoration: none; }
 .brand-mark {
   display: grid;
   width: 38px;
@@ -288,21 +288,28 @@ strong { font-weight: 650; }
   font-weight: 900;
   box-shadow: 0 0 26px rgba(56, 189, 248, 0.3);
 }
-.brand-text { display: flex; flex-direction: column; gap: 3px; }
-.brand-text strong { font-size: 18px; letter-spacing: 0.08em; }
+.brand-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.brand-text strong { font-size: 18px; letter-spacing: 0.08em; white-space: nowrap; }
 .brand-text small { color: var(--muted); font-size: 8px; font-weight: 600; letter-spacing: 0.2em; }
 
-.top-sessions { display: flex; flex: 1; gap: 7px; min-width: 0; overflow: hidden; }
+.top-sessions {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-content: center;
+  gap: 4px 6px;
+  min-width: 0;
+}
 .session-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 9px;
+  gap: 5px;
+  padding: 5px 8px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.022);
   color: var(--text-2);
-  font-size: 10px;
+  font-size: 9.5px;
   white-space: nowrap;
 }
 .session-pill b { color: var(--muted); font-weight: 500; }
@@ -312,7 +319,7 @@ strong { font-weight: 650; }
 .session-pill.state-break .dot, .session-pill.state-pre .dot { background: var(--gold); }
 .session-pill.state-closed .dot { background: #526078; }
 
-.search { position: relative; width: min(370px, 28vw); flex: none; }
+.search { position: relative; width: min(330px, 26vw); flex: none; }
 .search-icon { position: absolute; top: 11px; left: 12px; width: 16px; height: 16px; color: #64748b; pointer-events: none; }
 .search input {
   width: 100%;
@@ -375,7 +382,7 @@ strong { font-weight: 650; }
 .search-item .s-type { color: var(--accent); font-size: 9px; }
 .search-empty { padding: 14px; color: var(--muted); font-size: 11px; text-align: center; }
 
-.top-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.top-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .auto-toggle { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; cursor: pointer; user-select: none; }
 .auto-toggle input { display: none; }
 .switch-ui { position: relative; width: 28px; height: 16px; border-radius: 99px; background: rgba(148, 163, 184, 0.2); transition: 0.18s ease; }
@@ -1462,11 +1469,12 @@ strong { font-weight: 650; }
 }
 
 @media (max-width: 900px) {
-  .topbar { flex-wrap: wrap; height: auto; padding: 10px 14px; gap: 10px; }
+  /* 手机/平板：顶栏不再吸顶，让主导航独占吸顶位置，滚动时导航栏始终可见 */
+  .topbar { position: static; flex-wrap: wrap; height: auto; padding: 10px 14px; gap: 10px; }
   .brand { min-width: 0; flex: 1; }
   .search { order: 3; width: 100%; }
   .top-actions { margin-left: 0; }
-  .mainnav { top: 0; }
+  .mainnav { top: 0; z-index: 120; }
   .nav-inner { overflow-x: auto; padding: 0 12px; }
   .nav-meta { display: none; }
   .main { padding: 14px 12px 50px; }
@@ -2369,23 +2377,53 @@ strong { font-weight: 650; }
   .view-head h1 { font-size: 20px; }
   .eyebrow { font-size: 8px; letter-spacing: 0.18em; }
 
-  /* 顶栏：压缩到两行内，跑马灯让位 */
-  .topbar { height: auto; padding: 8px 10px; gap: 8px; }
-  .brand-mark { width: 32px; height: 32px; font-size: 16px; border-radius: 9px; }
-  .brand-text strong { font-size: 15px; }
+  /* 顶栏：两行网格（品牌 + 图标操作 / 全宽搜索），不再横向溢出 */
+  .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "brand actions" "search search";
+    align-items: center;
+    gap: 8px 10px;
+    height: auto;
+    padding: 8px 10px;
+  }
+  .brand { grid-area: brand; flex: none; min-width: 0; overflow: hidden; }
+  .brand-mark { width: 32px; height: 32px; font-size: 16px; border-radius: 9px; flex: none; }
+  .brand-text { min-width: 0; }
+  .brand-text strong { font-size: 15px; white-space: nowrap; }
   .brand-text small { display: none; }
-  .search { width: 100%; order: 3; }
+  .top-actions { grid-area: actions; margin-left: 0; gap: 5px; flex-wrap: nowrap; }
+  .top-actions .btn { height: 34px; padding: 0 8px; }
+  .top-actions .btn span { display: none; }
+  #sourceChip { display: none; }
+  .account-chip { max-width: 96px; padding: 5px 8px; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+  #changelogBtn { display: none; }
+  .search { grid-area: search; order: 0; width: 100%; }
   .search input { height: 36px; }
   .ticker { height: 26px; }
   .ticker-label { display: none; }
   .ticker-item { padding: 0 12px; font-size: 10px; }
 
-  /* 主导航：横向可滑，隐藏滚动条 */
+  /* 主导航：吸顶 + 横向可滑，隐藏滚动条 */
+  .mainnav { top: 0; }
+  .mainnav::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 24px;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(8, 13, 22, 0.92));
+  }
   .nav-inner {
     display: flex;
     gap: 0;
+    width: 100%;
+    max-width: 100vw;
     overflow-x: auto;
     overflow-y: hidden;
+    overscroll-behavior-x: contain;
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
     scroll-snap-type: x proximity;
@@ -2544,7 +2582,19 @@ strong { font-weight: 650; }
 }
 @media (max-width: 560px) {
   .ticker { display: none; }
+  .auto-toggle span:not(.switch-ui) { display: none; }
 }
+@media (max-width: 430px) {
+  /* 极窄屏：只留刷新 / 账号 / 退出 / 设置，自动刷新与数据源可在设置里看 */
+  .auto-toggle { display: none; }
+  .account-chip { max-width: 66px; padding: 4px 7px; }
+  .account-chip #accountName { display: inline; }
+}
+
+/* 修改密码弹窗 */
+.pw-form { display: grid; gap: 10px; }
+.pw-form .input-wrap { height: 42px; }
+.pw-form .modal-actions { margin-top: 4px; }
 
 /* =========================================================
    账号状态（登录后 header 显示的当前用户）

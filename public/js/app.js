@@ -26,7 +26,7 @@ import {
    ========================================================= */
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 const WATCH_KEY = 'gp.watchlist.v1';
 const ALERTS_KEY = 'gp.alerts.v1';
@@ -480,6 +480,37 @@ function setFreshness(kind, text) {
   if (!el) return;
   el.className = `freshness ${kind === 'live' ? 'is-live' : kind === 'stale' ? 'is-stale' : ''}`;
   el.innerHTML = `<i></i>${esc(text)}`;
+}
+
+/* ---------------------------------------------------------
+   使用统计心跳：后台管理里的「使用时长 / 访问页面」来源于这里。
+   - 切页时记一次 view；
+   - 页面可见时每 60 秒上报一次 activeSec，后台累加使用时长。
+   --------------------------------------------------------- */
+let lastActivityAt = 0;
+function pingActivity(event = 'active') {
+  if (!state.auth) return;
+  const now = Date.now();
+  const activeSec = event === 'view' ? 0 : Math.min(120, Math.max(0, Math.round((now - lastActivityAt) / 1000)));
+  lastActivityAt = now;
+  fetch('/api/activity/ping', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ view: state.view || 'dashboard', event, activeSec }),
+    keepalive: true,
+  }).catch(() => { /* 统计失败不影响行情 */ });
+}
+
+function startActivityPing() {
+  lastActivityAt = Date.now();
+  document.addEventListener('visibilitychange', () => {
+    lastActivityAt = Date.now();
+    if (!document.hidden) pingActivity('view');
+  });
+  setTimeout(() => pingActivity('view'), 1500);
+  setInterval(() => {
+    if (!document.hidden) pingActivity('active');
+  }, 60000);
 }
 
 function renderTopSessions() {
@@ -4185,7 +4216,7 @@ function renderFundFlowTable() {
     el.innerHTML = `<tbody><tr><td><div class="empty">
       ETF 资金流只有东方财富提供，当前接口不可用。<br>
       <span class="muted small">${esc(f.reason || '')}</span><br>
-      <button class="text-link mt8" data-source-open>查看数据源状态<</button>
+      <button class="text-link mt8" data-source-open>查看数据源状态</button>
     </div></td></tr></tbody>`;
     return;
   }
@@ -5678,7 +5709,7 @@ async function updateSource(patch) {
     toast('数据源已更新，正在重新加载数据', 'ok');
     setTimeout(() => refreshAll(true), 400);
   } catch (err) {
-    toast(`切换失败：{err.message}`, 'err');
+    toast(`切换失败：${err.message}`, 'err');
   }
 }
 
@@ -5713,6 +5744,56 @@ function bindSourceSettings() {
     });
   }
   loadSourceStatus(true);
+}
+
+// 终端里只读展示数据源状态；切换入口已移到 /admin.html 后台管理。
+async function openSourceStatus() {
+  mountOverlay(`
+    <div class="drawer">
+      <div class="drawer-head"><div><div class="eyebrow">DATA SOURCE</div><h2>数据源状态</h2></div><button class="modal-close" data-close>×</button></div>
+      <div class="source-list" id="sourceStatusList"><div class="empty">正在检测数据源…</div></div>
+      <p class="setting-note">数据源的切换属于全局配置，已移到「后台管理 → 数据源」。普通用户在这里只能查看当前状态。</p>
+      <div class="push-actions">
+        <a class="btn small primary" href="/admin.html" target="_blank" rel="noreferrer">打开后台管理</a>
+        <button class="btn small" id="sourceStatusReload">重新检测</button>
+      </div>
+    </div>`, 'drawer-overlay');
+  const render = (st) => {
+    const box = $('#sourceStatusList');
+    if (!box || !st) return;
+    box.innerHTML = (st.capabilities || []).map((cap) => {
+      const active = (cap.providers || []).find((p) => p.key === cap.active) || {};
+      const tone = cap.builtin ? 'builtin' : active.state === 'ok' ? 'ok' : active.state === 'fail' ? 'fail' : 'unknown';
+      const detail = cap.builtin
+        ? cap.note || '内置多源回退'
+        : `${cap.desc || ''}${cap.active ? ` · 当前 ${sourceLabelOf(cap.active)}` : ''}${active.state === 'fail' ? ` · ${active.error || '失败'}` : ''}`;
+      return `<div class="source-row">
+        <div class="sr-main"><div class="sr-label"><i class="dot ${tone}"></i>${esc(cap.label)}${cap.builtin ? '<span class="tag-mini">内置多源</span>' : ''}</div><div class="sr-sub">${esc(detail)}</div></div>
+      </div>`;
+    }).join('') || '<div class="empty">暂无数据源信息</div>';
+  };
+  try {
+    const st = await api('/api/source/status', 8000);
+    render(st);
+  } catch (err) {
+    const box = $('#sourceStatusList');
+    if (box) box.innerHTML = `<div class="empty">读取失败：${esc(err.message)}</div>`;
+  }
+  $('#sourceStatusReload') && $('#sourceStatusReload').addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
+    btn.disabled = true;
+    btn.textContent = '检测中…';
+    try {
+      const data = await api('/api/source/probe', 90000);
+      render(data.status || data);
+      toast('数据源检测完成', 'ok');
+    } catch (err) {
+      toast(`检测失败：${err.message}`, 'err');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '重新检测';
+    }
+  });
 }
 
 /* ---------------------------------------------------------
@@ -5851,6 +5932,7 @@ function openSettings() {
         <h3>账号</h3>
         <div class="setting-row"><div><div class="sr-label">当前账号</div><div class="sr-sub" id="setAccountRole">--</div></div><b id="setAccountName">--</b></div>
         <div class="setting-row"><div><div class="sr-label">修改密码</div><div class="sr-sub">修改后其它设备需要重新登录</div></div><button class="btn small" id="setPassword">修改</button></div>
+        <div class="setting-row"><div><div class="sr-label">数据源状态</div><div class="sr-sub">查看当前行情源与备用源</div></div><button class="btn small" id="setSource">查看</button></div>
         <div class="setting-row" id="setAdminRow" hidden><div><div class="sr-label">后台管理</div><div class="sr-sub">用户、登录记录、流量统计、推送与数据源</div></div><a class="btn small primary" href="/admin.html" target="_blank" rel="noreferrer">打开</a></div>
         <div class="setting-row"><div><div class="sr-label">更新履历</div><div class="sr-sub">查看每个版本改了什么</div></div><button class="btn small" id="setChangelog">查看</button></div>
       </div>
@@ -5870,6 +5952,7 @@ function openSettings() {
   if ($('#setAdminRow')) $('#setAdminRow').hidden = !(authUser && (authUser.role === 'admin' || authUser.role === 'super'));
   $('#setChangelog') && $('#setChangelog').addEventListener('click', () => { closeOverlay(); openChangelog(); });
   $('#setPassword') && $('#setPassword').addEventListener('click', openPasswordModal);
+  $('#setSource') && $('#setSource').addEventListener('click', () => { closeOverlay(); openSourceStatus(); });
   $('#netCopy') && $('#netCopy').addEventListener('click', async () => {
     const urls = (state.netInfo && state.netInfo.mobile) || [];
     if (!urls.length) { toast('当前没有可用的手机地址', 'warn'); return; }
@@ -6023,6 +6106,42 @@ function openSettings() {
   $('#setReset').addEventListener('click', resetAll);
 }
 
+function openPasswordModal() {
+  if (!state.auth) { toast('请先登录', 'warn'); return; }
+  mountOverlay(`
+    <div class="modal modal-sm">
+      <div class="modal-head"><div class="modal-title"><h2>修改密码</h2><span class="code">${esc(state.auth.username)}</span></div><button class="modal-close" data-close>×</button></div>
+      <form id="pwForm" class="pw-form" autocomplete="off">
+        <label class="input-wrap"><span>原密码</span><input id="pwOld" type="password" maxlength="64" autocomplete="current-password" placeholder="当前密码"></label>
+        <label class="input-wrap"><span>新密码</span><input id="pwNew" type="password" maxlength="64" autocomplete="new-password" placeholder="至少 6 位"></label>
+        <label class="input-wrap"><span>确认新密码</span><input id="pwConfirm" type="password" maxlength="64" autocomplete="new-password" placeholder="再输入一次"></label>
+        <p class="muted small">修改成功后，这台设备与其它已登录设备都需要用新密码重新登录。</p>
+        <div class="modal-actions"><button class="btn primary" type="submit" id="pwSubmit">确认修改</button></div>
+      </form>
+    </div>`);
+  const form = $('#pwForm');
+  if (!form) return;
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const oldPassword = $('#pwOld').value;
+    const newPassword = $('#pwNew').value;
+    if (newPassword.length < 6) { toast('新密码至少 6 位', 'warn'); return; }
+    if (newPassword !== $('#pwConfirm').value) { toast('两次输入的新密码不一致', 'warn'); return; }
+    const btn = $('#pwSubmit');
+    btn.disabled = true;
+    btn.textContent = '提交中…';
+    try {
+      await apiPost('/api/auth/password', { username: state.auth.username, oldPassword, newPassword });
+      toast('密码已修改，请用新密码重新登录', 'ok', 5000);
+      setTimeout(() => location.replace('/login.html?changed=1'), 900);
+    } catch (err) {
+      toast(`修改失败：${err.message}`, 'err');
+      btn.disabled = false;
+      btn.textContent = '确认修改';
+    }
+  });
+}
+
 function saveSettings() {
   saveJSON(SETTINGS_KEY, state.settings);
 }
@@ -6098,6 +6217,7 @@ function showView(view) {
   $$('.nav-tab').forEach((tab) => tab.classList.toggle('is-active', tab.dataset.view === view));
   $$('.view').forEach((section) => section.classList.toggle('is-active', section.id === `view-${view}`));
   setTimeout(resizeCharts, 60);
+  pingActivity('view');
   loadView(view);
 }
 
@@ -6742,9 +6862,9 @@ function bindEvents() {
     toast(state.settings.autoRefresh ? '自动刷新已开启' : '自动刷新已关闭', 'info');
   });
   $('#settingsBtn') && $('#settingsBtn').addEventListener('click', openSettings);
-  $('#sourceChip') && $('#sourceChip').addEventListener('click', openSettings);
+  $('#sourceChip') && $('#sourceChip').addEventListener('click', openSourceStatus);
   document.addEventListener('click', (e) => {
-    if (e.target.closest('[data-source-open]')) openSettings();
+    if (e.target.closest('[data-source-open]')) openSourceStatus();
     if (e.target.closest('[data-source-dismiss]')) {
       sessionStorage.setItem('gp.sourceBannerDismissed', String(Date.now()));
       const el = $('#sourceBanner');
@@ -7061,7 +7181,7 @@ async function loadAuthState() {
       return null;
     }
     state.auth = user;
-    const isAdmin = user.role === 'admin';
+    const isAdmin = user.role === 'admin' || user.role === 'super';
     const nameEl = $('#accountName');
     const chip = $('#accountChip');
     const out = $('#logoutBtn');
@@ -7069,8 +7189,9 @@ async function loadAuthState() {
     if (chip) {
       chip.hidden = false;
       chip.title = isAdmin
-        ? '管理员：可以修改设置、管理用户、查看系统状态'
-        : '普通用户：可以操作行情、自选与持仓，设置仅管理员可用';
+        ? `${user.role === 'super' ? '超级管理员' : '管理员'}：可在后台管理用户、推送、数据源与使用统计`
+        : '普通用户：可以操作行情、自选与持仓；系统设置请使用管理员账号';
+      chip.addEventListener('click', openSettings);
     }
     if (out) {
       out.hidden = false;
@@ -7080,14 +7201,9 @@ async function loadAuthState() {
         location.replace('/login.html');
       });
     }
-    // 设置（推送 / 数据源 / 用户管理）仅管理员可见
+    // 设置现在只含个人偏好，所有登录用户都能打开；系统级配置在 /admin.html。
     const settingsBtn = $('#settingsBtn');
-    if (settingsBtn) settingsBtn.hidden = !isAdmin;
-    const adminBtn = $('#adminBtn');
-    if (adminBtn) {
-      adminBtn.hidden = !isAdmin;
-      if (isAdmin) adminBtn.addEventListener('click', openAdmin);
-    }
+    if (settingsBtn) settingsBtn.hidden = false;
     // 更新履历所有登录用户都能看
     const changelogBtn = $('#changelogBtn');
     if (changelogBtn) {
@@ -7115,6 +7231,7 @@ async function init() {
   renderWatchTips();
   renderClock();
   setInterval(renderClock, 1000);
+  startActivityPing();
   startTimers();
   loadSourceStatus();
 
