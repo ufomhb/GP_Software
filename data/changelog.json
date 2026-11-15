@@ -1,5 +1,22 @@
 [
+
   {
+    "version": "2.0.0",
+    "date": "2026-11-15",
+    "title": "安全加固、SQLite 存储与结构重构（P0–P2）",
+    "items": [
+      "安全：每个响应都带安全响应头（CSP 先以 Report-Only 观测，可用 CSP_ENFORCE=1 强制）；Cookie 仅 HTTPS 下带 Secure；会话令牌只存 sha256 哈希（文件/库泄露不等于能登录）",
+      "安全：注册默认关闭（首个账号仍可创建，可用 ALLOW_REGISTER / INVITE_CODE 开放）；登录限流改为「IP + 用户名」，并在 Cloudflare 后按 CF-Connecting-IP 取真实地址",
+      "安全：POST 校验同源 Origin；webhook 只允许 https 且拒绝回环/内网地址；静态目录穿越加固；5xx 响应脱敏；日志里的 token/webhook 打码",
+      "存储：账号、会话、自选/持仓、推送配置、使用统计从 JSON 文件迁移到 SQLite（data/gp.sqlite），事务写入、崩溃安全；行情快照仍走文件缓存并按天清理",
+      "存储：可用 STORE=json 一键回退到文件存储；备份改为 SQLite 快照（VACUUM INTO）+ 数据打包，各保留 7 份",
+      "结构：服务端拆出 src/lib/security.js、src/lib/net-safety.js、src/services/push.js（推送子系统）、src/http/routes.js（路由分发），server.js 从 9,166 行降到 7,541 行",
+      "结构：前端拆出 js/util.js、js/dom.js、js/api.js、js/core.js 与首个视图模块 js/views/funds.js，app.js 从 7,285 行降到 6,756 行",
+      "测试：新增 53 项自动化测试（HTTP 集成、纯函数、DOM 渲染、路由表）+ 两个隔离自检脚本，并接入 GitHub Actions",
+      "运维：NAS 运行时升级到 Node 24（/data/node24），与本地开发版本对齐",
+      "行为变化：升级后旧的登录会话全部失效，需要重新登录一次；桌面/手机各登录一次即可"
+    ]
+  },  {
     "version": "1.5.1",
     "date": "2026-11-15",
     "title": "修复作战中心无法加载",

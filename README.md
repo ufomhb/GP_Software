@@ -170,6 +170,17 @@ npm run selfcheck                         # 安全基线 34 项 + 存储层 23 �
 - 前端渲染约定：**外部文本进 `innerHTML` 前必须 `esc()`；进 `href`/`src` 前必须再过 `safeUrl()`**（`esc` 挡不住 `javascript:` 协议）。2026-11-15 审计了 225 处模板插值，35 处文本型全部安全，并补了 `safeUrl` 覆盖快讯链接等 2 处 href。
 - CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
 
+### v2.0 更新（2026-11-15）
+
+> 这一版以「安全 + 存储 + 结构」为主，功能界面基本不变。
+
+- **安全加固（P0）**：安全响应头（CSP 先 Report-Only）、Cookie 仅 HTTPS 带 `Secure`、会话只存 `sha256` 哈希、注册默认关闭、登录限流按「IP + 用户名」、POST 同源校验、webhook 禁内网、静态目录穿越加固、5xx 脱敏、日志敏感参数打码。
+- **存储改造（P1）**：账号 / 会话 / 自选 / 持仓 / 推送配置 / 使用统计迁到 **SQLite**（`data/gp.sqlite`），事务写入；行情快照仍走文件缓存并按天清理；`STORE=json` 可一键回退；备份改为 `VACUUM INTO` 快照 + 数据打包。
+- **结构重构（P2）**：服务端外移 `src/lib/security.js`、`src/lib/net-safety.js`、`src/services/push.js`、`src/http/routes.js`（`server.js` 9,166 → 7,541 行）；前端外移 `util.js` / `dom.js` / `api.js` / `core.js` / `views/funds.js`（`app.js` 7,285 → 6,756 行）。
+- **测试体系**：新增 53 项自动化测试（HTTP 集成、纯函数、DOM 渲染、路由表）+ 两个隔离自检脚本，接入 GitHub Actions。
+- **行为变化**：升级后旧会话全部失效，需要重新登录一次；
+- **运维**：NAS 运行时升级到 Node 24（`/data/node24`），与本地开发版对齐。
+
 ### v1.5 更新（2026-11-15）
 
 - **后台管理独立**：新增 `/admin.html`，系统状态、用户与权限、登录记录、每日流量/使用统计、微信推送、数据源、手机访问、更新履历全部迁入；终端设置只保留个人偏好（刷新 / 风险 / 通知 / 导出 / 重置 / 账号）。
