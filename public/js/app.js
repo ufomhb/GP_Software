@@ -39,12 +39,14 @@ import {
   timeText,
 } from './util.js';
 
+// DOM 小工具与 HTTP 封装（见 dom.js / api.js）
+import { $, $$, toast, debounce } from './dom.js';
+import { redirectToLogin, api, apiPost } from './api.js';
+
 
 /* =========================================================
    基础工具
    ========================================================= */
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const APP_VERSION = '1.5.1';
 
 const WATCH_KEY = 'gp.watchlist.v1';
@@ -289,32 +291,7 @@ function loadScopedState() {
    API
    ========================================================= */
 // 会话失效时统一跳登录页，并带上当前地址，登录后能回到原页面。
-function redirectToLogin() {
-  if (redirectToLogin.done) return;
-  redirectToLogin.done = true;
-  const next = encodeURIComponent(location.pathname + location.search + location.hash);
-  location.replace(`/login.html?next=${next}`);
-}
 
-async function api(path, timeout = 25000) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeout);
-  try {
-    const res = await fetch(path, { cache: 'no-store', signal: ctrl.signal });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 401) {
-      redirectToLogin();
-      throw new Error('登录已失效，正在跳转登录页');
-    }
-    if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`);
-    return data;
-  } catch (err) {
-    if (err.name === 'AbortError') throw new Error('请求超时，请检查网络或稍后重试');
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 async function getKlineCached(secid, klt = 101, limit = 140) {
   const key = `${secid}:${klt}:${limit}`;
@@ -352,19 +329,6 @@ function getBySecid(secid) {
 /* =========================================================
    提示 / 弹层 / 声音
    ========================================================= */
-function toast(message, type = 'info', ms = 3600) {
-  const root = $('#toastRoot');
-  if (!root) return;
-  const el = document.createElement('div');
-  el.className = `toast ${type}`;
-  el.innerHTML = '<span class="t-dot"></span><div></div>';
-  el.querySelector('div').textContent = message;
-  root.appendChild(el);
-  setTimeout(() => {
-    el.classList.add('out');
-    setTimeout(() => el.remove(), 260);
-  }, ms);
-}
 
 function mountOverlay(html, className = '') {
   const root = $('#overlayRoot');
@@ -5515,30 +5479,6 @@ function sourceLabelOf(key) {
   return SOURCE_LABELS[key] || key || '--';
 }
 
-async function apiPost(path, body, timeout = 20000) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeout);
-  try {
-    const res = await fetch(path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body || {}),
-      signal: ctrl.signal,
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 401) {
-      redirectToLogin();
-      throw new Error('登录已失效，正在跳转登录页');
-    }
-    if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`);
-    return data;
-  } catch (err) {
-    if (err.name === 'AbortError') throw new Error('请求超时，请稍后重试');
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 async function loadSourceStatus(force = false) {
   if (!force && state.sourceStatus && Date.now() - state.sourceStatus.at < 15000) {
@@ -6962,13 +6902,6 @@ function bindEvents() {
   });
 }
 
-function debounce(fn, wait) {
-  let t;
-  return (...args) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...args), wait);
-  };
-}
 
 /* =========================================================
    启动
@@ -7214,5 +7147,9 @@ if (!globalThis.__GP_NO_AUTOBOOT__) {
 }
 
 // 仅供测试直接调用的渲染函数；生产页面用不到这些导出（ESM 导出不影响浏览器加载）
-export { state, esc, safeUrl, cleanName, renderNewsList, renderRankTable };
+export {
+  state, esc, safeUrl, cleanName,
+  renderNewsList, renderRankTable,
+  renderFundWatchSummary, renderFundWatchTable, renderPortfolioAdvice,
+};
 

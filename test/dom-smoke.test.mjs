@@ -127,3 +127,81 @@ test('DOM：空数据渲染占位而不是报错', () => {
   assert.match(host.textContent, /暂无数据/);
   assert.doesNotThrow(() => app.renderRankTable(null, [{ name: 'x' }], 'pct'));
 });
+
+/* ---------------------------------------------------------
+   基金页
+   --------------------------------------------------------- */
+test('DOM：基金页自选表渲染，基金名被转义', () => {
+  const evilName = '<img src=x onerror="window.__xss=9">测试基金';
+  app.state.fundWatchlist = [{ code: '510300', name: evilName, type: 'etf' }];
+  app.state.fundWatchData = {
+    items: [{
+      code: '510300', name: evilName, type: 'etf',
+      price: 3.912, pct: 1.23, pctKind: 'nav', pctDate: '2026-11-14',
+      mainYi: 1.5, score: 66, rating: '偏强',
+    }],
+  };
+  app.state.fundHoldings = {};
+
+  app.renderFundWatchTable();
+  const table = document.querySelector('#fundWatchTable');
+  assert.ok(table, '缺少 #fundWatchTable');
+  assert.equal(table.querySelectorAll('tbody tr').length, 1, '应有 1 行自选基金');
+  assert.equal(table.querySelectorAll('img').length, 0, '不允许注入 <img>');
+  assert.equal(table.querySelectorAll('[onerror]').length, 0);
+  assert.match(table.textContent, /测试基金/);
+  const row = table.querySelector('tbody tr');
+  assert.equal(row.getAttribute('data-fund-code'), '510300');
+  assert.match(document.querySelector('#fundWatchCount').textContent, /1 只/);
+});
+
+test('DOM：基金页摘要卡显示数量与平均涨跌', () => {
+  app.state.fundWatchlist = [
+    { code: '510300', name: '沪深300ETF', type: 'etf' },
+    { code: '005825', name: '联接基金', type: 'open' },
+  ];
+  app.state.fundWatchData = {
+    items: [
+      { code: '510300', name: '沪深300ETF', type: 'etf', pct: 2, pctKind: 'nav', mainYi: 3 },
+      { code: '005825', name: '联接基金', type: 'open', pct: 1, pctKind: 'nav', mainYi: 0 },
+    ],
+  };
+  app.renderFundWatchSummary();
+  const box = document.querySelector('#fundWatchSummary');
+  assert.match(box.textContent, /自选基金数量/);
+  assert.match(box.textContent, /2/, '数量应为 2');
+  assert.match(box.textContent, /\+1\.50%/, '平均涨跌应为 +1.50%');
+});
+
+/* ---------------------------------------------------------
+   策略页
+   --------------------------------------------------------- */
+test('DOM：策略页组合建议渲染，恶意基金名不注入', () => {
+  const evil = '<script>window.__xss=5</script>债基';
+  app.state.advice = {
+    score: 52,
+    asOf: '2026-11-14',
+    nextDate: '2026-11-17',
+    generatedAt: Date.now(),
+    temperature: { tone: 'warm', label: '偏暖' },
+    rating: { label: '中性偏弱', tone: 'flat' },
+    position: { text: '五成', tone: 'flat' },
+    review: { title: '今日复盘', summary: '指数震荡' },
+    plan: { title: '明日计划', summary: '控制仓位' },
+    oneLine: '结构行情',
+    disclaimer: '仅供参考',
+  };
+  app.state.watchlist = [];
+  app.state.watchData = { items: [] };
+  app.state.fundWatchlist = [{ code: '110022', name: evil, type: 'open' }];
+  app.state.fundWatchData = { items: [{ code: '110022', name: evil, type: 'open', pct: -2.4, pctKind: 'nav', mainYi: -1 }] };
+  app.state.fundHoldings = {};
+
+  app.renderPortfolioAdvice();
+  const box = document.querySelector('#portfolioAdvicePanel');
+  assert.ok(box, '缺少 #portfolioAdvicePanel');
+  assert.equal(box.querySelectorAll('script').length, 0, '不允许注入 <script>');
+  assert.equal(box.querySelectorAll('[onerror]').length, 0);
+  assert.ok(box.textContent.trim().length > 20, '面板应有内容');
+  assert.match(box.textContent, /债基/, '基金名应作为文本出现');
+});
