@@ -431,6 +431,8 @@ node server.js --port=8091
 ├─ data/sector-members.json   # 板块成分股缓存（可能不含全量）
 ├─ preview-watchlist-v2.png   # 自选基金拖动排序
 ├─ preview-sectors-v2.png     # 板块资金 TOP10 排序
+├─ docs/
+│  └─ 改造方案-安全加固与存储改造.md # 安全加固 / SQLite 存储改造方案（2026-11-15）
 ├─ 启动.bat                    # Windows 一键启动
 ├─ package.json
 └─ README.md
@@ -487,7 +489,7 @@ node server.js --port=8091
 ## 6. 自定义
 
 - **端口**：`node server.js --port=8091` 或设置环境变量 `PORT`。
-- **绑定地址**：默认 `127.0.0.1`，仅本机可访问；如需局域网访问，设置 `HOST=0.0.0.0`（请自行评估安全风险）。
+- **绑定地址**：默认 `0.0.0.0`（局域网可访问，手机才能打开）；只给本机用请运行 `node server.js --host=127.0.0.1` 或设 `HOST=127.0.0.1`（v1.5 起默认值已改为 `0.0.0.0`）。
 - **刷新频率 / 风险偏好 / 提示音 / 通知**：右上角设置面板，保存在浏览器本地。
 - **板块清单更新**：删除 `data/boards.json` 后重启，服务会从东方财富板块资金页重新解析并生成。
 - **关闭请求日志**：设置环境变量 `LOG_API=0`。
