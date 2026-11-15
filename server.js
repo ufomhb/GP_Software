@@ -51,7 +51,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const VERSION = '1.5.1';
 
 /* =========================================================
-   P0 安全基线（2026-11-15）
+   P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
    - 注册默认关闭（空库时仍允许创建第一个账号）
    - 只有显式声明 TRUST_PROXY 时才采信转发头，否则客户端 IP 一律取 socket 地址
    - CSP 先用 Report-Only 观察，确认无违规后再设 CSP_ENFORCE=1 强制执行
@@ -60,57 +60,33 @@ const ALLOW_REGISTER = process.env.ALLOW_REGISTER === '1';
 const INVITE_CODE = String(process.env.INVITE_CODE || '');
 const TRUST_PROXY = String(process.env.TRUST_PROXY || '').trim().toLowerCase();
 const CSP_ENFORCE = process.env.CSP_ENFORCE === '1';
-const CSP_POLICY =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-  "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; " +
-  "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 
-function requestIsHttps(req) {
-  if (req.socket && req.socket.encrypted) return true;
-  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
-  return proto === 'https';
-}
+// 纯函数直接用；带配置的三个用薄包装保持调用方签名不变。
+const {
+  requestIsHttps,
+  redactQuery,
+  isSameOriginRequest,
+  sessionKey,
+  inviteMatches: inviteCodeMatches,
+  sessionCookie: buildSessionCookie,
+} = require('./src/lib/security');
+const { assertSafeOutboundUrl } = require('./src/lib/net-safety');
 
-// 每个响应都要带安全头：在请求处理的最前面统一调用一次。
 function setSecurityHeaders(req, res) {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader(
-    CSP_ENFORCE ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only',
-    CSP_POLICY,
-  );
-  if (requestIsHttps(req)) {
-    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  }
+  require('./src/lib/security').setSecurityHeaders(req, res, CSP_ENFORCE);
 }
 
-// 日志里的敏感查询参数打码，避免 token / webhook 进日志文件。
-function redactQuery(search) {
-  return String(search || '').replace(
-    /([?&](?:token|sendkey|key|webhook|password|passwd|code|apikey|api_key)=)[^&]*/gi,
-    '$1***',
-  );
+function inviteMatches(code) {
+  return inviteCodeMatches(code, INVITE_CODE);
 }
 
-// 同源校验：浏览器对 POST 一定带 Origin；跨站请求直接拒绝。
-function isSameOriginRequest(req) {
-  const origin = String(req.headers.origin || '').trim();
-  if (origin) {
-    if (origin === 'null') return false;
-    try {
-      return new URL(origin).host === String(req.headers.host || '').trim();
-    } catch {
-      return false;
-    }
-  }
-  const site = String(req.headers['sec-fetch-site'] || '').trim().toLowerCase();
-  if (site === 'same-origin' || site === 'none') return true;
-  if (site === 'cross-site' || site === 'same-site') return false;
-  // 没有 Origin / Sec-Fetch-Site 的客户端（curl、脚本）按放行处理。
-  return true;
+function sessionCookie(req, token, maxAgeSec) {
+  return buildSessionCookie({
+    name: SESSION_COOKIE,
+    token,
+    maxAgeSec,
+    secure: requestIsHttps(req),
+  });
 }
 
 // 局域网访问用：列出本机所有非内网回环的 IPv4，手机连同一个 Wi-Fi 就能打开。
