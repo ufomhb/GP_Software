@@ -100,13 +100,20 @@ Cloudflare（gp.ufomhb.xyz）
    │ 隧道 gp
    ▼
 小米 NAS（192.168.31.175，RP05，固件 1.0.9.462）
-   ├─ gp-terminal.service   Node v20 · :8090
+   ├─ gp-terminal.service   Node 24.22（/data/node24）· :8090
    ├─ gp-tunnel.service     cloudflared
    ├─ gp-root-shell.service 2323（IP 白名单）
    ├─ dockerctl.service     Docker 控制台 :9302
    ├─ gp-plugin-keep.timer  插件自愈（每 2 分钟）
    └─ gp-data-backup.timer  每日备份
 ```
+
+NAS 上的部署方式（**没有 git，靠 scp 同步代码**）：
+
+- 代码目录 `/data/gp`（`server.js` / `lib` / `public` / `scripts` / `package.json` / `data`），systemd 单元 `/etc/systemd/system/gp-terminal.service`。
+- Node 运行时：`/data/node24`（v24.22.3，2026-11-15 从 v20 升级，为 P1 的 `node:sqlite` 做准备）；旧的 `/data/node`（v20.19.4）保留，回滚时把单元里的 `PATH` 与 `ExecStart` 改回 `/data/node/bin/node` 即可。
+- 升级流程：备份 `/data/gp` → scp 覆盖代码 → `systemctl restart gp-terminal` → `curl -s localhost:8090/api/health` 验证。
+- 备份：`/data/backup/gp-code/`（代码，按次）与 `/data/backup/gp-data/`（每日 03:30，保留 7 天）。
 
 > 仓库只保存代码与文档；账号、密钥、隧道凭证均在本地，不入库。
 
