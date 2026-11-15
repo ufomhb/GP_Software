@@ -35,6 +35,23 @@ const {
   sinaNews,
 } = require('./lib/marketdata');
 const dataStore = require('./lib/store');
+const { createLogFiles } = require('./src/lib/log-files');
+
+/* =========================================================
+   日志落盘（2026-11-15）
+   console 输出同时写 logs/server.log，按大小轮转保留 3 份；
+   后台「系统日志」菜单读的就是这里（外加 data/crash.log）。
+   LOG_TO_FILE=0 关闭；LOG_DIR / LOG_MAX_BYTES / LOG_KEEP 可调。
+   ========================================================= */
+const CRASH_LOG = path.join(__dirname, 'data', 'crash.log');
+const LOG_DIR = process.env.LOG_DIR || path.join(__dirname, 'logs');
+const logsStore = createLogFiles({
+  dir: LOG_DIR,
+  ...(Number(process.env.LOG_MAX_BYTES) > 0 ? { maxBytes: Number(process.env.LOG_MAX_BYTES) } : {}),
+  ...(Number(process.env.LOG_KEEP) >= 0 ? { keep: Number(process.env.LOG_KEEP) } : {}),
+});
+logsStore.addSource({ id: 'crash', label: 'crash.log（崩溃 / 强杀，data/）', file: CRASH_LOG });
+if (process.env.LOG_TO_FILE !== '0') logsStore.installConsoleTee(console);
 
 // 存储后端：STORE=sqlite 用 data/gp.sqlite（事务），否则维持 data/*.json。
 const STORE_MODE = dataStore.init();
@@ -46,7 +63,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.0.0';
+const VERSION = '2.0.1';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -7120,6 +7137,7 @@ const httpRoutes = createHttpRoutes({
   STORE_MODE,
   VERSION,
   accessUrls,
+  analyze,
   applySourceConfig,
   clientIp,
   crypto,
@@ -7187,7 +7205,9 @@ const httpRoutes = createHttpRoutes({
   loadUsers,
   loginFails,
   loginKey,
+  logsStore,
   num,
+  probeSource,
   publicUser,
   recordLoginEvent,
   recordViewPing,
@@ -7196,9 +7216,12 @@ const httpRoutes = createHttpRoutes({
   requireSuper,
   resolveFundTodayPct,
   roleOf,
+  runSource,
   sanitizePortfolio,
   savePortfolio,
   saveUsers,
+  shanghaiToday,
+  sourceStatus,
   statsDateKey,
   statsForDayUser,
   statsStore,
@@ -7508,7 +7531,6 @@ process.on('SIGINT', () => {
    2) 崩溃信息落盘到 data/crash.log，方便事后定位；
    3) 记住上次退出时间，配合 启动.bat 的自动重启循环使用。
    ========================================================= */
-const CRASH_LOG = path.join(__dirname, 'data', 'crash.log');
 
 function logCrash(kind, err) {
   const at = new Date().toISOString();

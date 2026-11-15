@@ -9,12 +9,14 @@ data/userdata/
 
 # ===== 本地运维脚本与二进制 =====
 tools/
-server.out.log
-server.err.log
-*.log
 gp-terminal.tar.gz
 cleanup-*.sh
 recover-index-*.html
+
+# ===== 日志（运行时产生，只留目录占位）=====
+logs/*
+!logs/.gitkeep
+*.log
 
 # ===== 运行时自动生成的行情快照（每天变化，不入库）=====
 data/auction-*.json

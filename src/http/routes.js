@@ -25,6 +25,7 @@ function createHttpRoutes(deps) {
     STORE_MODE,
     VERSION,
     accessUrls,
+    analyze,
     applySourceConfig,
     clientIp,
     crypto,
@@ -92,7 +93,9 @@ function createHttpRoutes(deps) {
     loadUsers,
     loginFails,
     loginKey,
+    logsStore,
     num,
+    probeSource,
     publicUser,
     recordLoginEvent,
     recordViewPing,
@@ -101,9 +104,12 @@ function createHttpRoutes(deps) {
     requireSuper,
     resolveFundTodayPct,
     roleOf,
+    runSource,
     sanitizePortfolio,
     savePortfolio,
     saveUsers,
+    shanghaiToday,
+    sourceStatus,
     statsDateKey,
     statsForDayUser,
     statsStore,
@@ -508,6 +514,17 @@ async function handleAdmin(req, res, url) {
     let statsFileBytes = 0;
     try { statsFileBytes = fs.statSync(STORE_MODE === 'sqlite' ? dataStore.DB_FILE : STATS_FILE).size; } catch { statsFileBytes = 0; }
     return { ...status, ok: true, statsFileBytes, statsDays: Object.keys(statsStore.days).length };
+  }
+
+  // 系统日志：只回「末尾 N 行」，可带关键词过滤；文件白名单由 logsStore 内部维护，
+  // 前端传的 file 只是 id（如 server / server.1 / crash），不接受任意路径。
+  if (p === '/api/admin/logs' && req.method === 'GET') {
+    const view = logsStore.tail({
+      id: String(q.get('file') || ''),
+      lines: Number(q.get('lines') || 200),
+      filter: q.get('q') || '',
+    });
+    return { ok: true, files: logsStore.list(), ...view };
   }
 
   throw Object.assign(new Error('未知接口'), { status: 404 });

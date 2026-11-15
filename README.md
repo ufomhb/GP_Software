@@ -68,6 +68,7 @@ systemctl restart gp-terminal                    # 改完代码后重启
 | `GET /api/admin/stats` | 每日流量与使用统计（按天 × 用户） |
 | `GET /api/admin/logins` | 登录 / 改密 / 强制下线记录 |
 | `GET /api/admin/system` | 服务、定时任务、磁盘、备份与统计存储 |
+| `GET /api/admin/logs` | 后台读日志：末尾 N 行 + 关键词过滤（文件只接受白名单 id） |
 | `POST /api/activity/ping` | 终端使用心跳（页面访问与在线时长） |
 
 ### 超级管理员
@@ -109,7 +110,24 @@ node server.js                                       # 去掉 STORE 即回退到
 - **源 JSON 文件在迁移过程中只读**，所以回退只需去掉 `STORE=sqlite` 重启；代价是回退会丢掉切换之后写进库的新改动（真要回退，先 `node scripts/migrate-json-to-sqlite.mjs --dry-run` 看一眼再决定，或直接用迁移前的 tar 备份恢复）。
 - 以上数据文件均已加入 `.gitignore`，不会进入仓库（含推送密钥与密码哈希）。
 - NAS 上每天 03:30 自动备份到 `/data/backup/gp-data/`：`gp-YYYYMMDD.sqlite`（库快照）+ `data-YYYYMMDD.tar.gz`（其余文件，已排除库文件），各保留 7 份。
-- 自测：`node scripts/selfcheck-p0.mjs`（安全基线 34 项）、`node scripts/selfcheck-store.mjs`（存储层 23 项，含迁移校验、并发登录、重启保持、回退）。
+- 自测：`node scripts/selfcheck-p0.mjs`（安全基线 39 项）、`node scripts/selfcheck-store.mjs`（存储层 23 项，含迁移校验、并发登录、重启保持、回退）。
+
+### 日志与排障
+
+服务端把 `console` 输出同时写文件，后台「系统日志」菜单直接读这些文件，不用再登 NAS：
+
+| 位置 | 内容 |
+| --- | --- |
+| `logs/server.log` | 当前日志（启动信息、每个请求一行、`console.error`） |
+| `logs/server.log.1~3` | 按大小轮转的历史（单文件 5 MB 上限，共保留 3 份） |
+| `data/crash.log` | 未捕获异常 / 未处理 Promise 拒绝 / 收到 SIGHUP 的记录（进程没打印就退出的情况） |
+
+- 后台入口：`/admin.html` → **系统日志**。可选文件、行数（100–1000）、关键词过滤，勾「每 5 秒刷新」可当实时尾随；日志用 `textContent` 渲染，不会把日志里的内容当 HTML 执行。
+- 接口：`GET /api/admin/logs?file=server&lines=200&q=error`（管理员）。`file` 只接受内部白名单 id（`server` / `server.1~3` / `crash`），传路径不会越权读文件。
+- 可调环境变量：`LOG_TO_FILE=0` 关闭落盘；`LOG_DIR` 改目录（默认 `logs/`）；`LOG_MAX_BYTES` 改单文件上限（默认 5242880）；`LOG_KEEP` 改保留份数（默认 3）。
+- 落盘失败（磁盘满 / 只读挂载）不会影响服务：连续失败 3 次后自动摘掉文件写入，只在 stderr 提示一次。
+- NAS 上除了这个菜单，也可以用 `journalctl -u gp-terminal -n 200 --no-pager` 看同样的输出（stdout 由 systemd 收集）。
+
 
 ### 部署拓扑（当前线上）
 
@@ -159,16 +177,22 @@ Environment=TRUST_PROXY=cloudflare
 
 ```bash
 npm install                               # 只装测试依赖 jsdom（运行时仍然零依赖）
-npm test                                  # 单元 + 集成 + DOM + 路由表（53 项，起隔离实例，不碰 data/）
-npm run selfcheck                         # 安全基线 34 项 + 存储层 23 项
+npm test                                  # 单元 + 集成 + DOM + 路由表 + 日志（56 项，起隔离实例，不碰 data/）
+npm run selfcheck                         # 安全基线 39 项 + 存储层 23 项
 ```
 
-- 测试在 `test/`：`auth`（注册/登录/改密/会话失效）、`portfolio`（清洗、跨账号隔离、sqlite 模式）、`security`（安全头、同源校验、穿越、SSRF、后台权限、日志脱敏）、`unit-security`（`src/lib/*` 纯函数）、`unit-push`（时段判断/幂等/配置归一）、`routes`（解析源码里所有 /api 端点，逐个确认分发器认得）、`dom-smoke`（jsdom 载入真实 index.html，驱动快讯/榜单/基金页/策略页的渲染函数）。
+- 测试在 `test/`：`auth`（注册/登录/改密/会话失效）、`portfolio`（清洗、跨账号隔离、sqlite 模式）、`security`（安全头、同源校验、穿越、SSRF、后台权限、日志脱敏）、`logs`（轮转、末尾读取、关键词过滤、`/api/admin/logs` 鉴权与路径白名单）、`unit-security`（`src/lib/*` 纯函数）、`unit-push`（时段判断/幂等/配置归一）、`routes`（解析源码里所有 /api 端点，逐个确认分发器认得）、`dom-smoke`（jsdom 载入真实 index.html，驱动快讯/榜单/基金页/策略页的渲染函数）。
 - 测试脚手架 `test/helpers/app.mjs` 会把代码复制到临时目录、用随机端口起一个实例，所以**不会改动仓库里的 `data/`**。
-- 服务端纯逻辑在 `src/lib/`（`security.js` / `net-safety.js`），推送子系统在 `src/services/push.js`，HTTP 路由分发在 `src/http/routes.js`（三组：`handleAuth` / `handleAdmin` / `handleApi`，依赖由 `createHttpRoutes(deps)` 注入）。
+- 服务端纯逻辑在 `src/lib/`（`security.js` / `net-safety.js` / `log-files.js`），推送子系统在 `src/services/push.js`，HTTP 路由分发在 `src/http/routes.js`（三组：`handleAuth` / `handleAdmin` / `handleApi`，依赖由 `createHttpRoutes(deps)` 注入）。
 - 前端已拆出 `public/js/util.js`（格式化/转义）、`public/js/dom.js`（选择器 `$` / `$$`、`toast`、`debounce`）、`public/js/api.js`（`api` / `apiPost` / 401 跳登录）、`public/js/core.js`（版本号、存储键、账号命名空间、本地存储、全局 `state`），以及第一个视图模块 `public/js/views/funds.js`（基金页 10 个渲染函数）。`app.js` 从 7,285 行降到 **6,756 行**，后续视图按同一模式拆。
 - 前端渲染约定：**外部文本进 `innerHTML` 前必须 `esc()`；进 `href`/`src` 前必须再过 `safeUrl()`**（`esc` 挡不住 `javascript:` 协议）。2026-11-15 审计了 225 处模板插值，35 处文本型全部安全，并补了 `safeUrl` 覆盖快讯链接等 2 处 href。
 - CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
+
+### v2.0.1 更新（2026-11-15）
+
+- **后台「系统日志」**：新增菜单，可选日志文件（当前 / 轮转 / `crash.log`）、行数 100–1000、关键词过滤，支持每 5 秒自动刷新与一键复制；错误行标红、警告行标黄。
+- **日志落盘**：`console` 输出同时写 `logs/server.log`，按 5 MB 轮转保留 3 份；写失败只提示一次、不影响服务（`LOG_TO_FILE=0` 可关闭）。
+- **目录整理**：仓库根目录不再散落资源——19 张预览图移入 `docs/screenshots/`（其中 3 张过期版本移到 `archive/`），运行日志统一进 `logs/`（已 gitignore，只保留 `.gitkeep`）。
 
 ### v2.0 更新（2026-11-15）
 
@@ -197,27 +221,27 @@ npm run selfcheck                         # 安全基线 34 项 + 存储层 23 �
 - **美股**：24H 热门美股 TOP10 实时分时卡片，可切换盘前 / 盘中 / 盘后；热门股补充所属板块与细分行业；新增美股板块资金（12 个板块的成交额、加权涨跌、涨跌家数、资金流估算）。
 - **板块资金**：新增今日 / 近3日 / 近5日 / 近2周 / 近1月 五个周期，热门板块 TOP10 随周期联动；流入/流出 TOP10 支持「本期 vs 上期（今日 vs 昨日）」对比图。
 
-![终端预览](preview-dashboard.png)
+![终端预览](docs/screenshots/preview-dashboard.png)
 
-![基金页预览](preview-funds.png)
+![基金页预览](docs/screenshots/preview-funds.png)
 
-![股票型基金情报](preview-stockfunds.png)
+![股票型基金情报](docs/screenshots/preview-stockfunds.png)
 
-![债基排行](preview-bond.png)
+![债基排行](docs/screenshots/preview-bond.png)
 
-![美股专题](preview-us.png)
+![美股专题](docs/screenshots/preview-us.png)
 
-![A股五指数独立走势](preview-china-five.png)
+![A股五指数独立走势](docs/screenshots/preview-china-five.png)
 
-![头部沪深300基金占比](preview-csi300-ratio.png)
+![头部沪深300基金占比](docs/screenshots/preview-csi300-ratio.png)
 
-![策略页预览](preview-strategy-v2.png)
+![策略页预览](docs/screenshots/preview-strategy-v2.png)
 
-![智能策略作战总览](preview-strategy-battle.png)
+![智能策略作战总览](docs/screenshots/preview-strategy-battle.png)
 
-![板块确认评分](preview-strategy-sectors.png)
+![板块确认评分](docs/screenshots/preview-strategy-sectors.png)
 
-![自选组合建议：股票 + 基金](preview-strategy-portfolio.png)
+![自选组合建议：股票 + 基金](docs/screenshots/preview-strategy-portfolio.png)
 
 ---
 
@@ -480,6 +504,7 @@ node server.js --port=8091
 ├─ src/
 │  ├─ lib/security.js         # HTTPS 判定、安全响应头、脱敏、同源校验、会话键与 Cookie
 │  ├─ lib/net-safety.js       # 内网地址识别、webhook 出站地址校验（防 SSRF）
+│  ├─ lib/log-files.js        # 日志落盘：按大小轮转 + console 镜像 + 末尾读取
 │  ├─ services/push.js        # 推送子系统：配置归一、持仓聚合、报告生成、渠道发送、时段调度、/api/push/*
 │  └─ http/routes.js          # HTTP 路由分发：handleAuth / handleAdmin / handleApi
 ├─ test/
@@ -487,6 +512,7 @@ node server.js --port=8091
 │  ├─ auth.test.mjs           # 注册 / 登录 / 改密 / 会话失效
 │  ├─ portfolio.test.mjs      # 自选与持仓的清洗、隔离、sqlite 模式
 │  ├─ security.test.mjs       # 安全头、同源、穿越、SSRF、后台权限、日志脱敏
+│  ├─ logs.test.mjs           # 日志轮转/末尾读取/过滤 + /api/admin/logs 鉴权与路径白名单
 │  ├─ unit-security.test.mjs  # src/lib 纯函数单测
 │  ├─ unit-push.test.mjs      # 推送时段/幂等/配置归一
 │  ├─ routes.test.mjs         # 路由表：源码里的每个 /api 端点都要被分发器认得
@@ -495,7 +521,7 @@ node server.js --port=8091
 ├─ scripts/
 │  ├─ migrate-json-to-sqlite.mjs # JSON → SQLite 迁移与校验
 │  ├─ backup-sqlite.mjs       # VACUUM INTO 一致性快照
-│  ├─ selfcheck-p0.mjs        # 安全基线自测（隔离实例，34 项）
+│  ├─ selfcheck-p0.mjs        # 安全基线自测（隔离实例，39 项）
 │  ├─ selfcheck-store.mjs     # 存储层自测（迁移/并发/重启/回退，23 项）
 │  └─ superadmin.js           # 超级管理员账号创建与重置
 ├─ public/
@@ -512,26 +538,13 @@ node server.js --port=8091
 ├─ data/gp.sqlite             # STORE=sqlite 时的数据库（含账号/会话/持仓/统计）
 ├─ data/boards.json           # 行业/概念/地域板块清单快照
 ├─ data/source-config.json    # 数据源选择（首次切换后生成）
-├─ preview-dashboard.png      # 全景页预览
-├─ preview-funds.png          # 基金页预览
-├─ preview-stockfunds.png     # 股票型基金情报预览
-├─ preview-bond.png           # 债基排行预览
-├─ preview-us.png             # 美股专题预览
-├─ preview-china-distribution.png # A股涨跌分布预览
-├─ preview-china-five.png     # 五大指数分屏独立走势
-├─ preview-csi300-ratio.png   # 头部沪深300基金占比预览
-├─ preview-intraday-1m.png   # 最近交易日 1 分钟分时弹窗
-├─ preview-intraday-day.png  # 超范围日期的日线摘要弹窗
-├─ preview-strategy-v2.png    # 策略页预览
-├─ preview-strategy-battle.png # 智能策略作战总览
-├─ preview-strategy-sectors.png # 板块确认 200 板块评分
-├─ preview-strategy-portfolio.png # 自选组合建议（股票 + 基金）
-├─ data/auction-YYYYMMDD.json # 当日全市场开盘快照（竞价分布）
+├─ data/auction-YYYYMMDD.json # 当日全市场开盘快照（竞价分布，自动保留 30 天）
 ├─ data/sector-members.json   # 板块成分股缓存（可能不含全量）
-├─ preview-watchlist-v2.png   # 自选基金拖动排序
-├─ preview-sectors-v2.png     # 板块资金 TOP10 排序
+├─ data/crash.log             # 未捕获异常 / SIGHUP 记录（运行时生成）
+├─ logs/                      # 服务日志：server.log + server.log.1~3（gitignored，只留 .gitkeep）
 ├─ docs/
-│  └─ 改造方案-安全加固与存储改造.md # 安全加固 / SQLite 存储改造方案（2026-11-15）
+│  ├─ 改造方案-安全加固与存储改造.md # 安全加固 / SQLite 存储改造方案（2026-11-15）
+│  └─ screenshots/            # README 里的预览图（16 张现用 + archive/ 3 张过期版本）
 ├─ 启动.bat                    # Windows 一键启动
 ├─ package.json
 └─ README.md

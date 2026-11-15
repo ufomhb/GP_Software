@@ -75,6 +75,12 @@ test('路由：源码里解析出的每个 /api 端点都被分发器认得', as
   };
   await Promise.all(Array.from({ length: 6 }, worker));
   assert.deepEqual(unknown, [], `这些端点没被分发器识别：\n${unknown.join('\n')}`);
+
+  // 拆模块最容易漏的是「注入了却没传」：接口抛 ReferenceError / TypeError，
+  // 但客户端只看到脱敏后的 5xx，所以改从子进程日志里找证据。
+  await new Promise((r) => setTimeout(r, 300));
+  const runtime = app.logs().split('\n').filter((l) => /is not defined|is not a function/.test(l));
+  assert.deepEqual(runtime, [], `依赖没注入，运行时报错：\n${runtime.join('\n')}`);
 });
 
 test('路由：未登录访问受保护端点返回 401 而不是 404', async (t) => {

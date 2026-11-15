@@ -238,7 +238,7 @@ function switchSection(section) {
   $$('.admin-section').forEach((sec) => sec.classList.toggle('is-active', sec.id === `sec-${section}`));
   const titles = {
     overview: '概览', users: '用户管理', logins: '登录记录', stats: '使用统计',
-    system: '系统状态', push: '定时推送', source: '数据源', net: '手机访问', changelog: '更新履历',
+    system: '系统状态', logs: '系统日志', push: '定时推送', source: '数据源', net: '手机访问', changelog: '更新履历',
   };
   $('#adminTitle').textContent = titles[section] || '后台管理';
   $('#adminRefreshAt').textContent = '';
@@ -252,6 +252,7 @@ function loadSection(section) {
     logins: loadLogins,
     stats: loadStats,
     system: loadSystem,
+    logs: loadLogs,
     push: loadPush,
     source: loadSource,
     net: loadNet,
@@ -778,6 +779,92 @@ async function loadChangelog() {
   }
 }
 
+/* ---------------- 系统日志 ---------------- */
+
+/**
+ * 一行日志的样式：错误红色、警告金色，其余常规色。
+ * 日志里可能带用户名 / URL / UA 等外部输入，所以一律 textContent 写入，绝不拼 innerHTML。
+ */
+function logLineClass(line) {
+  if (/\[ERROR\]|uncaughtException|unhandledRejection|\berror\b|失败|异常|不可用/i.test(line)) return 'log-err';
+  if (/\[WARN\]|\bwarn(ing)?\b|超时|回退|降级/i.test(line)) return 'log-warn';
+  return '';
+}
+
+function fillLogSelect(select, files) {
+  const prev = select.value;
+  if (!files.length) {
+    select.innerHTML = '<option value="">（暂无日志文件）</option>';
+    return;
+  }
+  select.innerHTML = files
+    .map((f) => `<option value="${esc(f.id)}">${esc(f.label)} · ${esc(fmtBytes(f.size))}</option>`)
+    .join('');
+  if (prev && files.some((f) => f.id === prev)) select.value = prev;
+  else select.value = files[0].id;
+}
+
+async function loadLogs() {
+  const body = $('#logsBody');
+  if (!body) return;
+  const params = new URLSearchParams({ lines: String($('#logsLines').value || '200') });
+  const id = $('#logsFile').value;
+  const query = String($('#logsQuery').value || '').trim();
+  if (id) params.set('file', id);
+  if (query) params.set('q', query);
+  try {
+    const data = await api(`/api/admin/logs?${params.toString()}`, 15000);
+    const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 48;
+    fillLogSelect($('#logsFile'), data.files || []);
+    body.textContent = '';
+    const rows = Array.isArray(data.lines) ? data.lines : [];
+    if (!rows.length) {
+      const empty = document.createElement('span');
+      empty.className = 'log-empty';
+      empty.textContent = data.size
+        ? '没有匹配的行（换个关键词，或把行数调大）'
+        : '日志为空：服务刚启动，或已关闭落盘（LOG_TO_FILE=0）';
+      body.appendChild(empty);
+    } else {
+      const frag = document.createDocumentFragment();
+      for (const line of rows) {
+        const el = document.createElement('span');
+        const cls = logLineClass(line);
+        el.className = cls ? `log-line ${cls}` : 'log-line';
+        el.textContent = line;
+        frag.appendChild(el);
+      }
+      body.appendChild(frag);
+    }
+    $('#logsMeta').textContent = [
+      data.label || '',
+      data.size ? fmtBytes(data.size) : '',
+      data.mtime ? `更新于 ${ago(data.mtime)}` : '',
+      query ? `命中 ${n(data.matched)} / 扫描 ${n(data.total)} 行` : `${n(data.total)} 行`,
+      data.truncated ? `只显示最后 ${$('#logsLines').value} 行` : '',
+    ].filter(Boolean).join(' · ');
+    if (atBottom) body.scrollTop = body.scrollHeight;
+  } catch (err) {
+    body.innerHTML = `<span class="log-empty">读取失败：${esc(err.message)}</span>`;
+    $('#logsMeta').textContent = '读取失败';
+  }
+}
+
+function bindLogs() {
+  $('#logsRefresh').addEventListener('click', () => loadLogs());
+  $('#logsFile').addEventListener('change', () => loadLogs());
+  $('#logsLines').addEventListener('change', () => loadLogs());
+  let typing = 0;
+  $('#logsQuery').addEventListener('input', () => {
+    clearTimeout(typing);
+    typing = setTimeout(() => loadLogs(), 320);
+  });
+  $('#logsCopy').addEventListener('click', () => copyText($('#logsBody').textContent || ''));
+  setInterval(() => {
+    if (state.section === 'logs' && $('#logsAuto').checked) loadLogs();
+  }, 5000);
+}
+
 /* ---------------- 启动 ---------------- */
 
 function bindChrome() {
@@ -789,6 +876,7 @@ function bindChrome() {
   $$('#adminNav button').forEach((btn) => btn.addEventListener('click', () => switchSection(btn.dataset.sec)));
   $$('[data-goto-sec]').forEach((btn) => btn.addEventListener('click', () => switchSection(btn.dataset.gotoSec)));
   $('#adminRefresh').addEventListener('click', () => loadSection(state.section));
+  bindLogs();
   setInterval(() => {
     if (state.section === 'logins') loadLogins();
     else if (state.section === 'stats') loadStats();

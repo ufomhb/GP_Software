@@ -8,8 +8,8 @@
   <meta name="robots" content="noindex,nofollow">
   <title>寰球智投 · 后台管理</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.0.0">
-  <link rel="stylesheet" href="/css/admin.css?v=2.0.0">
+  <link rel="stylesheet" href="/css/app.css?v=2.0.1">
+  <link rel="stylesheet" href="/css/admin.css?v=2.0.1">
 </head>
 <body class="admin-body">
   <!-- 登录 -->
@@ -50,6 +50,7 @@
         <button type="button" data-sec="logins">登录记录</button>
         <button type="button" data-sec="stats">使用统计</button>
         <button type="button" data-sec="system">系统状态</button>
+        <button type="button" data-sec="logs">系统日志</button>
         <button type="button" data-sec="push">定时推送</button>
         <button type="button" data-sec="source">数据源</button>
         <button type="button" data-sec="net">手机访问</button>
@@ -153,11 +154,39 @@
       <!-- 系统状态 -->
       <section class="admin-section" id="sec-system">
         <div class="admin-grid2">
-          <article class="admin-card"><div class="admin-card-head"><h2>运行状态</h2></div><div id="sysInfo" class="admin-kv-list"><div class="admin-empty">加载中…</div></div></article>
+          <article class="admin-card"><div class="admin-card-head"><h2>运行状态</h2><button type="button" class="admin-link" data-goto-sec="logs">查看日志 →</button></div><div id="sysInfo" class="admin-kv-list"><div class="admin-empty">加载中…</div></div></article>
           <article class="admin-card"><div class="admin-card-head"><h2>统计存储</h2></div><div id="sysStats" class="admin-kv-list"><div class="admin-empty">加载中…</div></div></article>
         </div>
         <article class="admin-card"><div class="admin-card-head"><h2>服务 / 定时任务 / 备份（NAS）</h2></div><div id="sysServices" class="admin-kv-list"><div class="admin-empty">加载中…</div></div></article>
         <article class="admin-card"><div class="admin-card-head"><h2>GitHub 提交</h2><span class="muted small" id="sysRepo"></span></div><div id="sysCommits" class="admin-list"><div class="admin-empty">加载中…</div></div></article>
+      </section>
+
+      <!-- 系统日志 -->
+      <section class="admin-section" id="sec-logs">
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>服务与错误日志</h2>
+            <span class="muted small" id="logsMeta">—</span>
+          </div>
+          <div class="admin-filter admin-log-filter">
+            <select id="logsFile" aria-label="日志文件"><option value="">加载中…</option></select>
+            <select id="logsLines" aria-label="显示行数">
+              <option value="100">最后 100 行</option>
+              <option value="200" selected>最后 200 行</option>
+              <option value="500">最后 500 行</option>
+              <option value="1000">最后 1000 行</option>
+            </select>
+            <input type="search" id="logsQuery" placeholder="关键词：error / 500 / 未知接口 / 登录" autocomplete="off" aria-label="关键词过滤">
+            <label class="admin-inline"><input type="checkbox" id="logsAuto"> 每 5 秒刷新</label>
+            <button type="button" class="admin-btn" id="logsRefresh">刷新</button>
+            <button type="button" class="admin-btn" id="logsCopy">复制</button>
+          </div>
+          <pre class="admin-log" id="logsBody">加载中…</pre>
+          <p class="admin-note">
+            日志写在服务器的 <code>logs/</code> 目录（单文件 5 MB 轮转、保留 3 份），进程崩溃 / 被强杀记录在 <code>data/crash.log</code>。
+            NAS 上也可以用 <code>journalctl -u gp-terminal -n 200</code> 看到同样的输出。
+          </p>
+        </article>
       </section>
 
       <!-- 定时推送 -->
@@ -232,6 +261,6 @@
     </main>
   </div>
 
-  <script src="/js/admin.js?v=2.0.0"></script>
+  <script src="/js/admin.js?v=2.0.1"></script>
 </body>
 </html>

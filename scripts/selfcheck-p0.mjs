@@ -189,6 +189,17 @@ try {
   ok('日志里 token 已打码', logs.includes('token=***'), logs.split('\n').filter((l) => l.includes('funds/watch')).slice(-1)[0] || '');
   ok('日志里没有明文 token', !logs.includes('SUPERSECRET'));
 
+  console.log('\n9. 后台日志（logs/ + data/crash.log）');
+  const logAnon = await req('/api/admin/logs');
+  ok('未登录读日志 → 401', logAnon.status === 401, String(logAnon.status));
+  const logAdmin = await req('/api/admin/logs?lines=80', { headers: { Cookie: adminCookie } });
+  ok('管理员读日志 → 200', logAdmin.status === 200 && logAdmin.json?.ok === true, String(logAdmin.status));
+  ok('日志文件列表非空', Array.isArray(logAdmin.json?.files) && logAdmin.json.files.length > 0, `files=${logAdmin.json?.files?.length}`);
+  ok('日志内容可读且含此前的请求行', Array.isArray(logAdmin.json?.lines)
+    && logAdmin.json.lines.some((l) => l.includes('/api/admin/')), `lines=${logAdmin.json?.lines?.length}`);
+  const logEvil = await req('/api/admin/logs?file=../../data/users.json', { headers: { Cookie: adminCookie } });
+  ok('非法 file 参数回落当前日志', logEvil.json?.id === 'server' && !String(logEvil.text || '').includes('"hash"'), String(logEvil.json?.id));
+
   console.log(`\n结果：${pass} 通过 / ${fail} 失败（隔离实例 :${PORT}）`);
 } catch (err) {
   fail += 1;
