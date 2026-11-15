@@ -154,6 +154,19 @@ Environment=TRUST_PROXY=cloudflare
 
 > 升级到本版本后，旧会话全部失效（令牌改存哈希），删除 `data/sessions.json` 可立即清空，重新登录一次即可。
 
+### 测试与结构（P2，2026-11-15）
+
+```bash
+npm test                                  # 单元 + 集成测试（33 项，起隔离实例，不碰 data/）
+npm run selfcheck                         # 安全基线 34 项 + 存储层 23 项
+```
+
+- 测试在 `test/`：`auth`（注册/登录/改密/会话失效）、`portfolio`（清洗、跨账号隔离、sqlite 模式）、`security`（安全头、同源校验、穿越、SSRF、后台权限、日志脱敏）、`unit-security`（`src/lib/*` 纯函数）。
+- 测试脚手架 `test/helpers/app.mjs` 会把代码复制到临时目录、用随机端口起一个实例，所以**不会改动仓库里的 `data/`**。
+- 纯逻辑已从 `server.js` 抽到 `src/lib/`：`security.js`（HTTPS 判定、安全头、脱敏、同源校验、会话键/Cookie、邀请码）、`net-safety.js`（内网地址识别、webhook 出站校验）。`server.js` 保留薄包装，调用方签名不变。
+- 前端渲染约定：**任何来自服务端/上游的文本进 `innerHTML` 前必须 `esc()`**。2026-11-15 审计了 225 处模板插值，35 处「文本型」全部确认安全（要么已在渲染处 `esc()`，要么走 `textContent`/`toast`/剪贴板/`encodeURIComponent`），未发现可利用的注入点。
+- CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
+
 ### v1.5 更新（2026-11-15）
 
 - **后台管理独立**：新增 `/admin.html`，系统状态、用户与权限、登录记录、每日流量/使用统计、微信推送、数据源、手机访问、更新履历全部迁入；终端设置只保留个人偏好（刷新 / 风险 / 通知 / 导出 / 重置 / 账号）。
@@ -450,6 +463,16 @@ node server.js --port=8091
 │  ├─ engine.js               # 技术评分、个股建议、市场复盘/明日策略
 │  ├─ source.js               # 数据源注册、优先级、健康度/冷却与切换
 │  └─ marketdata.js           # 东方财富 / 腾讯 / 新浪的行情、板块、资金流实现
+├─ src/lib/
+│  ├─ security.js             # HTTPS 判定、安全响应头、脱敏、同源校验、会话键与 Cookie
+│  └─ net-safety.js           # 内网地址识别、webhook 出站地址校验（防 SSRF）
+├─ test/
+│  ├─ helpers/app.mjs         # 测试脚手架（临时目录 + 随机端口起隔离实例）
+│  ├─ auth.test.mjs           # 注册 / 登录 / 改密 / 会话失效
+│  ├─ portfolio.test.mjs      # 自选与持仓的清洗、隔离、sqlite 模式
+│  ├─ security.test.mjs       # 安全头、同源、穿越、SSRF、后台权限、日志脱敏
+│  └─ unit-security.test.mjs  # src/lib 纯函数单测
+├─ .github/workflows/test.yml # CI：语法检查 + npm test + 两个 selfcheck
 ├─ scripts/
 │  ├─ migrate-json-to-sqlite.mjs # JSON → SQLite 迁移与校验
 │  ├─ backup-sqlite.mjs       # VACUUM INTO 一致性快照

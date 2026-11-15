@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js --open",
     "serve": "node server.js",
-    "test": "node --test",
+    "test": "node --test test/*.test.mjs",
     "selfcheck": "node scripts/selfcheck-p0.mjs && node scripts/selfcheck-store.mjs",
     "migrate:sqlite": "node scripts/migrate-json-to-sqlite.mjs",
     "verify:sqlite": "node scripts/migrate-json-to-sqlite.mjs --verify",
