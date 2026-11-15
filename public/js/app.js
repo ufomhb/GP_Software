@@ -491,7 +491,8 @@ let lastActivityAt = 0;
 function pingActivity(event = 'active') {
   if (!state.auth) return;
   const now = Date.now();
-  const activeSec = event === 'view' ? 0 : Math.min(120, Math.max(0, Math.round((now - lastActivityAt) / 1000)));
+  // 只统计页面可见期间的时间；切页/心跳共用，单次最多 120 秒，避免休眠后虚增。
+  const activeSec = Math.min(120, Math.max(0, Math.round((now - lastActivityAt) / 1000)));
   lastActivityAt = now;
   fetch('/api/activity/ping', {
     method: 'POST',
@@ -5648,7 +5649,7 @@ function renderSourceBanner() {
       <strong>东方财富接口暂不可用，已自动切换到备用数据源</strong>
       <span>${fallbackCaps.map((c) => `${esc(c.label)} ：${esc(sourceLabelOf(c.active))}`).join(' · ')}。备用源不提供主力净流入等字段。</span>
     </div>
-    <button class="btn small" data-source-open>查看 / 切换</button>
+    <button class="btn small" data-source-open>查看数据源</button>
     <button class="sb-close" data-source-dismiss aria-label="关闭提示">×</button>`;
 }
 
@@ -5754,7 +5755,7 @@ async function openSourceStatus() {
       <div class="source-list" id="sourceStatusList"><div class="empty">正在检测数据源…</div></div>
       <p class="setting-note">数据源的切换属于全局配置，已移到「后台管理 → 数据源」。普通用户在这里只能查看当前状态。</p>
       <div class="push-actions">
-        <a class="btn small primary" href="/admin.html" target="_blank" rel="noreferrer">打开后台管理</a>
+        ${state.auth && (state.auth.role === 'admin' || state.auth.role === 'super') ? '<a class="btn small primary" href="/admin.html" target="_blank" rel="noreferrer">打开后台管理</a>' : ''}
         <button class="btn small" id="sourceStatusReload">重新检测</button>
       </div>
     </div>`, 'drawer-overlay');

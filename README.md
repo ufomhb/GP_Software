@@ -39,6 +39,8 @@
 
 首次打开会跳转登录页。**第一个注册的账号是主账号**，自动继承推送配置里的持仓，并继续使用微信推送；后续账号的自选与持仓互相隔离。
 
+后台管理入口：`/admin.html`（管理员 / 超级管理员登录）。系统状态、用户权限、登录记录、每日流量与使用统计、微信推送、数据源、手机访问都已从终端设置移到后台。
+
 ### 运行方式
 
 ```bash
@@ -59,7 +61,26 @@ systemctl restart gp-terminal                    # 改完代码后重启
 | `POST /api/auth/login` | 登录（下发 30 天会话 Cookie） |
 | `POST /api/auth/logout` | 退出 |
 | `GET /api/auth/me` | 当前账号 |
+| `POST /api/auth/password` | 修改密码（校验原密码，成功后旧会话全部失效） |
 | `GET/POST /api/portfolio` | 自选股票 + 自选基金 + 持仓（按账号隔离） |
+| `GET /api/admin/overview` | 后台概览（今日汇总、在线、最近登录） |
+| `GET /api/admin/users` | 用户列表（角色、最近登录、今日/7 日使用） |
+| `GET /api/admin/stats` | 每日流量与使用统计（按天 × 用户） |
+| `GET /api/admin/logins` | 登录 / 改密 / 强制下线记录 |
+| `GET /api/admin/system` | 服务、定时任务、磁盘、备份与统计存储 |
+| `POST /api/activity/ping` | 终端使用心跳（页面访问与在线时长） |
+
+### 超级管理员
+
+超级管理员（`role=super`）可以进入 `/admin.html`，管理所有普通用户与管理员的角色、重置密码、强制下线，并查看登录记录与使用统计。账号不写死在代码里，用脚本创建或重置：
+
+```bash
+node scripts/superadmin.js --user=superadmin   # 创建/重置，密码随机生成并打印
+node scripts/superadmin.js --list              # 查看所有账号与角色
+node scripts/superadmin.js --user=superadmin --password='自定义密码'
+```
+
+> 脚本只写入 `data/users.json` 的 scrypt 哈希，不保存明文；请把打印出来的密码另行保存。`data/users.json` 已在 `.gitignore` 中，不会随仓库发布。
 
 ### 数据与备份
 
@@ -68,6 +89,7 @@ systemctl restart gp-terminal                    # 改完代码后重启
   - `sessions.json` 会话
   - `userdata/<id>.json` 各账号自选与持仓
   - `push-config.json` 推送配置 + 主账号持仓
+  - `stats.json` 每日流量 / 使用时长 / 页面访问 / 登录日志（保留 120 天，日志最多 2000 条）
 - **以上文件已加入 `.gitignore`，不会进入仓库**（含推送密钥与密码哈希）
 - NAS 上每天 03:30 自动备份到 `/data/backup/gp-data/`，保留 7 天
 
@@ -87,6 +109,15 @@ Cloudflare（gp.ufomhb.xyz）
 ```
 
 > 仓库只保存代码与文档；账号、密钥、隧道凭证均在本地，不入库。
+
+### v1.5 更新（2026-11-15）
+
+- **后台管理独立**：新增 `/admin.html`，系统状态、用户与权限、登录记录、每日流量/使用统计、微信推送、数据源、手机访问、更新履历全部迁入；终端设置只保留个人偏好（刷新 / 风险 / 通知 / 导出 / 重置 / 账号）。
+- **超级管理员**：新增 `super` 角色，可授予/收回管理员，可重置任意账号密码、强制下线；账号由 `scripts/superadmin.js` 创建，不写死在代码里。
+- **登录与使用统计**：记录每次登录/失败/改密/重置/强制下线（时间、IP、设备），按天统计每个账号的请求数、传输字节、使用时长与页面访问分布。
+- **手机端**：顶栏重排为两行网格，不再横向溢出；主导航吸顶固定并支持横向滑动；极窄屏只保留刷新 / 账号 / 退出 / 设置。
+- **PC 顶栏**：状态标签允许换行、按钮在窄屏只留图标，A股 / 港股 / 美股 / 期货四个开市状态完整显示。
+- **修改密码**：登录页新增「修改密码」标签页；终端设置内也可修改，成功后所有旧会话失效。
 
 ### v1.3 更新
 

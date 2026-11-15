@@ -180,7 +180,7 @@
       <div class="auth-hint">
         第一个注册的账号是<b>主账号</b>，会继承现有的自选基金与持仓，并继续使用 <code>14:30 / 19:30</code> 的微信推送；
         之后注册的账号各自保存自己的持仓，互不影响。<br>
-        忘记密码可用上方「修改密码」；管理员入口在 <a href="/admin.html" style="color:var(--accent)">后台管理</a>。
+        忘记密码请联系管理员在后台重置；管理员入口在 <a href="/admin.html" style="color:var(--accent)">后台管理</a>。
       </div>
     </div>
   </div>
@@ -207,6 +207,7 @@
     newPasswordRow.hidden = mode !== 'change';
     passwordLabel.textContent = mode === 'change' ? '原密码' : '密码';
     btn.textContent = mode === 'register' ? '注册并登录' : mode === 'change' ? '确认修改' : '登录';
+    btn.disabled = false;
     $('password').setAttribute('autocomplete', mode === 'register' ? 'new-password' : 'current-password');
     show('', false);
     $('username').focus();

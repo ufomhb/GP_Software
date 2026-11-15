@@ -8039,7 +8039,7 @@ function handleAuth(req, res, url) {
       fresh.until = fresh.count >= LOGIN_FAIL_LIMIT ? Date.now() + LOGIN_FAIL_WINDOW : 0;
       loginFails.set(ip, fresh);
       recordLoginEvent(req, { user: user || null, username, ok: false, action: 'password', reason: '原密码不正确' });
-      throw Object.assign(new Error('用户名或原密码不正确'), { status: 401 });
+      throw Object.assign(new Error('用户名或原密码不正确'), { status: 400 });
     }
     if (verifyPassword(newPassword, user.salt, user.hash)) {
       throw Object.assign(new Error('新密码不能与原密码相同'), { status: 400 });

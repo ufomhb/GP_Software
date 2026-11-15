@@ -1418,6 +1418,14 @@ strong { font-weight: 650; }
 
 /* ---------- 响应式 ---------- */
 @media (max-width: 1380px) {
+  /* 给顶栏让出空间：按钮只留图标、搜索收窄，保证 A股/港股/美股/期货 四个开市状态都放得下 */
+  .topbar { gap: 10px; padding: 0 16px; }
+  .brand { min-width: 170px; }
+  .brand-text small { display: none; }
+  .search { width: min(280px, 24vw); }
+  .top-actions .btn { padding: 0 9px; }
+  .top-actions .btn span { display: none; }
+  .account-chip { max-width: 104px; }
   .asset-ribbon { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .lower-grid { grid-template-columns: 1fr 1fr; }
   .session-panel { grid-column: span 2; }
@@ -1477,6 +1485,7 @@ strong { font-weight: 650; }
   .mainnav { top: 0; z-index: 120; }
   .nav-inner { overflow-x: auto; padding: 0 12px; }
   .nav-meta { display: none; }
+  .search-pop { z-index: 140; }
   .main { padding: 14px 12px 50px; }
   .hero-price strong { font-size: 34px; }
   .hero-stats { grid-template-columns: 1fr 1fr; }
@@ -2610,6 +2619,7 @@ strong { font-weight: 650; }
   border: 1px solid var(--line);
   border-radius: 999px;
   white-space: nowrap;
+  cursor: pointer;
 }
 .account-chip[hidden] { display: none; }
 .account-dot {
