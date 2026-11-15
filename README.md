@@ -110,6 +110,25 @@ Cloudflare（gp.ufomhb.xyz）
 
 > 仓库只保存代码与文档；账号、密钥、隧道凭证均在本地，不入库。
 
+### 安全基线（P0，2026-11-15）
+
+服务端已默认启用：安全响应头（CSP 先 `Report-Only`）、`nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy`、`Permissions-Policy`、HTTPS 下的 HSTS；会话 Cookie 在 HTTPS 下带 `Secure`，`data/sessions.json` 只存 `sha256(token)`；POST 校验同源 `Origin`；关闭开放注册；登录限流按「IP + 用户名」；webhook 只允许 `https` 且拒绝内网地址；JSON 落盘改为「临时文件 + rename」原子写。
+
+| 环境变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `ALLOW_REGISTER` | `0` | 是否允许注册新账号。空库时第一个账号始终可注册；之后要给同事开账号，可临时设 `1`，或用邀请码 |
+| `INVITE_CODE` | 空 | 设置后注册必须带 `invite` 字段（登录页注册表单不显示此字段，走邀请码时用接口或先临时打开注册） |
+| `TRUST_PROXY` | 空 | **部署在 Cloudflare 隧道 / 反向代理后必须设置**：`cloudflare`（读 `CF-Connecting-IP`）或 `1`（读 `X-Forwarded-For` 首段）。不设置时一律用直连地址，转发头会被忽略（防伪造） |
+| `CSP_ENFORCE` | `0` | 先以 `Report-Only` 观察控制台违规；确认无误后设 `1` 强制执行 |
+
+NAS 上的 systemd 单元建议加一行：
+
+```ini
+Environment=TRUST_PROXY=cloudflare
+```
+
+> 升级到本版本后，旧会话全部失效（令牌改存哈希），删除 `data/sessions.json` 可立即清空，重新登录一次即可。
+
 ### v1.5 更新（2026-11-15）
 
 - **后台管理独立**：新增 `/admin.html`，系统状态、用户与权限、登录记录、每日流量/使用统计、微信推送、数据源、手机访问、更新履历全部迁入；终端设置只保留个人偏好（刷新 / 风险 / 通知 / 导出 / 重置 / 账号）。

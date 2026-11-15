@@ -6,6 +6,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { exec } = require('node:child_process');
 const crypto = require('node:crypto');
+const net = require('node:net');
+const dns = require('node:dns');
 
 const { computeSeries } = require('./lib/indicators');
 const { analyze, stockAdvice, marketAdvice, aggregateNews, shanghaiToday, nf, pctText } = require('./lib/engine');
@@ -43,6 +45,69 @@ const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const VERSION = '1.5.1';
+
+/* =========================================================
+   P0 安全基线（2026-11-15）
+   - 注册默认关闭（空库时仍允许创建第一个账号）
+   - 只有显式声明 TRUST_PROXY 时才采信转发头，否则客户端 IP 一律取 socket 地址
+   - CSP 先用 Report-Only 观察，确认无违规后再设 CSP_ENFORCE=1 强制执行
+   ========================================================= */
+const ALLOW_REGISTER = process.env.ALLOW_REGISTER === '1';
+const INVITE_CODE = String(process.env.INVITE_CODE || '');
+const TRUST_PROXY = String(process.env.TRUST_PROXY || '').trim().toLowerCase();
+const CSP_ENFORCE = process.env.CSP_ENFORCE === '1';
+const CSP_POLICY =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+  "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; " +
+  "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+
+function requestIsHttps(req) {
+  if (req.socket && req.socket.encrypted) return true;
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  return proto === 'https';
+}
+
+// 每个响应都要带安全头：在请求处理的最前面统一调用一次。
+function setSecurityHeaders(req, res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader(
+    CSP_ENFORCE ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only',
+    CSP_POLICY,
+  );
+  if (requestIsHttps(req)) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+}
+
+// 日志里的敏感查询参数打码，避免 token / webhook 进日志文件。
+function redactQuery(search) {
+  return String(search || '').replace(
+    /([?&](?:token|sendkey|key|webhook|password|passwd|code|apikey|api_key)=)[^&]*/gi,
+    '$1***',
+  );
+}
+
+// 同源校验：浏览器对 POST 一定带 Origin；跨站请求直接拒绝。
+function isSameOriginRequest(req) {
+  const origin = String(req.headers.origin || '').trim();
+  if (origin) {
+    if (origin === 'null') return false;
+    try {
+      return new URL(origin).host === String(req.headers.host || '').trim();
+    } catch {
+      return false;
+    }
+  }
+  const site = String(req.headers['sec-fetch-site'] || '').trim().toLowerCase();
+  if (site === 'same-origin' || site === 'none') return true;
+  if (site === 'cross-site' || site === 'same-site') return false;
+  // 没有 Origin / Sec-Fetch-Site 的客户端（curl、脚本）按放行处理。
+  return true;
+}
 
 // 局域网访问用：列出本机所有非内网回环的 IPv4，手机连同一个 Wi-Fi 就能打开。
 function lanAddresses() {
@@ -2289,6 +2354,7 @@ async function getBoards() {
   } catch { /* 文件缺失时从东方财富页面解析 */ }
   const html = await (await fetch('https://data.eastmoney.com/bkzj/hy.html', {
     headers: { 'User-Agent': EM_HEADERS['User-Agent'], Referer: 'https://data.eastmoney.com/' },
+    signal: AbortSignal.timeout(15000),
   })).text();
   const parts = html.split(/<div class="pop-cont"/).slice(1);
   const keys = ['industry', 'concept', 'region'];
@@ -7176,6 +7242,75 @@ async function buildReportForSlot(slotKey, opts = {}) {
   return buildStrategyReport(port, pulse, opts);
 }
 
+/* ---------------------------------------------------------
+   出站地址校验（P0）
+   webhook 由管理员填写，必须挡住内网 / 回环 / 云元数据地址：
+   否则管理员账号一旦被拿下，推送配置就变成打 NAS 内网的跳板（192.168.31.x、dockerctl:9302）。
+   --------------------------------------------------------- */
+// 配置类错误统一按 400 返回（否则前端只会看到「服务暂时不可用」）。
+function outboundError(message) {
+  return Object.assign(new Error(message), { status: 400 });
+}
+
+function isPrivateAddress(ip) {
+  const raw = String(ip || '').trim().toLowerCase();
+  if (!raw) return true;
+  const v = raw.startsWith('::ffff:') ? raw.slice(7) : raw;
+  if (net.isIPv4(v)) {
+    const [a, b] = v.split('.').map(Number);
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && (b === 0 || b === 168)) return true;
+    if (a === 198 && (b === 18 || b === 19)) return true;
+    if (a >= 224) return true;
+    return false;
+  }
+  if (net.isIPv6(v)) {
+    if (v === '::' || v === '::1' || v === '0:0:0:0:0:0:0:1') return true;
+    if (/^f[cd][0-9a-f]{2}:/.test(v)) return true; // fc00::/7 唯一本地地址
+    if (/^fe[89ab][0-9a-f]:/.test(v)) return true; // fe80::/10 链路本地
+    return false;
+  }
+  return true;
+}
+
+async function assertSafeOutboundUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(String(rawUrl || ''));
+  } catch {
+    throw outboundError('webhook 地址格式不正确');
+  }
+  if (parsed.protocol !== 'https:') throw outboundError('webhook 必须是 https 地址');
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host) throw outboundError('webhook 缺少主机名');
+  if (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal') ||
+    host.endsWith('.lan')
+  ) {
+    throw outboundError('webhook 不能指向内网地址');
+  }
+  if (net.isIP(host)) {
+    if (isPrivateAddress(host)) throw outboundError('webhook 不能指向内网地址');
+    return;
+  }
+  let addrs = [];
+  try {
+    addrs = await dns.promises.lookup(host, { all: true });
+  } catch {
+    throw outboundError('webhook 域名无法解析');
+  }
+  if (!addrs.length) throw outboundError('webhook 域名无法解析');
+  for (const item of addrs) {
+    if (isPrivateAddress(item.address)) throw outboundError('webhook 不能指向内网地址');
+  }
+}
+
 async function sendPushMessage({ title, content }) {
   const cfg = loadPushConfig();
   const channel = cfg.channel || 'serverchan';
@@ -7235,11 +7370,13 @@ async function sendPushMessage({ title, content }) {
   }
   if (channel === 'wecom') {
     if (!cfg.webhook) throw new Error('请先填写企业微信群机器人 webhook');
+    await assertSafeOutboundUrl(cfg.webhook);
     const res = await fetch(cfg.webhook, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ msgtype: 'markdown', markdown: { content: `### ${title}\n${content}` } }),
       signal: AbortSignal.timeout(timeout),
+      redirect: 'error',
     });
     const text = await res.text();
     let json = null;
@@ -7249,11 +7386,13 @@ async function sendPushMessage({ title, content }) {
     return { ok: true, channel };
   }
   if (!cfg.webhook) throw new Error('请先填写自定义 webhook 地址');
+  await assertSafeOutboundUrl(cfg.webhook);
   const res = await fetch(cfg.webhook, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, content }),
     signal: AbortSignal.timeout(timeout),
+    redirect: 'error',
   });
   if (!res.ok) throw new Error(`自定义 webhook 返回 HTTP ${res.status}`);
   return { ok: true, channel: 'custom' };
@@ -7441,6 +7580,9 @@ async function handlePushApi(req, res, url) {
       throw new Error('不支持的推送渠道');
     }
     if (body.time && patch.time === undefined) throw new Error('推送时间格式应为 HH:MM');
+    if (patch.webhook !== undefined && String(patch.webhook || '').trim()) {
+      await assertSafeOutboundUrl(patch.webhook);
+    }
     const next = savePushConfig(patch);
     return { ok: true, config: maskPushConfig(next), slots: next.slots };
   }
@@ -7534,6 +7676,9 @@ const SESSION_TTL = 30 * 24 * 3600 * 1000;
 const LOGIN_FAIL_LIMIT = 5;
 const LOGIN_FAIL_WINDOW = 10 * 60 * 1000;
 const loginFails = new Map();
+const registerAttempts = new Map();
+const REGISTER_WINDOW = 60 * 60 * 1000;
+const REGISTER_LIMIT = 5;
 // 不需要登录就能访问的接口：登录页本身、健康检查。
 const PUBLIC_API = new Set([
   '/api/auth/login',
@@ -7560,17 +7705,41 @@ function isSuperUser(user) {
   return roleOf(user) === 'super';
 }
 
+const STORE_ERROR_LOG = path.join(__dirname, 'data', 'store-errors.log');
+
+// 存储读写告警：文件不存在是正常的；解析失败必须留下痕迹，否则账号表坏了也看不出来。
+function noteStoreError(file, err) {
+  const line = `[${new Date().toISOString()}] ${path.basename(file)}: ${(err && err.message) || err}\n`;
+  console.error(`[STORE] ${line.trim()}`);
+  try {
+    fs.mkdirSync(path.dirname(STORE_ERROR_LOG), { recursive: true });
+    fs.appendFileSync(STORE_ERROR_LOG, line, 'utf8');
+  } catch { /* 日志写不进去也不能影响主流程 */ }
+}
+
 function readJsonSafe(file, fallback) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
+  } catch (err) {
+    if (err && err.code !== 'ENOENT') noteStoreError(file, err);
     return fallback;
   }
 }
 
+// 原子写：先写临时文件再 rename，避免写到一半崩溃留下半截 JSON。
 function writeJsonSafe(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+  const text = JSON.stringify(data, null, 2);
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, text, 'utf8');
+  try {
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    // Windows 上目标文件被杀毒 / 编辑器占用时 rename 可能失败：退回直接覆盖并留痕。
+    noteStoreError(file, err);
+    fs.writeFileSync(file, text, 'utf8');
+    try { fs.unlinkSync(tmp); } catch { /* 临时文件清不掉也不影响主流程 */ }
+  }
 }
 
 function loadUsers() {
@@ -7603,9 +7772,22 @@ function verifyPassword(password, salt, hash) {
   return crypto.timingSafeEqual(got, want);
 }
 
+// 会话文件只存 sha256(token)：文件泄露不等于可以直接登录。
+function sessionKey(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
 function loadSessions() {
   const store = readJsonSafe(SESSIONS_FILE, {});
-  return store && typeof store === 'object' && !Array.isArray(store) ? store : {};
+  if (!store || typeof store !== 'object' || Array.isArray(store)) return {};
+  // 只保留格式合法的键（sha256 = 64 位十六进制）。
+  // 注意：旧版本存的明文 token 也是 64 位十六进制、无法从格式上区分，升级后它们已经对不上
+  //（查表用的是 sha256(token)），要让它们彻底消失直接删 data/sessions.json 即可。
+  const out = {};
+  for (const [key, value] of Object.entries(store)) {
+    if (/^[0-9a-f]{64}$/.test(key) && value && value.userId) out[key] = value;
+  }
+  return out;
 }
 
 function saveSessions(store) {
@@ -7634,10 +7816,10 @@ function currentUser(req) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token) return null;
   const sessions = loadSessions();
-  const session = sessions[token];
+  const session = sessions[sessionKey(token)];
   if (!session || !session.userId) return null;
   if (!(Number(session.expiresAt) > Date.now())) {
-    delete sessions[token];
+    delete sessions[sessionKey(token)];
     saveSessions(sessions);
     return null;
   }
@@ -7687,6 +7869,14 @@ function invalidateUserSessions(userId) {
   return changed;
 }
 
+function sessionCookie(req, token, maxAgeSec) {
+  const parts = [`${SESSION_COOKIE}=${token}`, 'Path=/', 'HttpOnly', 'SameSite=Lax'];
+  if (maxAgeSec !== undefined) parts.push(`Max-Age=${maxAgeSec}`);
+  // 只有 HTTPS 才加 Secure：否则本机 http://127.0.0.1 会直接登录不上。
+  if (requestIsHttps(req)) parts.push('Secure');
+  return parts.join('; ');
+}
+
 function issueSession(req, res, user) {
   const token = crypto.randomBytes(32).toString('hex');
   const sessions = loadSessions();
@@ -7694,22 +7884,19 @@ function issueSession(req, res, user) {
   for (const [k, v] of Object.entries(sessions)) {
     if (!v || !(Number(v.expiresAt) > now)) delete sessions[k];
   }
-  sessions[token] = { userId: user.id, expiresAt: now + SESSION_TTL, createdAt: now };
+  sessions[sessionKey(token)] = { userId: user.id, expiresAt: now + SESSION_TTL, createdAt: now };
   saveSessions(sessions);
-  res.setHeader(
-    'Set-Cookie',
-    `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL / 1000)}`,
-  );
+  res.setHeader('Set-Cookie', sessionCookie(req, token, Math.floor(SESSION_TTL / 1000)));
 }
 
 function dropSession(req, res) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (token) {
     const sessions = loadSessions();
-    delete sessions[token];
+    delete sessions[sessionKey(token)];
     saveSessions(sessions);
   }
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  res.setHeader('Set-Cookie', sessionCookie(req, '', 0));
 }
 
 function userDataFile(userId) {
@@ -7780,9 +7967,46 @@ function sanitizePortfolio(body) {
   return { funds, holdings, watchlist };
 }
 
+// 客户端地址：只有显式配置可信代理时才采信转发头，避免伪造 X-Forwarded-For 绕过限流。
+//   TRUST_PROXY=cloudflare  Cloudflare 隧道：读 CF-Connecting-IP
+//   TRUST_PROXY=1           自建 nginx / caddy：读 X-Forwarded-For 首段
 function clientIp(req) {
-  const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return fwd || (req.socket && req.socket.remoteAddress) || 'unknown';
+  const socketAddr = (req.socket && req.socket.remoteAddress) || 'unknown';
+  if (TRUST_PROXY === 'cloudflare') {
+    const cf = String(req.headers['cf-connecting-ip'] || '').trim();
+    return cf || socketAddr;
+  }
+  if (TRUST_PROXY === '1' || TRUST_PROXY === 'true') {
+    const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    if (fwd) return fwd;
+  }
+  return socketAddr;
+}
+
+// 登录限流按「IP + 用户名」记：换 IP 试同一个账号、换账号试同一个 IP 都会被累计。
+function loginKey(req, username) {
+  return `${clientIp(req)}|${String(username || '').trim().toLowerCase().slice(0, 64)}`;
+}
+
+// 邀请码用哈希比较，避免长度不同时抛错、也不泄露前缀。
+function inviteMatches(code) {
+  if (!INVITE_CODE) return true;
+  const got = crypto.createHash('sha256').update(String(code || '')).digest();
+  const want = crypto.createHash('sha256').update(INVITE_CODE).digest();
+  return crypto.timingSafeEqual(got, want);
+}
+
+// 注册限流：同一 IP 一小时最多 5 次尝试（与登录限流分开统计）。
+function registerAllowed(req) {
+  const key = clientIp(req);
+  const now = Date.now();
+  const rec = registerAttempts.get(key);
+  if (!rec || now - rec.since > REGISTER_WINDOW) {
+    registerAttempts.set(key, { count: 1, since: now });
+    return true;
+  }
+  rec.count = Number(rec.count || 0) + 1;
+  return rec.count <= REGISTER_LIMIT;
 }
 
 /* =========================================================
@@ -7968,6 +8192,18 @@ function handleAuth(req, res, url) {
       throw Object.assign(new Error('密码长度需为 6-64 位'), { status: 400 });
     }
     const store = loadUsers();
+    // P0：注册默认关闭；空库时允许创建第一个账号（bootstrap），之后需要 ALLOW_REGISTER=1 或邀请码。
+    if (store.users.length > 0) {
+      if (!ALLOW_REGISTER) {
+        throw Object.assign(new Error('注册已关闭，请联系管理员开通账号'), { status: 403 });
+      }
+      if (!inviteMatches(body.invite)) {
+        throw Object.assign(new Error('邀请码不正确'), { status: 403 });
+      }
+      if (!registerAllowed(req)) {
+        throw Object.assign(new Error('注册过于频繁，请稍后再试'), { status: 429 });
+      }
+    }
     if (store.users.some((u) => String(u.username).toLowerCase() === username.toLowerCase())) {
       throw Object.assign(new Error('该用户名已被注册'), { status: 409 });
     }
@@ -7995,7 +8231,8 @@ function handleAuth(req, res, url) {
     const username = String(body.username || '').trim();
     const password = String(body.password || '');
     const ip = clientIp(req);
-    const fail = loginFails.get(ip);
+    const failKey = loginKey(req, username);
+    const fail = loginFails.get(failKey);
     if (fail && Number(fail.until) > Date.now()) {
       const mins = Math.ceil((fail.until - Date.now()) / 60000);
       throw Object.assign(new Error(`尝试次数过多，请 ${mins} 分钟后再试`), { status: 429 });
@@ -8006,11 +8243,11 @@ function handleAuth(req, res, url) {
       const fresh = fail && fail.since > Date.now() - LOGIN_FAIL_WINDOW ? fail : { count: 0, since: Date.now() };
       fresh.count = Number(fresh.count || 0) + 1;
       fresh.until = fresh.count >= LOGIN_FAIL_LIMIT ? Date.now() + LOGIN_FAIL_WINDOW : 0;
-      loginFails.set(ip, fresh);
+      loginFails.set(failKey, fresh);
       recordLoginEvent(req, { user: user || null, username, ok: false, action: 'login', reason: '用户名或密码错误' });
       throw Object.assign(new Error('用户名或密码错误'), { status: 401 });
     }
-    loginFails.delete(ip);
+    loginFails.delete(failKey);
     user.lastLoginAt = new Date().toISOString();
     user.lastLoginIp = ip;
     user.loginCount = (Number(user.loginCount) || 0) + 1;
@@ -8027,7 +8264,8 @@ function handleAuth(req, res, url) {
     const oldPassword = String(body.oldPassword || '');
     const newPassword = String(body.newPassword || '');
     const ip = clientIp(req);
-    const fail = loginFails.get(ip);
+    const failKey = loginKey(req, username);
+    const fail = loginFails.get(failKey);
     if (fail && Number(fail.until) > Date.now()) {
       const mins = Math.ceil((fail.until - Date.now()) / 60000);
       throw Object.assign(new Error(`尝试次数过多，请 ${mins} 分钟后再试`), { status: 429 });
@@ -8042,7 +8280,7 @@ function handleAuth(req, res, url) {
       const fresh = fail && fail.since > Date.now() - LOGIN_FAIL_WINDOW ? fail : { count: 0, since: Date.now() };
       fresh.count = Number(fresh.count || 0) + 1;
       fresh.until = fresh.count >= LOGIN_FAIL_LIMIT ? Date.now() + LOGIN_FAIL_WINDOW : 0;
-      loginFails.set(ip, fresh);
+      loginFails.set(failKey, fresh);
       recordLoginEvent(req, { user: user || null, username, ok: false, action: 'password', reason: '原密码不正确' });
       throw Object.assign(new Error('用户名或原密码不正确'), { status: 400 });
     }
@@ -8055,7 +8293,7 @@ function handleAuth(req, res, url) {
     user.updatedAt = new Date().toISOString();
     saveUsers(store);
     invalidateUserSessions(user.id);
-    loginFails.delete(ip);
+    loginFails.delete(failKey);
     recordLoginEvent(req, { user, ok: true, action: 'password' });
     return { ok: true, username: user.username };
   }
@@ -8395,7 +8633,7 @@ async function handleApi(req, res, url) {
   if (p.startsWith('/api/admin/')) return handleAdmin(req, res, url);
   if (p === '/api/changelog') return getChangelog();
   if (p === '/api/health') {
-    return { ok: true, version: VERSION, uptime: process.uptime(), port: PORT, time: new Date().toISOString() };
+    return { ok: true, version: VERSION, time: new Date().toISOString() };
   }
   // 前端心跳：记录页面访问与在线时长（每 60 秒一次；切页时额外记一次 view）
   if (p === '/api/activity/ping' && req.method === 'POST') {
@@ -8714,7 +8952,6 @@ function sendJSON(req, res, status, data) {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
     'Cache-Control': 'no-store, max-age=0',
-    'Access-Control-Allow-Origin': '*',
   });
   res.end(body);
 }
@@ -8728,9 +8965,11 @@ function serveStatic(req, res, pathname) {
     return res.end('Bad Request');
   }
   const rel = decoded === '/' ? '/index.html' : decoded;
-  const file = path.resolve(PUBLIC_DIR, `.${rel}`);
   const root = path.resolve(PUBLIC_DIR);
-  if (!file.toLowerCase().startsWith(root.toLowerCase())) {
+  const file = path.resolve(root, `.${rel}`);
+  const relToRoot = path.relative(root, file);
+  // 用 path.relative 判断越界：`public-evil` 这种同名前缀目录也必须挡住。
+  if (!relToRoot || relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) {
     res.writeHead(403);
     return res.end('Forbidden');
   }
@@ -8752,6 +8991,7 @@ function serveStatic(req, res, pathname) {
 
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
+  setSecurityHeaders(req, res);
   let url;
   try {
     url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
@@ -8759,15 +8999,16 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(400);
     return res.end('Bad Request');
   }
+  // 同源校验：跨站 POST 一律拒绝（SameSite=Lax 只挡跨站 Cookie，不挡同站子域）。
+  if (req.method === 'POST' && url.pathname.startsWith('/api/') && !isSameOriginRequest(req)) {
+    res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+    return res.end(JSON.stringify({ error: '跨站请求被拒绝' }));
+  }
   req.gpPath = url.pathname;
   req.gpUser = currentUser(req);
 
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    });
+    res.writeHead(204, { Allow: 'GET, POST, OPTIONS' });
     return res.end();
   }
 
@@ -8797,16 +9038,21 @@ const server = http.createServer(async (req, res) => {
         : await handleApi(req, res, url);
       sendJSON(req, res, 200, data);
       if (process.env.LOG_API !== '0') {
-        console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] ${url.pathname}${url.search} 200 ${Date.now() - started}ms`);
+        console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] ${url.pathname}${redactQuery(url.search)} 200 ${Date.now() - started}ms`);
       }
     } catch (err) {
       const status = err.status || 502;
-      sendJSON(req, res, status, {
-        error: err.message || '服务暂时不可用',
-        path: url.pathname,
-        time: new Date().toISOString(),
-      });
-      console.error(`[API ERROR] ${url.pathname}${url.search}`, err.stack || err.message);
+      // 4xx 是给用户看的业务提示；5xx 一律脱敏，细节只进日志。
+      const payload = status >= 500
+        ? { error: '服务暂时不可用', path: url.pathname }
+        : { error: err.message || '请求有误', path: url.pathname };
+      sendJSON(req, res, status, payload);
+      // 4xx 是正常的业务拒绝（密码错、未登录、跨站），只留一行；5xx 才需要完整堆栈。
+      if (status >= 500) {
+        console.error(`[API ERROR] ${url.pathname}${redactQuery(url.search)}`, err.stack || err.message);
+      } else {
+        console.warn(`[API ${status}] ${url.pathname}${redactQuery(url.search)} ${err.message || ''}`);
+      }
     }
     return;
   }
@@ -8819,9 +9065,14 @@ const server = http.createServer(async (req, res) => {
   const assetPath =
     /^\/(css|js|vendor)\//.test(url.pathname) ||
     /\.(css|js|png|jpe?g|gif|svg|ico|webp|woff2?|map)$/i.test(url.pathname);
-  const publicPage = url.pathname === '/login.html' || url.pathname === '/admin.html';
+  const publicPage = url.pathname === '/login.html';
   if (!publicPage && !assetPath && !req.gpUser) {
     res.writeHead(302, { Location: '/login.html', 'Cache-Control': 'no-store' });
+    return res.end();
+  }
+  // 后台管理页只允许 admin / super 打开（数据接口另有角色校验，这里只是不把页面给普通用户）。
+  if (url.pathname === '/admin.html' && (!req.gpUser || !isAdminUser(req.gpUser))) {
+    res.writeHead(302, { Location: '/', 'Cache-Control': 'no-store' });
     return res.end();
   }
   serveStatic(req, res, url.pathname);
