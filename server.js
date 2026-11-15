@@ -4852,7 +4852,9 @@ function shanghaiDateKey(offsetDays = 0) {
 }
 
 function shiftDateKey(key, days) {
-  const d = new Date(`${key.slice(0, 4)}-${key.slice(4, 6)}-${key.slice(6, 8)}T12:00:00+08:00`);
+  const text = String(key || '');
+  const d = new Date(`${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}T12:00:00+08:00`);
+  if (Number.isNaN(d.getTime())) throw new Error(`shiftDateKey 收到非法日期: "${text}"`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10).replace(/-/g, '');
 }
@@ -7792,7 +7794,7 @@ const STATS_KEEP_DAYS = 120;
 const STATS_LOGIN_LIMIT = 2000;
 const STATS_ONLINE_WINDOW = 5 * 60 * 1000;
 
-function shanghaiDateKey(date = new Date()) {
+function statsDateKey(date = new Date()) {
   try {
     return new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Shanghai',
@@ -7809,7 +7811,7 @@ function lastDateKeys(days) {
   const count = Math.max(1, Math.min(STATS_KEEP_DAYS, Number(days) || 7));
   const out = [];
   const now = Date.now();
-  for (let i = count - 1; i >= 0; i -= 1) out.push(shanghaiDateKey(new Date(now - i * 86400000)));
+  for (let i = count - 1; i >= 0; i -= 1) out.push(statsDateKey(new Date(now - i * 86400000)));
   return out;
 }
 
@@ -7871,7 +7873,7 @@ function recordTraffic(req, bytes, kind) {
   const user = req && req.gpUser;
   const size = Number(bytes) || 0;
   if (!user || size <= 0) return;
-  const entry = ensureStat(shanghaiDateKey(), user, req);
+  const entry = ensureStat(statsDateKey(), user, req);
   if (!entry) return;
   const isPing = String(req.gpPath || '') === '/api/activity/ping';
   if (!isPing) {
@@ -7897,14 +7899,14 @@ function recordLoginEvent(req, { user = null, username = '', ok = false, action 
   });
   if (statsStore.logins.length > STATS_LOGIN_LIMIT) statsStore.logins = statsStore.logins.slice(-STATS_LOGIN_LIMIT);
   if (user && ok && action === 'login') {
-    const entry = ensureStat(shanghaiDateKey(), user, req);
+    const entry = ensureStat(statsDateKey(), user, req);
     if (entry) entry.logins += 1;
   }
   scheduleStatsSave();
 }
 
 function recordViewPing(req, user, view, activeSec, event) {
-  const entry = ensureStat(shanghaiDateKey(), user, req);
+  const entry = ensureStat(statsDateKey(), user, req);
   if (!entry) return;
   entry.lastSeen = Date.now();
   const sec = Math.max(0, Math.min(180, Number(activeSec) || 0));
@@ -8115,7 +8117,7 @@ async function handleAdmin(req, res, url) {
   const q = url.searchParams;
 
   if (p === '/api/admin/users' && req.method === 'GET') {
-    const todayKey = shanghaiDateKey();
+    const todayKey = statsDateKey();
     const cutoff = Date.now() - STATS_ONLINE_WINDOW;
     const users = loadUsers().users
       .map((u) => {
@@ -8801,7 +8803,7 @@ const server = http.createServer(async (req, res) => {
         path: url.pathname,
         time: new Date().toISOString(),
       });
-      console.error(`[API ERROR] ${url.pathname}${url.search}`, err.message);
+      console.error(`[API ERROR] ${url.pathname}${url.search}`, err.stack || err.message);
     }
     return;
   }
