@@ -33,6 +33,15 @@ function esc(value) {
   }[c]));
 }
 
+/** 属性里的 URL 清洗：只放行 http(s) 与相对路径（esc 挡不住 javascript: 协议） */
+function safeUrl(value, fallback = '#') {
+  const raw = String(value == null ? '' : value).replace(/[\u0000-\u001F\u007F]/g, '').trim();
+  if (!raw) return fallback;
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)) return raw;
+  if (/^https?:/i.test(raw)) return raw;
+  return fallback;
+}
+
 function n(v) { return Number(v) || 0; }
 
 function fmtBytes(bytes) {
@@ -539,7 +548,7 @@ async function loadSystem() {
       const list = await res.json();
       box.innerHTML = list.map((c) => `<div class="admin-list-item"><div><code>${esc(String(c.sha).slice(0, 7))}</code> ${esc(String((c.commit && c.commit.message) || '').split('\n')[0])}</div><small>${esc((c.commit && c.commit.author && c.commit.author.date) || '')}</small></div>`).join('');
     } catch {
-      box.innerHTML = `<div class="admin-empty">GitHub API 不可达（网络限制）。<a href="${esc(sys.repo || 'https://github.com/ufomhb/GP_Software')}" target="_blank" rel="noreferrer">直接打开仓库 →</a></div>`;
+      box.innerHTML = `<div class="admin-empty">GitHub API 不可达（网络限制）。<a href="${esc(safeUrl(sys.repo || 'https://github.com/ufomhb/GP_Software'))}" target="_blank" rel="noreferrer">直接打开仓库 →</a></div>`;
     }
   } catch (err) {
     $('#sysInfo').innerHTML = `<div class="admin-empty">读取失败：${esc(err.message)}</div>`;

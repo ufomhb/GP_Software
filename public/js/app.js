@@ -21,6 +21,25 @@ import {
   COLORS,
 } from './charts.js';
 
+// 纯格式化/转义工具（见 util.js）
+import {
+  isNum,
+  nf,
+  priceFmt,
+  stockFmt,
+  pctFmt,
+  signedFmt,
+  yiFmt,
+  compactAmount,
+  toneOf,
+  toneClass,
+  cleanName,
+  esc,
+  safeUrl,
+  timeText,
+} from './util.js';
+
+
 /* =========================================================
    基础工具
    ========================================================= */
@@ -118,79 +137,6 @@ function saveJSON(key, val) {
   try { localStorage.setItem(scopedKey(key), JSON.stringify(val)); } catch { /* 忽略隐私模式限制 */ }
 }
 
-function isNum(v) {
-  return v !== null && v !== '' && Number.isFinite(Number(v));
-}
-
-function nf(v, digits = 2) {
-  if (!isNum(v)) return '--';
-  return Number(v).toLocaleString('zh-CN', {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
-}
-
-function priceFmt(v) {
-  if (!isNum(v)) return '--';
-  const a = Math.abs(Number(v));
-  if (a >= 1000) return nf(v, 2);
-  if (a >= 100) return nf(v, 2);
-  if (a >= 10) return nf(v, 3);
-  if (a >= 1) return nf(v, 4);
-  return nf(v, 4);
-}
-
-function stockFmt(v) {
-  return nf(v, 2);
-}
-
-function pctFmt(v, digits = 2) {
-  if (!isNum(v)) return '--';
-  return `${Number(v) >= 0 ? '+' : ''}${nf(v, digits)}%`;
-}
-
-function signedFmt(v, digits = 2) {
-  if (!isNum(v)) return '--';
-  return `${Number(v) >= 0 ? '+' : ''}${nf(v, digits)}`;
-}
-
-function yiFmt(v, digits = 1) {
-  if (!isNum(v)) return '--';
-  return `${Number(v) >= 0 ? '+' : ''}${nf(v, digits)} 亿`;
-}
-
-function compactAmount(v) {
-  if (!isNum(v)) return '--';
-  const n = Number(v);
-  if (Math.abs(n) >= 1e12) return `${nf(n / 1e12, 2)} 万亿`;
-  if (Math.abs(n) >= 1e8) return `${nf(n / 1e8, 1)} 亿`;
-  if (Math.abs(n) >= 1e4) return `${nf(n / 1e4, 0)} 万`;
-  return nf(n, 0);
-}
-
-function toneOf(v) {
-  if (!isNum(v)) return 'flat';
-  return Number(v) > 0 ? 'up' : Number(v) < 0 ? 'down' : 'flat';
-}
-
-function toneClass(v) {
-  return `tone-${toneOf(v)}`;
-}
-
-function cleanName(name) {
-  return String(name || '').replace(/\s+/g, '');
-}
-
-function esc(v) {
-  return String(v == null ? '' : v).replace(/[&<>"']/g, (s) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[s]));
-}
-
-function timeText(ts) {
-  if (!ts) return '--:--:--';
-  return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false });
-}
 
 function todayText() {
   return new Date().toLocaleDateString('zh-CN', {
@@ -870,7 +816,7 @@ function renderNewsList() {
     const s = item.sentiment || 0;
     const sent = s > 0 ? '<span class="sent pos">偏多</span>' : s < 0 ? '<span class="sent neg">偏空</span>' : '';
     const mood = s > 0 ? 'news-pos' : s < 0 ? 'news-neg' : 'news-neutral';
-    return `<a class="news-item ${mood}" href="${esc(item.url || '#')}" target="_blank" rel="noopener noreferrer">
+    return `<a class="news-item ${mood}" href="${esc(safeUrl(item.url))}" target="_blank" rel="noopener noreferrer">
       <div class="news-meta"><span>${esc((item.time || '').slice(5, 16))}</span>${sent}</div>
       <div class="news-title">${esc(item.title)}</div>
       ${item.summary ? `<div class="news-summary">${esc(item.summary)}</div>` : ''}
@@ -7135,7 +7081,7 @@ async function openAdmin() {
 
       <div class="setting-group">
         <h3>GitHub 提交</h3>
-        <div class="admin-kv"><span>仓库</span><b><a href="${adminEsc(sys.repo)}" target="_blank" rel="noreferrer">${adminEsc(sys.repo)}</a></b></div>
+        <div class="admin-kv"><span>仓库</span><b><a href="${adminEsc(safeUrl(sys.repo))}" target="_blank" rel="noreferrer">${adminEsc(sys.repo)}</a></b></div>
         <div id="adminCommits"><div class="empty">正在读取…</div></div>
       </div>
     </div>`);
@@ -7259,7 +7205,14 @@ async function init() {
   if (params.get('fund')) setTimeout(() => openStockFund(params.get('fund')), 1800);
 }
 
-init().catch((err) => {
-  console.error(err);
-  toast(`初始化失败：${err.message}`, 'err', 8000);
-});
+// 测试开关：设置 globalThis.__GP_NO_AUTOBOOT__ 后只加载模块（供 test/dom-smoke 直接调渲染函数）
+if (!globalThis.__GP_NO_AUTOBOOT__) {
+  init().catch((err) => {
+    console.error(err);
+    toast(`初始化失败：${err.message}`, 'err', 8000);
+  });
+}
+
+// 仅供测试直接调用的渲染函数；生产页面用不到这些导出（ESM 导出不影响浏览器加载）
+export { state, esc, safeUrl, cleanName, renderNewsList, renderRankTable };
+

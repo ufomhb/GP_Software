@@ -6670,6 +6670,7 @@ const pushService = createPushService({
   store: dataStore,
   loadUsers,
   loadPortfolio,
+  savePortfolio,
   requireAdmin,
   currentUser,
   sanitizePortfolio,

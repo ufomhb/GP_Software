@@ -17,6 +17,7 @@ function createPushService(deps) {
     store, // dataStore：push_config 的读写
     loadUsers,
     loadPortfolio,
+    savePortfolio,
     requireAdmin,
     currentUser,
     sanitizePortfolio,
@@ -50,10 +51,20 @@ const PUSH_DEFAULTS = {
   lastResult: null,
 };
 
+// HH:MM 合法性：既要求两位格式，也要求 00:00–23:59（否则会算出 26:39 这种永远到不了的时段）
+function isValidClockTime(value) {
+  const m = /^(\d{2}):(\d{2})$/.exec(String(value || ''));
+  if (!m) return false;
+  return Number(m[1]) <= 23 && Number(m[2]) <= 59;
+}
+
 // 兼容旧配置：单条 time + 字符串 lastSent 迁移成两个时段。
 function normalizePushConfig(raw) {
   const cfg = { ...PUSH_DEFAULTS, ...(raw || {}) };
-  if (!Array.isArray(cfg.slots) || !cfg.slots.length) {
+  // 注意看的是 raw.slots 而不是合并后的 cfg.slots：合并后永远有默认两段，
+  // 会让「旧配置只有 time」这条迁移分支永远走不到。
+  const rawSlots = raw && raw.slots;
+  if (!Array.isArray(rawSlots) || !rawSlots.length) {
     cfg.slots = PUSH_SLOT_DEFAULTS.map((s) => ({ ...s }));
     if (raw && raw.time) cfg.slots[0].time = String(raw.time).slice(0, 5);
   } else {
@@ -64,7 +75,7 @@ function normalizePushConfig(raw) {
         return {
           key: String(s.key),
           label: s.label || def.label || String(s.key),
-          time: /^\d{2}:\d{2}$/.test(String(s.time || '')) ? String(s.time).slice(0, 5) : (def.time || '19:30'),
+          time: isValidClockTime(s.time) ? String(s.time).slice(0, 5) : (def.time || '19:30'),
           enabled: s.enabled !== false,
         };
       });
@@ -839,14 +850,14 @@ async function handlePushApi(req, res, url) {
     for (const key of ['enabled', 'channel', 'token', 'webhook', 'weekdaysOnly', 'funds', 'holdings']) {
       if (body[key] !== undefined) patch[key] = body[key];
     }
-    if (body.time && /^\d{2}:\d{2}$/.test(String(body.time))) patch.time = String(body.time).slice(0, 5);
+    if (body.time && isValidClockTime(body.time)) patch.time = String(body.time).slice(0, 5);
     if (Array.isArray(body.slots)) {
       const slots = body.slots
         .filter((x) => x && x.key)
         .map((x) => ({
           key: String(x.key),
           label: String(x.label || '').slice(0, 40),
-          time: /^\d{2}:\d{2}$/.test(String(x.time || '')) ? String(x.time).slice(0, 5) : '19:30',
+          time: isValidClockTime(x.time) ? String(x.time).slice(0, 5) : '19:30',
           enabled: x.enabled !== false,
         }));
       if (!slots.length) throw new Error('至少要保留一个推送时段');
@@ -900,7 +911,7 @@ async function handlePushApi(req, res, url) {
         .map((x) => ({
           key: String(x.key),
           label: String(x.label || '').slice(0, 40),
-          time: /^\d{2}:\d{2}$/.test(String(x.time || '')) ? String(x.time).slice(0, 5) : '19:30',
+          time: isValidClockTime(x.time) ? String(x.time).slice(0, 5) : '19:30',
           enabled: x.enabled !== false,
         }));
     }

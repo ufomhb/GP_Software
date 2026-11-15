@@ -14,6 +14,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: 安装测试依赖（jsdom，仅 devDependency）
+        run: npm install --no-audit --no-fund
       - name: 语法检查
         run: |
           node --check server.js
