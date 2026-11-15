@@ -128,7 +128,8 @@ Cloudflare（gp.ufomhb.xyz）
 
 NAS 上的部署方式（**没有 git，靠 scp 同步代码**）：
 
-- 代码目录 `/data/gp`（`server.js` / `lib` / `public` / `scripts` / `package.json` / `data`），systemd 单元 `/etc/systemd/system/gp-terminal.service`。
+- 代码目录 `/data/gp`（`server.js` / `lib` / `src` / `public` / `scripts` / `package.json` / `data`），systemd 单元 `/etc/systemd/system/gp-terminal.service`。
+- **`src/` 必须一起同步**：`server.js` 会 `require('./src/lib/*')`，只 copy server.js 会导致起不来。
 - Node 运行时：`/data/node24`（v24.22.3，2026-11-15 从 v20 升级，为 P1 的 `node:sqlite` 做准备）；旧的 `/data/node`（v20.19.4）保留，回滚时把单元里的 `PATH` 与 `ExecStart` 改回 `/data/node/bin/node` 即可。
 - 升级流程：备份 `/data/gp` → scp 覆盖代码 → `systemctl restart gp-terminal` → `curl -s localhost:8090/api/health` 验证。
 - 备份：`/data/backup/gp-code/`（代码，按次）与 `/data/backup/gp-data/`（每日 03:30，保留 7 天）。
