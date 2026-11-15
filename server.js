@@ -6686,6 +6686,7 @@ const { loadPushConfig, pushChannelLabel, runPushTick, handlePushApi } = pushSer
    保证 14:30 / 19:30 的推送用的持仓与页面看到的一致；后注册的账号数据互相隔离。
    ========================================================= */
 const USERDATA_DIR = path.join(__dirname, 'data', 'userdata');
+const PUSH_FILE = path.join(__dirname, 'data', 'push-config.json');
 const SESSION_COOKIE = 'gp_sid';
 const SESSION_TTL = 30 * 24 * 3600 * 1000;
 const LOGIN_FAIL_LIMIT = 5;
