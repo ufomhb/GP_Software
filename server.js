@@ -36,6 +36,10 @@ const {
   emNews,
   sinaNews,
 } = require('./lib/marketdata');
+const dataStore = require('./lib/store');
+
+// 存储后端：STORE=sqlite 用 data/gp.sqlite（事务），否则维持 data/*.json。
+const STORE_MODE = dataStore.init();
 
 const PORT = Number(
   (process.argv.find((a) => a.startsWith('--port=')) || '').split('=')[1] || process.env.PORT || 8090,
@@ -6732,19 +6736,15 @@ function normalizePushConfig(raw) {
 }
 
 function loadPushConfig() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(PUSH_FILE, 'utf8'));
-    return normalizePushConfig(raw);
-  } catch {
-    return normalizePushConfig({});
-  }
+  // json 模式原样返回 push-config.json（含主账号 funds/holdings）；
+  // sqlite 模式回落 data/gp.sqlite 的 push_config 单行（funds/holdings 在 portfolio_* 里）。
+  return normalizePushConfig(dataStore.loadPushConfig());
 }
 
 function savePushConfig(patch = {}) {
   const next = { ...loadPushConfig(), ...patch };
   try {
-    fs.mkdirSync(path.dirname(PUSH_FILE), { recursive: true });
-    fs.writeFileSync(PUSH_FILE, JSON.stringify(next, null, 2), 'utf8');
+    dataStore.savePushConfig(next);
   } catch (err) {
     throw new Error(`推送配置写入失败：${err.message}`);
   }
@@ -6776,12 +6776,16 @@ function pushChannelLabel(ch) {
 
 async function collectPortfolio() {
   const cfg = loadPushConfig();
-  const codes = (cfg.funds || []).map((f) => f && f.code).filter(Boolean);
+  // 持仓与自选统一从「主账号的 portfolio」取：json 模式下它来自 push-config.json，
+  // sqlite 模式下来自 portfolio_* 表，两条路径对推送是同一份数据。
+  const primaryUser = loadUsers().users.find((u) => u.primary) || null;
+  const portfolio = primaryUser ? loadPortfolio(primaryUser) : { funds: [], holdings: {} };
+  const codes = (portfolio.funds || []).map((f) => f && f.code).filter(Boolean);
   if (!codes.length) throw new Error('还没有同步自选基金，请先在基金页添加自选后再试');
   const watch = await getFundWatch(codes, 'balanced');
   const today = shanghaiToday();
   const items = (watch.items || []).filter((x) => x && x.code);
-  const holdings = cfg.holdings || {};
+  const holdings = portfolio.holdings || {};
   const rows = [];
   let marketValue = 0;
   let costValue = 0;
@@ -7668,8 +7672,6 @@ async function handlePushApi(req, res, url) {
    第一个注册的账号是主账号：它的持仓同时镜像到 data/push-config.json，
    保证 14:30 / 19:30 的推送用的持仓与页面看到的一致；后注册的账号数据互相隔离。
    ========================================================= */
-const USERS_FILE = path.join(__dirname, 'data', 'users.json');
-const SESSIONS_FILE = path.join(__dirname, 'data', 'sessions.json');
 const USERDATA_DIR = path.join(__dirname, 'data', 'userdata');
 const SESSION_COOKIE = 'gp_sid';
 const SESSION_TTL = 30 * 24 * 3600 * 1000;
@@ -7705,60 +7707,17 @@ function isSuperUser(user) {
   return roleOf(user) === 'super';
 }
 
-const STORE_ERROR_LOG = path.join(__dirname, 'data', 'store-errors.log');
+// 通用 JSON 文件读写已收敛到 lib/store.js；行情缓存（boards / us-sessions / 板块成分）仍走文件。
+const readJsonSafe = dataStore.readJsonFile;
+const writeJsonSafe = dataStore.writeJsonFile;
 
-// 存储读写告警：文件不存在是正常的；解析失败必须留下痕迹，否则账号表坏了也看不出来。
-function noteStoreError(file, err) {
-  const line = `[${new Date().toISOString()}] ${path.basename(file)}: ${(err && err.message) || err}\n`;
-  console.error(`[STORE] ${line.trim()}`);
-  try {
-    fs.mkdirSync(path.dirname(STORE_ERROR_LOG), { recursive: true });
-    fs.appendFileSync(STORE_ERROR_LOG, line, 'utf8');
-  } catch { /* 日志写不进去也不能影响主流程 */ }
-}
-
-function readJsonSafe(file, fallback) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (err) {
-    if (err && err.code !== 'ENOENT') noteStoreError(file, err);
-    return fallback;
-  }
-}
-
-// 原子写：先写临时文件再 rename，避免写到一半崩溃留下半截 JSON。
-function writeJsonSafe(file, data) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const text = JSON.stringify(data, null, 2);
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, text, 'utf8');
-  try {
-    fs.renameSync(tmp, file);
-  } catch (err) {
-    // Windows 上目标文件被杀毒 / 编辑器占用时 rename 可能失败：退回直接覆盖并留痕。
-    noteStoreError(file, err);
-    fs.writeFileSync(file, text, 'utf8');
-    try { fs.unlinkSync(tmp); } catch { /* 临时文件清不掉也不影响主流程 */ }
-  }
-}
-
+// 账号：STORE=json 读写 users.json；STORE=sqlite 读写 users 表（角色补全在 store 内完成）。
 function loadUsers() {
-  const store = readJsonSafe(USERS_FILE, { users: [] });
-  if (!store || !Array.isArray(store.users)) return { users: [] };
-  // 兼容旧数据：没有 role 字段时，主账号视为管理员、其余为普通用户，并落盘一次。
-  let migrated = false;
-  for (const user of store.users) {
-    if (user.role !== 'super' && user.role !== 'admin' && user.role !== 'user') {
-      user.role = user.primary ? 'admin' : 'user';
-      migrated = true;
-    }
-  }
-  if (migrated) saveUsers(store);
-  return store;
+  return dataStore.loadUsers();
 }
 
 function saveUsers(store) {
-  writeJsonSafe(USERS_FILE, store);
+  dataStore.saveUsers(store);
 }
 
 function hashPassword(password, salt) {
@@ -7778,20 +7737,11 @@ function sessionKey(token) {
 }
 
 function loadSessions() {
-  const store = readJsonSafe(SESSIONS_FILE, {});
-  if (!store || typeof store !== 'object' || Array.isArray(store)) return {};
-  // 只保留格式合法的键（sha256 = 64 位十六进制）。
-  // 注意：旧版本存的明文 token 也是 64 位十六进制、无法从格式上区分，升级后它们已经对不上
-  //（查表用的是 sha256(token)），要让它们彻底消失直接删 data/sessions.json 即可。
-  const out = {};
-  for (const [key, value] of Object.entries(store)) {
-    if (/^[0-9a-f]{64}$/.test(key) && value && value.userId) out[key] = value;
-  }
-  return out;
+  return dataStore.loadSessions();
 }
 
 function saveSessions(store) {
-  writeJsonSafe(SESSIONS_FILE, store);
+  dataStore.saveSessions(store);
 }
 
 function parseCookies(req) {
@@ -7904,34 +7854,11 @@ function userDataFile(userId) {
 }
 
 function loadPortfolio(user) {
-  if (!user) return { funds: [], holdings: {}, watchlist: [] };
-  const data = readJsonSafe(userDataFile(user.id), null);
-  const watchlist = data && Array.isArray(data.watchlist) ? data.watchlist : [];
-  // 主账号的自选基金与持仓直接读推送配置：推送和页面永远是同一份。
-  if (user.primary) {
-    const cfg = loadPushConfig();
-    return { funds: cfg.funds || [], holdings: cfg.holdings || {}, watchlist };
-  }
-  return {
-    funds: (data && Array.isArray(data.funds) && data.funds) || [],
-    holdings: (data && data.holdings && typeof data.holdings === 'object' && !Array.isArray(data.holdings))
-      ? data.holdings
-      : {},
-    watchlist,
-  };
+  return dataStore.loadPortfolio(user);
 }
 
 function savePortfolio(user, portfolio) {
-  const payload = {
-    funds: Array.isArray(portfolio.funds) ? portfolio.funds : [],
-    holdings: portfolio.holdings && typeof portfolio.holdings === 'object' && !Array.isArray(portfolio.holdings)
-      ? portfolio.holdings
-      : {},
-    watchlist: Array.isArray(portfolio.watchlist) ? portfolio.watchlist : [],
-    updatedAt: Date.now(),
-  };
-  if (user.primary) savePushConfig({ funds: payload.funds, holdings: payload.holdings });
-  writeJsonSafe(userDataFile(user.id), payload);
+  dataStore.savePortfolio(user, portfolio);
 }
 
 // 自选股票 / 自选基金 / 持仓的统一清洗：前端传什么都在这里收敛，避免脏数据落盘。
@@ -8043,7 +7970,7 @@ function lastDateKeys(days) {
 }
 
 function loadStatsStore() {
-  const raw = readJsonSafe(STATS_FILE, { days: {}, logins: [] });
+  const raw = dataStore.loadStats();
   const store = { days: {}, logins: [] };
   if (raw && raw.days && typeof raw.days === 'object' && !Array.isArray(raw.days)) store.days = raw.days;
   if (raw && Array.isArray(raw.logins)) store.logins = raw.logins;
@@ -8064,7 +7991,7 @@ function flushStats() {
     statsFlushTimer = null;
   }
   try {
-    writeJsonSafe(STATS_FILE, statsStore);
+    dataStore.saveStats(statsStore);
   } catch (err) {
     console.error('[STATS] 写入失败', err.message);
   }
@@ -8074,7 +8001,7 @@ function scheduleStatsSave() {
   if (statsFlushTimer) return;
   statsFlushTimer = setTimeout(() => {
     statsFlushTimer = null;
-    try { writeJsonSafe(STATS_FILE, statsStore); } catch { /* 下次再写 */ }
+    try { dataStore.saveStats(statsStore); } catch { /* 下次再写 */ }
   }, 3000);
 }
 
@@ -8220,7 +8147,7 @@ function handleAuth(req, res, url) {
     store.users.push(user);
     saveUsers(store);
     // 主账号沿用推送配置里的持仓；其它账号从空白开始。
-    if (!user.primary) writeJsonSafe(userDataFile(user.id), { funds: [], holdings: {}, updatedAt: Date.now() });
+    if (!user.primary) savePortfolio(user, { funds: [], holdings: {}, watchlist: [] });
     issueSession(req, res, user);
     recordLoginEvent(req, { user, ok: true, action: 'register' });
     return { ok: true, user: publicUser(user) };
@@ -8498,7 +8425,7 @@ async function handleAdmin(req, res, url) {
       .sort((a, b) => b.lastSeen - a.lastSeen);
     const allUsers = loadUsers().users;
     let statsBytes = 0;
-    try { statsBytes = fs.statSync(STATS_FILE).size; } catch { statsBytes = 0; }
+    try { statsBytes = fs.statSync(STORE_MODE === 'sqlite' ? dataStore.DB_FILE : STATS_FILE).size; } catch { statsBytes = 0; }
     return {
       ok: true,
       serverTime: Date.now(),
@@ -8614,7 +8541,7 @@ async function handleAdmin(req, res, url) {
   if (p === '/api/admin/system' && req.method === 'GET') {
     const status = await getSystemStatus();
     let statsFileBytes = 0;
-    try { statsFileBytes = fs.statSync(STATS_FILE).size; } catch { statsFileBytes = 0; }
+    try { statsFileBytes = fs.statSync(STORE_MODE === 'sqlite' ? dataStore.DB_FILE : STATS_FILE).size; } catch { statsFileBytes = 0; }
     return { ...status, ok: true, statsFileBytes, statsDays: Object.keys(statsStore.days).length };
   }
 
@@ -8662,9 +8589,13 @@ async function handleApi(req, res, url) {
     const portfolio = loadPortfolio(user);
     let updatedAt = null;
     try {
-      updatedAt = user && user.primary
-        ? fs.statSync(PUSH_FILE).mtimeMs
-        : fs.statSync(userDataFile(user.id)).mtimeMs;
+      if (STORE_MODE === 'sqlite') {
+        updatedAt = fs.statSync(dataStore.DB_FILE).mtimeMs;
+      } else {
+        updatedAt = user && user.primary
+          ? fs.statSync(PUSH_FILE).mtimeMs
+          : fs.statSync(userDataFile(user.id)).mtimeMs;
+      }
     } catch {
       updatedAt = null;
     }
@@ -8989,6 +8920,22 @@ function serveStatic(req, res, pathname) {
   });
 }
 
+// 竞价快照（data/auction-YYYYMMDD.json）是可再生缓存：只保留最近 30 天，避免磁盘只增不减。
+function pruneAuctionSnapshots(keepDays = 30) {
+  try {
+    const dir = path.join(__dirname, 'data');
+    const cutoff = Date.now() - keepDays * 86400000;
+    for (const name of fs.readdirSync(dir)) {
+      const m = name.match(/^auction-(\d{4})(\d{2})(\d{2})\.json$/);
+      if (!m) continue;
+      const at = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      if (at < cutoff) {
+        try { fs.unlinkSync(path.join(dir, name)); } catch { /* 删不掉就下次再说 */ }
+      }
+    }
+  } catch { /* 目录读不到不影响启动 */ }
+}
+
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
   setSecurityHeaders(req, res);
@@ -9111,7 +9058,9 @@ server.listen(PORT, HOST, () => {
     console.log(`  Push: enabled - ${pushChannelLabel(pushCfg.channel)} - ${slotsText || 'no slot'}`);
   }
   console.log(`  数据来源: 东方财富 / 腾讯 / 新浪公开行情接口 (自动切换)`);
+  console.log(`  存储:     ${STORE_MODE === 'sqlite' ? 'SQLite（data/gp.sqlite）' : 'JSON 文件（data/*.json）'}`);
   console.log('  按 Ctrl+C 停止服务\n');
+  pruneAuctionSnapshots();
   if (process.argv.includes('--open')) {
     setTimeout(() => {
       exec(`start "" "${link}"`, { windowsHide: true }, () => {});
@@ -9122,6 +9071,7 @@ server.listen(PORT, HOST, () => {
 process.on('SIGINT', () => {
   console.log('\n服务已停止。');
   flushStats();
+  dataStore.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 800);
 });
