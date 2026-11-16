@@ -3415,11 +3415,11 @@ function renderWatchTable() {
       <div class="watch-cell"><div class="wc-label">技术评分</div><div class="wc-value ${advice && advice.score >= 60 ? 'tone-up' : advice && advice.score < 45 ? 'tone-down' : ''}">${advice ? advice.score : '--'}</div></div>
       <div class="watch-cell"><div class="wc-label">评级 / 仓位</div><div class="wc-value">${advice ? `<span class="badge tone-${advice.rating.tone}">${esc(advice.rating.label)}</span><div class="wc-sub">${esc(advice.position.text)}</div>` : '--'}</div></div>
       <div class="watch-actions">
-        <button class="move" title="上移" data-watch-action="up" data-secid="${esc(q.secid)}">K</button>
-        <button class="move" title="下移" data-watch-action="down" data-secid="${esc(q.secid)}">↑</button>
-        <button title="查看详情" data-watch-action="chart" data-secid="${esc(q.secid)}">K</button>
-        <button title="添加价格预警" data-watch-action="alert" data-secid="${esc(q.secid)}">×</button>
-        <button class="del" title="移出自选 data-watch-action="remove" data-secid="${esc(q.secid)}">×</button>
+        <button class="move" title="上移" data-watch-action="up" data-secid="${esc(q.secid)}">↑</button>
+        <button class="move" title="下移" data-watch-action="down" data-secid="${esc(q.secid)}">↓</button>
+        <button title="查看 K 线详情" data-watch-action="chart" data-secid="${esc(q.secid)}">K</button>
+        <button title="添加价格预警" data-watch-action="alert" data-secid="${esc(q.secid)}">警</button>
+        <button class="del" title="移出自选" data-watch-action="remove" data-secid="${esc(q.secid)}">×</button>
       </div>
     </div>`;
   }).join('')}</div>`;
@@ -3509,6 +3509,98 @@ function reorderWatch(fromSecid, toSecid) {
   renderWatchTable();
   renderDashWatch();
   toast('自选顺序已更新', 'ok', 1200);
+}
+
+/* 手机端长按拖拽排序：HTML5 拖放（dragstart/drop）在触屏浏览器上不触发，
+   这里用 touch 事件补一套——按住 420ms 且手指基本不动才进入拖拽，避免和滚动、单击冲突。
+   dataKey 为行上 dataset 键名（如 dragSecid / dragFund）；onReorder(fromId, toId) 负责持久化与重渲染。 */
+function bindTouchReorder(container, rowSelector, dataKey, onReorder) {
+  if (!container) return;
+  let timer = null;
+  let ctx = null; // { row, id, active, startX, startY, ghost }
+
+  const clearTimer = () => { clearTimeout(timer); timer = null; };
+  const removeGhost = () => { if (ctx && ctx.ghost) { ctx.ghost.remove(); ctx.ghost = null; } };
+  const resetRows = () => $$(rowSelector, container).forEach((r) => r.classList.remove('dragging', 'drag-over'));
+
+  // 长按松手后浏览器还会补一个 click；拦截掉，避免排序后误打开详情。
+  const suppressClickOnce = () => {
+    const block = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      container.removeEventListener('click', block, true);
+    };
+    container.addEventListener('click', block, { capture: true });
+    setTimeout(() => container.removeEventListener('click', block, true), 350);
+  };
+
+  container.addEventListener('touchstart', (e) => {
+    const row = e.target.closest(rowSelector);
+    if (!row) return;
+    const t = e.touches[0];
+    ctx = { row, id: row.dataset[dataKey], active: false, startX: t.clientX, startY: t.clientY, ghost: null };
+    clearTimer();
+    timer = setTimeout(() => {
+      if (!ctx) return;
+      ctx.active = true;
+      ctx.row.classList.add('dragging');
+      if (navigator.vibrate) { try { navigator.vibrate(30); } catch { /* 部分浏览器不支持振动 */ } }
+      toast('拖动到目标行后松手排序', 'info', 1400);
+      // 用轻量浮动标签而不是克隆整行：表格行（tr）脱离 table 后列宽会塌。
+      const rect = row.getBoundingClientRect();
+      const nameEl = row.querySelector('.wi-name, .t-name, .imc-name');
+      const label = nameEl ? nameEl.textContent.trim() : row.textContent.trim().slice(0, 12);
+      const ghost = document.createElement('div');
+      ghost.className = 'touch-drag-ghost';
+      ghost.textContent = label || '拖动排序';
+      ghost.style.left = `${rect.left}px`;
+      ghost.style.top = `${rect.top}px`;
+      document.body.appendChild(ghost);
+      ctx.ghost = ghost;
+    }, 420);
+  }, { passive: true });
+
+  container.addEventListener('touchmove', (e) => {
+    if (!ctx) return;
+    const t = e.touches[0];
+    const dx = t.clientX - ctx.startX;
+    const dy = t.clientY - ctx.startY;
+    if (!ctx.active) {
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) clearTimer(); // 明显移动视为滚动，取消长按
+      return;
+    }
+    e.preventDefault(); // 已进入拖拽，禁止页面跟着滚
+    if (ctx.ghost) ctx.ghost.style.transform = `translate(${dx}px, ${dy}px)`;
+    const hit = document.elementFromPoint(t.clientX, t.clientY);
+    const over = hit ? hit.closest(rowSelector) : null;
+    $$(`${rowSelector}.drag-over`, container).forEach((r) => { if (r !== over) r.classList.remove('drag-over'); });
+    if (over && over !== ctx.row) over.classList.add('drag-over');
+  }, { passive: false });
+
+  const finish = (e) => {
+    if (!ctx) return;
+    const wasActive = ctx.active;
+    if (wasActive && e) {
+      const t = e.changedTouches[0];
+      const hit = document.elementFromPoint(t.clientX, t.clientY);
+      const over = hit ? hit.closest(rowSelector) : null;
+      if (over && over !== ctx.row && over.dataset[dataKey]) {
+        try { onReorder(ctx.id, over.dataset[dataKey]); } catch { /* 重排失败不影响收尾 */ }
+      }
+      suppressClickOnce();
+    }
+    removeGhost();
+    resetRows();
+    clearTimer();
+    ctx = null;
+  };
+
+  container.addEventListener('touchend', finish);
+  container.addEventListener('touchcancel', () => {
+    if (ctx) { removeGhost(); resetRows(); }
+    clearTimer();
+    ctx = null;
+  });
 }
 
 function addAlert(secid, code, name, type, price) {
@@ -4569,6 +4661,8 @@ let fundDragEndedAt = 0;
 function bindFundDrag(container) {
   if (!container || container.dataset.fundDragBound === '1') return;
   container.dataset.fundDragBound = '1';
+  // 手机端长按拖拽（桌面端走下面的 HTML5 drag 事件）
+  bindTouchReorder(container, '[data-drag-fund]', 'dragFund', (from, to) => reorderFund(from, to));
   let dragCode = null;
   container.addEventListener('dragstart', (e) => {
     const row = e.target.closest('[data-drag-fund]');
@@ -6292,6 +6386,8 @@ function bindEvents() {
       dragSecid = null;
       $$('.watch-card-row', watchTable).forEach((r) => r.classList.remove('dragging', 'drag-over'));
     });
+    // 手机端没有 HTML5 拖放事件：长按行进入拖拽，手指上下移动到目标行松手即重排。
+    bindTouchReorder(watchTable, '.watch-card-row', 'dragSecid', (from, to) => reorderWatch(from, to));
   }
 
   $('#sectorSearch') && $('#sectorSearch').addEventListener('input', (e) => {
