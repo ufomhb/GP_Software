@@ -102,6 +102,29 @@ function fundPctCell(x) {
   return `${pctFmt(x.pct)}${sub ? `<div class="t-sub">${esc(sub)}</div>` : ''}`;
 }
 
+/* 当日估值列：与「当日涨跌」（净值/穿透口径）并排展示，方便比较官方估值准不准。
+   场外基金优先用天天基金官方盘中估值（estimatePct）；ETF 是场内实时价，没有独立估值。 */
+function fundEstimateCell(x) {
+  const type = x.type || 'open';
+  if (type === 'etf') {
+    return '<span class="muted">--</span><div class="t-sub">场内实时价</div>';
+  }
+  if (isNum(x.estimatePct)) {
+    const hm = x.estimateAt ? String(x.estimateAt).slice(11, 16) : '';
+    // 净值已公布时，顺带在 tooltip 里给出估值与净值的偏差。
+    let title = `官方盘中估值${hm ? `（${hm}）` : ''}`;
+    if (x.pctKind === 'nav' && isNum(x.pct)) {
+      const diff = Number(x.estimatePct) - Number(x.pct);
+      title += `；与今日净值偏差 ${diff >= 0 ? '+' : ''}${diff.toFixed(2)} 个百分点`;
+    }
+    return `<span class="${toneClass(x.estimatePct)}" title="${esc(title)}">${pctFmt(x.estimatePct)}</span><div class="t-sub">官方估值${hm ? ` · ${hm}` : ''}</div>`;
+  }
+  if (x.pctKind === 'etf' || x.pctKind === 'holdings') {
+    return `<span class="${toneClass(x.pct)}">${pctFmt(x.pct)}</span><div class="t-sub">穿透估算</div>`;
+  }
+  return '<span class="muted">--</span><div class="t-sub">暂无估值</div>';
+}
+
 function renderFundSummary() {
   const el = $('#fundSummary');
   if (!el) return;
@@ -161,7 +184,7 @@ function renderFundWatchTable() {
   const sorted = [...items].sort((a, b) => (order.get(a.code) ?? 999) - (order.get(b.code) ?? 999));
   el.innerHTML = `
     <div class="table-scroll"><table class="table fund-watch-table">
-      <thead><tr><th>基金</th><th data-col="type">类型</th><th data-col="nav">最新</th><th>当日涨跌</th><th data-col="flow">主力净流入</th><th data-col="mv">持有市值</th><th>持有收益</th><th data-col="score">技术评分</th><th data-col="rating">评级 / 仓位</th><th>操作</th></tr></thead>
+      <thead><tr><th>基金</th><th data-col="type">类型</th><th data-col="nav">最新</th><th>当日涨跌</th><th data-col="est">当日估值</th><th data-col="flow">主力净流入</th><th data-col="mv">持有市值</th><th>持有收益</th><th data-col="score">技术评分</th><th data-col="rating">评级 / 仓位</th><th>操作</th></tr></thead>
       <tbody>${sorted.map((x) => {
         const m = meta.get(x.code) || {};
         const type = x.type || m.type || 'open';
@@ -173,6 +196,7 @@ function renderFundWatchTable() {
           <td data-col="type"><span class="fund-tag ${type}">${type === 'etf' ? 'ETF' : '场外'}</span></td>
           <td data-col="nav" class="t-price">${priceFmt(x.price)}${x.pctKind === 'holdings' || x.pctKind === 'etf' ? '<div class="t-sub">估算净值</div>' : ''}</td>
           <td class="t-chg ${toneClass(x.pct)}">${fundPctCell(x)}</td>
+          <td data-col="est" class="t-chg">${fundEstimateCell(x)}</td>
           <td data-col="flow" class="t-chg ${toneClass(x.mainYi)}">${type === 'etf' ? yiFmt(x.mainYi) : '--'}</td>
           <td data-col="mv" class="t-price">${hr.marketValue === null ? '<span class="muted">--</span>' : nf(hr.marketValue, 2)}</td>
           <td class="t-chg ${toneClass(hr.profit)}">${hr.profit === null ? '<span class="muted">--</span>' : `${signedFmt(hr.profit, 2)}<div class="t-sub">${isNum(hr.profitPct) ? `${hr.profitPct >= 0 ? '+' : ''}${Number(hr.profitPct).toFixed(2)}%` : ''}</div>`}</td>
@@ -250,6 +274,7 @@ export {
   fundHoldingRow,
   fundPortfolio,
   fundPctCell,
+  fundEstimateCell,
   renderFundSummary,
   renderFundWatchSummary,
   renderFundWatchTable,

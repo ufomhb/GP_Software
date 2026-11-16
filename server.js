@@ -3062,6 +3062,12 @@ async function getFundWatch(codes, risk = 'balanced') {
           est,
           today,
         });
+        // 官方盘中估值（天天基金 GSZ/GSZZL/GZTIME）：与「当日涨跌」口径分开返回，
+        // 前端可同屏对比净值涨跌与估值偏差；非当日估值一律置空，避免拿旧估值冒充。
+        const gszVal = num(info.GSZ);
+        const gszzlVal = num(info.GSZZL);
+        const hasOfficialEst = gszVal !== null && gszVal > 0 && gszzlVal !== null
+          && String(info.GZTIME || '').startsWith(today);
         let price = nav;
         if (r.kind === 'estimate') price = num(info.GSZ) ?? nav;
         else if ((r.kind === 'etf' || r.kind === 'holdings') && nav && Number.isFinite(r.pct)) {
@@ -3085,6 +3091,10 @@ async function getFundWatch(codes, risk = 'balanced') {
           pctStale: r.kind === 'stale',
           date: navDate,
           estimateTime: r.kind === 'estimate' ? (info.GZTIME || '') : '',
+          // 官方估值独立于「当日涨跌」口径（后者可能是已公布净值或穿透估算）。
+          estimate: hasOfficialEst ? gszVal : null,
+          estimatePct: hasOfficialEst ? gszzlVal : null,
+          estimateAt: hasOfficialEst ? String(info.GZTIME || '') : '',
           mainYi: null,
           mainPct: null,
           amountYi: null,
