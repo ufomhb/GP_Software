@@ -693,8 +693,20 @@ strong { font-weight: 650; }
 .breadth-side div { display: flex; justify-content: space-between; gap: 12px; }
 .breadth-side b { color: var(--text-2); font-family: var(--num); font-weight: 500; }
 
-.rank-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+/* 涨跌榜 / 资金榜：每种榜单一张卡，内部左右并排（涨 / 跌、流入 / 流出）便于对照 */
+.rank-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
 .rank-panel { padding: 14px; }
+.rank-split { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-top: 4px; }
+.rank-side { min-width: 0; }
+.rank-side + .rank-side { padding-left: 12px; border-left: 1px solid rgba(148, 163, 184, 0.12); }
+.rank-side-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: #9fb2c9; font-size: 10.5px; }
+.rk-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; }
+.rk-dot.tone-up { background: var(--up); box-shadow: 0 0 7px rgba(255, 77, 94, 0.5); }
+.rk-dot.tone-down { background: var(--down); box-shadow: 0 0 7px rgba(22, 199, 132, 0.5); }
+.rank-side .mini-row { grid-template-columns: 16px minmax(0, 1fr) auto auto; gap: 5px; padding: 6px 0; }
+.rank-side .mini-name { font-size: 10.5px; }
+.rank-side .mini-price { font-size: 9px; }
+.rank-side .mini-chg { min-width: 46px; font-size: 10.5px; }
 .mini-table { display: grid; gap: 1px; }
 .mini-row {
   display: grid;
@@ -740,7 +752,7 @@ strong { font-weight: 650; }
 .imc-quote { flex: none; text-align: right; }
 .imc-quote b { display: block; font-family: var(--num); font-size: 17px; font-weight: 600; line-height: 1.15; }
 .imc-quote span { display: block; margin-top: 2px; font-family: var(--num); font-size: 10px; }
-.index-mini-chart { width: 100%; height: 108px; margin-top: 4px; }
+.index-mini-chart { width: 100%; height: 124px; margin-top: 4px; }
 .imc-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 3px 6px; padding-top: 5px; border-top: 1px dashed rgba(148, 163, 184, 0.1); color: #64748b; font-family: var(--num); font-size: 8px; }
 .imc-foot b { font-weight: 500; }
 .intraday-day-summary { margin: 4px 0 10px; }
@@ -1514,6 +1526,8 @@ strong { font-weight: 650; }
   .session-panel { grid-column: auto; }
   .global-mini { grid-template-columns: 1fr 1fr; }
   .rank-grid { grid-template-columns: 1fr; }
+  .rank-split { grid-template-columns: 1fr; }
+  .rank-side + .rank-side { padding-left: 0; border-left: 0; border-top: 1px solid rgba(148, 163, 184, 0.12); margin-top: 10px; padding-top: 10px; }
   .metal-grid { grid-template-columns: 1fr; }
   .commodity-lower { grid-template-columns: 1fr; }
   .converter-panel { grid-column: auto; }

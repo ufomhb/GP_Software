@@ -375,6 +375,48 @@ function renderDashboard() {
   renderGlobalMini();
 }
 
+/* =========================================================
+   全景：数据时间口径
+   行情快照在休市时停在上一个交易日收盘，必须把「哪一天、收盘还是实时」标出来，
+   否则用户会把昨天的收盘价当成今天的实时行情。
+   ========================================================= */
+function sessionOf(secid) {
+  if (!state.overview) return null;
+  if (/^(0|1)\.\d{6}$/.test(String(secid))) {
+    return (state.overview.sessions && state.overview.sessions.cn) || null;
+  }
+  const q = getBySecid(secid);
+  return (q && q.session) || null;
+}
+
+// 最近一个交易日的日期（YYYY-MM-DD）：优先资金流口径的 dataDate，其次首屏日线最后一天。
+function lastTradeDateText() {
+  const ov = state.overview || {};
+  if (ov.dataDate) return String(ov.dataDate);
+  const series = state.heroSeries;
+  if (series && series.length) return String(series[series.length - 1].d).slice(0, 10);
+  return '';
+}
+
+function dataStamp(session) {
+  const s = session;
+  const isOpen = s && s.state === 'open';
+  if (isOpen) {
+    const t = timeText(state.overview && state.overview.updatedAt);
+    return { label: `实时 · ${t}`, cls: 'is-live', tip: `交易时段内，行情快照每 ${state.settings.interval} 秒刷新` };
+  }
+  const d = lastTradeDateText();
+  const short = d ? d.slice(5) : '';
+  const why = s ? s.label : '休市';
+  return {
+    label: short ? `上交易日 ${short} 收盘 · ${why}` : `上交易日收盘 · ${why}`,
+    cls: 'is-closed',
+    tip: d
+      ? `当前${why}，显示的是 ${d} 收盘数据；下一个交易日开盘后自动切回实时`
+      : `当前${why}，显示的是上一交易日收盘数据`,
+  };
+}
+
 function renderHero() {
   const o = state.overview && state.overview.cn && state.overview.cn.find((q) => q.code === '000001');
   if (!o) return;
@@ -386,10 +428,18 @@ function renderHero() {
     change.className = `change-pill pill-${toneOf(o.pct)}`;
     change.textContent = `${pctFmt(o.pct)}  ${signedFmt(o.change, 2)}`;
   }
+  const cnSess = state.overview.sessions && state.overview.sessions.cn;
   if (tag) {
-    const s = state.overview.sessions && state.overview.sessions.cn;
-    tag.textContent = s ? s.label : '--';
-    tag.className = `session-tag ${s && s.state === 'open' ? 'is-open' : ''}`;
+    tag.textContent = cnSess ? cnSess.label : '--';
+    tag.className = `session-tag ${cnSess && cnSess.state === 'open' ? 'is-open' : ''}`;
+  }
+  const stamp = $('#heroStamp');
+  if (stamp) {
+    const info = dataStamp(cnSess);
+    stamp.hidden = false;
+    stamp.className = `data-stamp ${info.cls}`;
+    stamp.textContent = info.label;
+    stamp.title = info.tip || info.label;
   }
   const breadth = state.overview.breadth || {};
   const flow = state.overview.marketFlow || {};
@@ -830,10 +880,12 @@ function renderChinaChart() {
   // 分时：价格线 + 均价线 + 昨收基准，直接跟着自动刷新走。
   if (state.cnKlt === 1) {
     const preClose = Number(k.preClose) || Number(q.prevClose) || null;
-    intradayChart($('#cnChart'), { candles: k.candles || [], preClose });
+    // fullSession：X 轴始终按 A 股完整交易时段（09:30–11:30 / 13:00–15:00）铺开，
+    // 盘中右边缘固定是 15:00，不会随「现在几点」缩短。
+    intradayChart($('#cnChart'), { candles: k.candles || [], preClose, fullSession: true });
     if (sub) {
       const session = (state.overview && state.overview.sessions && state.overview.sessions.cn) || {};
-      sub.textContent = `${k.code || state.cnIndex} · 今日分时${session.state === 'open' ? ' · 实时更新' : ` · ${session.label || '休市'}`}`;
+      sub.textContent = `${k.code || state.cnIndex} · 今日分时 09:30–11:30 / 13:00–15:00${session.state === 'open' ? ' · 实时更新' : ` · ${session.label || '休市'}`}`;
     }
     return;
   }
@@ -1002,9 +1054,14 @@ function renderIndexCompare() {
   el.innerHTML = d.items.map((s) => {
     const dayPct = Number(s.dayPct) || 0;
     const spanPct = Number(s.changePct) || 0;
+    // 起止日期写进副标题，配合 X 轴上的 MM-DD 刻度说明「区间」到底是哪一段。
+    const rows = Array.isArray(s.data) ? s.data : [];
+    const firstD = rows.length ? String(rows[0][0]).slice(5, 10) : '';
+    const lastD = rows.length ? String(rows[rows.length - 1][0]).slice(5, 10) : '';
+    const span = firstD && lastD ? `${firstD}–${lastD}` : '近1年';
     return `<article class="index-mini-card" data-index-secid="${esc(s.secid)}" title="点击切换到 ${esc(s.name)}">
       <div class="imc-top">
-        <div class="imc-ident"><div class="imc-name">${esc(s.name)}</div><div class="imc-code">${esc(s.code)} · 近1年</div></div>
+        <div class="imc-ident"><div class="imc-name">${esc(s.name)}</div><div class="imc-code">${esc(s.code)} · ${esc(span)}</div></div>
         <div class="imc-quote"><b class="${toneClass(dayPct)}">${money(s.last)}</b><span class="${toneClass(dayPct)}">${pctFmt(dayPct)}</span></div>
       </div>
       <div class="index-mini-chart"></div>

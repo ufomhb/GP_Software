@@ -432,12 +432,22 @@ export function indexMiniChart(el, item) {
         return `<div style="color:#7f8fa8;font-size:10px">${esc(p.axisValue)}</div><div style="font-family:Bahnschrift;font-size:13px;margin-top:3px">${Number(p.value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}</div>`;
       },
     },
-    grid: { left: 4, right: 4, top: 8, bottom: 6 },
+    grid: { left: 4, right: 4, top: 8, bottom: 22 },
     xAxis: {
       type: 'category',
-      data: rows.map(([d]) => d),
+      data: rows.map(([d]) => String(d).slice(0, 10)),
       boundaryGap: false,
-      show: false,
+      axisLine: { lineStyle: { color: C.line } },
+      axisTick: { show: false },
+      // 近一年的日线：大致给出 4 个日期刻度（MM-DD），不再把 X 轴整个藏掉。
+      axisLabel: {
+        color: C.muted,
+        fontSize: 8,
+        hideOverlap: true,
+        interval: Math.max(0, Math.floor(rows.length / 4) - 1),
+        formatter: (v) => String(v).slice(5),
+      },
+      splitLine: { show: false },
     },
     yAxis: { type: 'value', scale: true, show: false },
     series: [{
@@ -1117,6 +1127,16 @@ export function timelineCumulative(el, events, playhead = null) {
 /* =========================================================
    分时图：价格线 + 均价线 + 昨收基准 + 分钟成交量
    ========================================================= */
+/* A 股完整交易时段分钟标签：09:30-11:30 + 13:00-15:00（含两端，共 242 个）。
+   分时图按这套标签铺 X 轴，盘中数据只填已走过的分钟，右边缘固定停在 15:00 而不是「现在几点」。 */
+const CN_INTRADAY_LABELS = (() => {
+  const mins = [];
+  for (let t = 9 * 60 + 30; t <= 11 * 60 + 30; t += 1) mins.push(t);
+  for (let t = 13 * 60; t <= 15 * 60; t += 1) mins.push(t);
+  return mins.map((t) => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`);
+})();
+const CN_INTRADAY_MARKS = new Set(['09:30', '10:00', '10:30', '11:00', '11:30', '13:00', '13:30', '14:00', '14:30', '15:00']);
+
 export function intradayChart(el, options = {}) {
   const candles = Array.isArray(options.candles) ? options.candles : [];
   if (!el) return null;
@@ -1128,6 +1148,9 @@ export function intradayChart(el, options = {}) {
   const times = candles.map((c) => String(c.d).slice(11, 16));
   const prices = candles.map((c) => Number(c.c));
   const volumes = candles.map((c) => Number(c.v) || 0);
+  // 完整交易时段模式（A 股指数分时）：把实际分钟点对齐到 241 个标准标签，空缺留 null，
+  // 这样 X 轴总是从 09:30 铺到 15:00，盘中右边缘停在当前时刻而不是把当前时刻当成终点。
+  const fullSession = Boolean(options.fullSession);
   let cumAmount = 0;
   let cumVolume = 0;
   const hasAmount = candles.some((c) => Number(c.a) > 0);
@@ -1148,6 +1171,36 @@ export function intradayChart(el, options = {}) {
   const avg = srcAvg && srcAvg.length === candles.length
     ? srcAvg.map((v, i) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : computedAvg[i]))
     : computedAvg;
+
+  // 默认（期货/美股/历史分时）：X 轴就是实际分钟点。
+  let axisLabels = times;
+  let priceData = prices;
+  let avgData = avg;
+  let volumeData = volumes.map((v, i) => ({
+    value: v,
+    itemStyle: { color: prices[i] >= (prices[i - 1] ?? prices[i]) ? 'rgba(255,77,94,.55)' : 'rgba(22,199,132,.55)' },
+  }));
+  let labelToCandle = null;
+  if (fullSession) {
+    labelToCandle = new Map(times.map((t, i) => [t, i]));
+    axisLabels = CN_INTRADAY_LABELS;
+    priceData = CN_INTRADAY_LABELS.map((lb) => {
+      const i = labelToCandle.get(lb);
+      return i === undefined ? null : prices[i];
+    });
+    avgData = CN_INTRADAY_LABELS.map((lb) => {
+      const i = labelToCandle.get(lb);
+      return i === undefined ? null : avg[i];
+    });
+    volumeData = CN_INTRADAY_LABELS.map((lb) => {
+      const i = labelToCandle.get(lb);
+      if (i === undefined) return { value: null };
+      return {
+        value: volumes[i],
+        itemStyle: { color: prices[i] >= (prices[i - 1] ?? prices[i]) ? 'rgba(255,77,94,.55)' : 'rgba(22,199,132,.55)' },
+      };
+    });
+  }
   const last = prices[prices.length - 1];
   // 没有可靠的昨收时，用当日开盘（第一根分钟线）作为基准，避免默认画成红色。
   const up = Number.isFinite(preClose) ? last >= preClose : last >= prices[0];
@@ -1170,12 +1223,15 @@ export function intradayChart(el, options = {}) {
       axisPointer: { type: 'line', lineStyle: { color: 'rgba(56,189,248,.3)' } },
       formatter: (ps) => {
         const i = ps[0] && ps[0].dataIndex;
-        const c = candles[i];
-        if (!c) return '';
+        const lb = axisLabels[i];
+        const ci = labelToCandle ? labelToCandle.get(lb) : i;
+        const c = ci === undefined ? null : candles[ci];
+        if (!c) return `<div style="color:#7f8fa8;font-size:10px">${esc(lb || '')}</div><div style="font-size:10px;color:#5e6d84">该分钟暂无数据（交易时段未到）</div>`;
         const pct = Number.isFinite(preClose) && preClose ? ((Number(c.c) - preClose) / preClose) * 100 : null;
-        return `<div style="color:#7f8fa8;font-size:10px;margin-bottom:3px">${esc(times[i])}</div>
+        const avgNow = avg[ci];
+        return `<div style="color:#7f8fa8;font-size:10px;margin-bottom:3px">${esc(lb || times[ci])}</div>
           <div style="font-size:10px;color:#9fb2c9">价格 <b style="color:${main};font-family:Bahnschrift">${Number(c.c).toFixed(2)}</b>${pct === null ? '' : ` <b style="color:${main}">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</b>`}</div>
-          ${avg[i] ? `<div style="font-size:10px;color:#9fb2c9">均价 <b style="color:#f5c451;font-family:Bahnschrift">${Number(avg[i]).toFixed(2)}</b></div>` : ''}
+          ${avgNow ? `<div style="font-size:10px;color:#9fb2c9">均价 <b style="color:#f5c451;font-family:Bahnschrift">${Number(avgNow).toFixed(2)}</b></div>` : ''}
           <div style="font-size:10px;color:#7f8fa8">成交 <b style="color:#dbe7f6">${(Number(c.v) / 1e4).toFixed(0)} 万</b></div>`;
       },
     },
@@ -1184,10 +1240,10 @@ export function intradayChart(el, options = {}) {
       : [{ left: 52, right: 56, top: 12, height: '76%' }],
     xAxis: hasVolume
       ? [
-          { type: 'category', data: times, boundaryGap: false, axisLine: { lineStyle: { color: C.line } }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 9, interval: Math.max(1, Math.floor(times.length / 7)), hideOverlap: true }, splitLine: { show: false } },
-          { type: 'category', data: times, gridIndex: 1, boundaryGap: false, axisLine: { lineStyle: { color: C.line } }, axisTick: { show: false }, axisLabel: { show: false }, splitLine: { show: false } },
+          { type: 'category', data: axisLabels, boundaryGap: false, axisLine: { lineStyle: { color: C.line } }, axisTick: { show: false }, axisLabel: fullSession ? { color: C.muted, fontSize: 9, interval: 0, formatter: (v) => (CN_INTRADAY_MARKS.has(v) ? v : '') } : { color: C.muted, fontSize: 9, interval: Math.max(1, Math.floor(times.length / 7)), hideOverlap: true }, splitLine: { show: false } },
+          { type: 'category', data: axisLabels, gridIndex: 1, boundaryGap: false, axisLine: { lineStyle: { color: C.line } }, axisTick: { show: false }, axisLabel: { show: false }, splitLine: { show: false } },
         ]
-      : [{ type: 'category', data: times, boundaryGap: false, axisLine: { lineStyle: { color: C.line } }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 9, interval: Math.max(1, Math.floor(times.length / 7)), hideOverlap: true }, splitLine: { show: false } }],
+      : [{ type: 'category', data: axisLabels, boundaryGap: false, axisLine: { lineStyle: { color: C.line } }, axisTick: { show: false }, axisLabel: fullSession ? { color: C.muted, fontSize: 9, interval: 0, formatter: (v) => (CN_INTRADAY_MARKS.has(v) ? v : '') } : { color: C.muted, fontSize: 9, interval: Math.max(1, Math.floor(times.length / 7)), hideOverlap: true }, splitLine: { show: false } }],
     yAxis: hasVolume
       ? [
           { min: yMin, max: yMax, scale: false, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 9, formatter: (v) => Number(v).toFixed(2) }, splitLine: { lineStyle: { color: C.split } } },
@@ -1202,7 +1258,8 @@ export function intradayChart(el, options = {}) {
       {
         name: '价格',
         type: 'line',
-        data: prices,
+        data: priceData,
+        connectNulls: true,
         showSymbol: false,
         smooth: false,
         lineStyle: { width: 1.6, color: main },
@@ -1226,7 +1283,7 @@ export function intradayChart(el, options = {}) {
       {
         name: '均价',
         type: 'line',
-        data: avg,
+        data: avgData,
         showSymbol: false,
         smooth: true,
         connectNulls: true,
@@ -1240,10 +1297,7 @@ export function intradayChart(el, options = {}) {
             xAxisIndex: 1,
             yAxisIndex: 2,
             barWidth: '60%',
-            data: volumes.map((v, i) => ({
-              value: v,
-              itemStyle: { color: prices[i] >= (prices[i - 1] ?? prices[i]) ? 'rgba(255,77,94,.55)' : 'rgba(22,199,132,.55)' },
-            })),
+            data: volumeData,
           }]
         : []),
     ],

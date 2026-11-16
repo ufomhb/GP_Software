@@ -141,6 +141,7 @@
                   <h2>上证指数</h2>
                   <span class="code">000001.SH</span>
                   <span class="session-tag" id="cnSessionTag">--</span>
+                  <span class="data-stamp" id="heroStamp" hidden></span>
                 </div>
                 <div class="hero-price">
                   <strong id="heroPrice">--</strong>
@@ -163,6 +164,7 @@
             <div>
               <div class="eyebrow">REAL-TIME CAPITAL FLOW</div>
               <h2>板块资金流向</h2>
+              <span class="data-stamp" id="sectorStamp">--</span>
             </div>
             <div class="seg" id="sectorSeg">
               <button class="is-active" data-sector-type="industry">行业</button>
@@ -180,6 +182,7 @@
             <div>
               <div class="eyebrow">MARKET PULSE</div>
               <h2>市场温度</h2>
+              <span class="data-stamp" id="pulseStamp">--</span>
             </div>
             <span class="badge flat" id="pulseBadge">计算中</span>
           </div>
@@ -306,20 +309,30 @@
 
       <div class="rank-grid">
         <article class="panel rank-panel">
-          <div class="panel-head"><h3>涨幅榜</h3><span class="muted small">TOP 8</span></div>
-          <div id="rankGain"></div>
+          <div class="panel-head"><h3>涨幅榜 / 跌幅榜</h3><span class="muted small">各 TOP 8 · 左右对照</span></div>
+          <div class="rank-split">
+            <div class="rank-side">
+              <div class="rank-side-head"><span class="rk-dot tone-up"></span>涨幅榜</div>
+              <div id="rankGain"></div>
+            </div>
+            <div class="rank-side">
+              <div class="rank-side-head"><span class="rk-dot tone-down"></span>跌幅榜</div>
+              <div id="rankLoss"></div>
+            </div>
+          </div>
         </article>
         <article class="panel rank-panel">
-          <div class="panel-head"><h3>跌幅榜</h3><span class="muted small">TOP 8</span></div>
-          <div id="rankLoss"></div>
-        </article>
-        <article class="panel rank-panel">
-          <div class="panel-head"><h3>主力净流入</h3><span class="muted small">TOP 8</span></div>
-          <div id="rankInflow"></div>
-        </article>
-        <article class="panel rank-panel">
-          <div class="panel-head"><h3>主力净流出</h3><span class="muted small">TOP 8</span></div>
-          <div id="rankOutflow"></div>
+          <div class="panel-head"><h3>主力净流入 / 净流出</h3><span class="muted small">各 TOP 8 · 左右对照</span></div>
+          <div class="rank-split">
+            <div class="rank-side">
+              <div class="rank-side-head"><span class="rk-dot tone-up"></span>主力净流入</div>
+              <div id="rankInflow"></div>
+            </div>
+            <div class="rank-side">
+              <div class="rank-side-head"><span class="rk-dot tone-down"></span>主力净流出</div>
+              <div id="rankOutflow"></div>
+            </div>
+          </div>
         </article>
       </div>
     </section>
