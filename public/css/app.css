@@ -1335,6 +1335,25 @@ strong { font-weight: 650; }
 .watch-card-row[draggable="true"] { cursor: grab; }
 .watch-card-row.dragging { opacity: 0.45; }
 .watch-card-row.drag-over { outline: 1px dashed rgba(56, 189, 248, 0.55); outline-offset: -3px; background: rgba(56, 189, 248, 0.05); }
+
+/* 手机端长按拖拽时跟随手指的浮动标签 */
+.touch-drag-ghost {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  max-width: 70vw;
+  padding: 9px 14px;
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  border-radius: 9px;
+  background: rgba(11, 19, 32, 0.94);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  color: #d3e0ef;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: transform 0.05s linear;
+}
 .watch-actions .move { color: #8fa2bb; }
 .watch-actions .move:hover { color: var(--accent); }
 .fund-watch-table tr[draggable="true"] { cursor: grab; }
