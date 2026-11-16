@@ -3662,6 +3662,94 @@ async function estimateFundDayPctBatch(list) {
   return out;
 }
 
+/* ---------------------------------------------------------
+   当日估值冻结（2026-11-17）
+   「当日估值」= 15:00 收盘那一刻的预估涨跌幅，冻结后不再变；
+   「当日涨跌」= 当天公布的真实净值涨跌幅。两者必须分开口径，
+   否则净值出来后拿估值去比净值，两列永远一样，就失去了「估值准不准」的意义。
+   --------------------------------------------------------- */
+const FUND_ESTIMATE_FILE = path.join(__dirname, 'data', 'fund-estimate-freeze.json');
+const FUND_ESTIMATE_KEEP_DAYS = 40;
+const CN_CLOSE_MINUTES = 15 * 60; // A 股 / 场外基金 15:00 截止
+
+let fundEstimateCache = null; // { 'YYYY-MM-DD': { [code]: { pct, at, nav } } }
+
+function fundEstimateStore() {
+  if (!fundEstimateCache) {
+    const raw = dataStore.readJsonFile(FUND_ESTIMATE_FILE, {});
+    fundEstimateCache = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  }
+  return fundEstimateCache;
+}
+
+function persistFundEstimateStore() {
+  const all = fundEstimateStore();
+  const days = Object.keys(all).sort();
+  const drop = days.slice(0, Math.max(0, days.length - FUND_ESTIMATE_KEEP_DAYS));
+  for (const d of drop) delete all[d];
+  try {
+    dataStore.writeJsonFile(FUND_ESTIMATE_FILE, all);
+  } catch (err) {
+    console.warn(`[FUND] 估值冻结落盘失败：${err.message}`);
+  }
+}
+
+function frozenFundEstimate(code, today) {
+  const day = fundEstimateStore()[today];
+  const hit = day && day[String(code)];
+  return hit && Number.isFinite(Number(hit.pct)) ? hit : null;
+}
+
+function freezeFundEstimate(code, today, live) {
+  const all = fundEstimateStore();
+  const day = all[today] || (all[today] = {});
+  if (day[String(code)]) return day[String(code)];
+  day[String(code)] = { pct: live.pct, at: live.at || '', nav: live.nav ?? null };
+  persistFundEstimateStore();
+  return day[String(code)];
+}
+
+/* 场外基金的两个口径一起算：
+   - navPctToday：当日涨跌，只认「今天公布的净值」，没出就是 null（不拿估值冒充净值）
+   - estimatePct：当日估值，15:00 后冻结；盘中给实时值并标 estimateFrozen=false */
+function resolveFundPctPair({ code, info, today, pastClose }) {
+  const gsz = num(info && info.GSZ);
+  const gszzl = num(info && info.GSZZL);
+  const gzTime = String((info && info.GZTIME) || '');
+  const navDate = String((info && info.PDATE) || '');
+  const navPct = num(info && info.NAVCHGRT);
+  const navPctToday = navDate === today && navPct !== null ? navPct : null;
+  const live = gsz !== null && gsz > 0 && gszzl !== null && gzTime.startsWith(today)
+    ? { pct: gszzl, at: gzTime, nav: gsz }
+    : null;
+
+  const frozen = frozenFundEstimate(code, today);
+  if (frozen) {
+    return {
+      navPctToday,
+      estimatePct: Number(frozen.pct),
+      estimateAt: frozen.at || '',
+      estimateNav: frozen.nav === null || frozen.nav === undefined ? null : Number(frozen.nav),
+      estimateFrozen: true,
+    };
+  }
+  // 收盘后第一次拿到当日估值就固化为「当日估值终值」，之后无论净值怎么变都不动它。
+  if (live && pastClose) {
+    const saved = freezeFundEstimate(code, today, live);
+    return {
+      navPctToday,
+      estimatePct: Number(saved.pct),
+      estimateAt: saved.at || '',
+      estimateNav: saved.nav === null || saved.nav === undefined ? null : Number(saved.nav),
+      estimateFrozen: true,
+    };
+  }
+  if (live) {
+    return { navPctToday, estimatePct: live.pct, estimateAt: live.at, estimateNav: live.nav, estimateFrozen: false };
+  }
+  return { navPctToday, estimatePct: null, estimateAt: '', estimateNav: null, estimateFrozen: false };
+}
+
 // 决定「今天」这一只基金用哪个涨跌口径。优先级：
 // 天天基金盘中估值（若哪天恢复）> 当日官方净值 > 场内穿透估算 > 无（标为未更新）。
 function resolveFundTodayPct({ navDate, navPct, gsz, gszzl, gzTime, est, today }) {
