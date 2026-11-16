@@ -693,7 +693,32 @@ strong { font-weight: 650; }
 .breadth-side div { display: flex; justify-content: space-between; gap: 12px; }
 .breadth-side b { color: var(--text-2); font-family: var(--num); font-weight: 500; }
 
-/* 涨跌榜 / 资金榜：每种榜单一张卡，内部左右并排（涨 / 跌、流入 / 流出）便于对照 */
+/* 行情数据口径标签：实时 vs 上一交易日收盘，避免把昨收当成今价 */
+.data-stamp {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+  color: #7f8fa8;
+  font-family: var(--num);
+  font-size: 9px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.data-stamp.is-live { border-color: rgba(22, 199, 132, 0.35); color: #4fd6a0; }
+.data-stamp.is-closed { border-color: rgba(245, 196, 81, 0.3); color: #d9b366; }
+.idx-stamp {
+  margin-top: 3px;
+  overflow: hidden;
+  color: #5e6d84;
+  font-family: var(--num);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.idx-stamp.is-live { color: #3fae86; }
+.idx-stamp.is-closed { color: #8d7440; }
+
 .rank-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
 .rank-panel { padding: 14px; }
 .rank-split { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-top: 4px; }

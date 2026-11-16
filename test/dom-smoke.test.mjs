@@ -44,6 +44,23 @@ if (!window.matchMedia) {
 }
 // 渲染层不应该发请求；真发了就返回空 JSON，别抛异常
 globalThis.fetch = async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+// jsdom 没有 canvas：给 echarts 一个最小替身，图表类渲染函数才不会在 getInstanceByDom/init 处报错。
+// 这里只验证 DOM 输出，不验证像素。
+const chartInstances = new Map();
+window.echarts = {
+  graphic: { LinearGradient: class { constructor() { this.type = 'linear'; } } },
+  init: (el) => {
+    const inst = {
+      setOption() {}, on() {}, off() {}, resize() {}, dispose() {},
+      getWidth: () => 600, getHeight: () => 200,
+      getOption: () => ({}), convertFromPixel: () => 0,
+    };
+    chartInstances.set(el, inst);
+    return inst;
+  },
+  getInstanceByDom: (el) => chartInstances.get(el) || null,
+};
+globalThis.echarts = window.echarts;
 globalThis.__GP_NO_AUTOBOOT__ = true;
 
 const app = await import(pathToFileURL(join(ROOT, 'public', 'js', 'app.js')).href);
@@ -233,4 +250,197 @@ test('DOM：基金页三个持仓/资金流面板都能渲染（拆模块后回�
   assert.equal(holdTable.querySelectorAll('b').length, 0, '基金名里的 <b> 必须被转义');
   assert.match(document.querySelector('#fundHoldSummary').textContent, /持有市值/);
   assert.match(document.querySelector('#fundSummary').textContent, /ETF|资金/);
+});
+
+/* ---------------------------------------------------------
+   自选股操作按钮 / 长按拖拽（v2.1.0 修复）
+   --------------------------------------------------------- */
+test('DOM：自选股 5 个操作按钮图标与动作一一对应', () => {
+  app.state.watchlist = [{ secid: '1.600519', code: '600519', name: '贵州茅台' }];
+  app.state.watchData = {
+    items: [{ quote: { secid: '1.600519', code: '600519', name: '贵州茅台', price: 1500, pct: 1.1, mainYi: 2 }, advice: null }],
+  };
+  app.renderWatchTable();
+  const btns = [...document.querySelectorAll('#watchTable .watch-actions button')];
+  assert.equal(btns.length, 5, '每行应有 5 个操作按钮');
+  // 曾经出现「两个 K、两个 ×」的图标错乱，这里锁死图标顺序
+  assert.deepEqual(btns.map((b) => b.textContent.trim()), ['↑', '↓', 'K', '警', '×']);
+  assert.deepEqual(btns.map((b) => b.getAttribute('data-watch-action')), ['up', 'down', 'chart', 'alert', 'remove']);
+  // 「移出自选」按钮的 title 曾因缺一个引号被吃掉，导致按钮点击无效
+  assert.equal(btns[4].getAttribute('title'), '移出自选');
+});
+
+test('DOM：长按拖拽能识别行、给出行反馈且松手后不留残影', async () => {
+  const box = document.createElement('div');
+  box.innerHTML = '<div class="watch-card-row" data-drag-secid="1.600519"><span class="wi-name">贵州茅台</span></div>'
+    + '<div class="watch-card-row" data-drag-secid="0.000001"><span class="wi-name">平安银行</span></div>';
+  document.body.appendChild(box);
+  let reordered = null;
+  app.bindTouchReorder(box, '.watch-card-row', 'dragSecid', (from, to) => { reordered = [from, to]; });
+
+  const rows = [...box.querySelectorAll('.watch-card-row')];
+  rows.forEach((r) => { r.getBoundingClientRect = () => ({ left: 0, top: 0, width: 300, height: 40 }); });
+  document.elementFromPoint = () => rows[1];
+  const fire = (type, target, x, y) => {
+    const ev = new window.Event(type, { bubbles: true, cancelable: true });
+    const pts = [{ clientX: x, clientY: y }];
+    ev.touches = pts;
+    ev.changedTouches = pts;
+    target.dispatchEvent(ev);
+  };
+
+  fire('touchstart', rows[0], 10, 15);
+  await new Promise((r) => setTimeout(r, 500)); // 长按阈值 420ms
+  assert.ok(document.querySelector('.touch-drag-ghost'), '长按后应出现跟手浮动标签');
+  fire('touchmove', rows[0], 12, 60);
+  fire('touchend', rows[0], 12, 60);
+
+  assert.deepEqual(reordered, ['1.600519', '0.000001'], '松手应触发一次重排');
+  assert.equal(box.querySelectorAll('.dragging, .drag-over').length, 0, '松手后不能留下拖拽态');
+  assert.equal(document.querySelector('.touch-drag-ghost'), null, '浮动标签必须清理');
+  box.remove();
+});
+
+/* ---------------------------------------------------------
+   基金：当日涨跌 + 当日估值 并排（v2.1.0）
+   --------------------------------------------------------- */
+test('DOM：自选基金表同时有「当日涨跌」与「当日估值」两列', () => {
+  app.state.fundWatchlist = [
+    { code: '510300', name: '沪深300ETF', type: 'etf' },
+    { code: '005825', name: '联接基金', type: 'open' },
+  ];
+  app.state.fundWatchData = {
+    items: [
+      { code: '510300', name: '沪深300ETF', type: 'etf', price: 3.9, pct: 1.2, pctKind: 'market', estimatePct: null },
+      { code: '005825', name: '联接基金', type: 'open', price: 1.23, pct: 0.8, pctKind: 'nav', estimate: 1.238, estimatePct: 0.65, estimateAt: '2026-11-17 14:30' },
+    ],
+  };
+  app.state.fundHoldings = {};
+  app.renderFundWatchTable();
+
+  const head = [...document.querySelectorAll('#fundWatchTable thead th')].map((th) => th.textContent.trim());
+  assert.ok(head.includes('当日涨跌'), '表头应有「当日涨跌」');
+  assert.ok(head.includes('当日估值'), '表头应有「当日估值」');
+
+  const rowOpen = document.querySelector('#fundWatchTable tbody tr[data-fund-code="005825"]');
+  const rowEtf = document.querySelector('#fundWatchTable tbody tr[data-fund-code="510300"]');
+  assert.match(rowOpen.querySelector('[data-col="est"]').textContent, /\+0\.65%/, '场外基金应显示官方盘中估值');
+  assert.match(rowEtf.querySelector('[data-col="est"]').textContent, /场内实时/, 'ETF 无独立估值，应注明场内实时');
+});
+
+test('DOM：净值已公布时，估值单元格给出与净值的偏差提示', () => {
+  const html = app.fundEstimateCell({
+    type: 'open', estimatePct: 0.65, pct: 0.8, pctKind: 'nav', estimateAt: '2026-11-17 14:30',
+  });
+  assert.match(html, /偏差/, '应提示估值与净值的偏差');
+  assert.match(html, /\+0\.65%/, '应显示估值涨跌');
+});
+
+/* ---------------------------------------------------------
+   全景：休市口径标注（v2.1.0）
+   --------------------------------------------------------- */
+test('DOM：休市时全景标出「上交易日 + 日期」，开盘时标「实时」', () => {
+  const quote = (code, secid, price, pct) => ({
+    code, secid, name: code, price, pct, change: price * pct / 100,
+    high: price * 1.01, low: price * 0.99, prevClose: price / (1 + pct / 100), amount: 1e11,
+  });
+  const base = {
+    updatedAt: Date.now(),
+    dataDate: '2026-11-14',
+    cn: [quote('000001', '1.000001', 3400, -0.5)],
+    global: [], commodities: [], fx: [],
+    breadth: { up: 2000, down: 2800, flat: 200 },
+    marketFlow: { last: -120.5, date: '2026-11-14' },
+    sessions: { cn: { state: 'closed', label: '已收盘', local: '15:30' } },
+  };
+
+  app.state.overview = base;
+  app.state.heroSeries = [{ d: '2026-11-13', c: 3400 }, { d: '2026-11-14', c: 3390 }];
+  app.renderHero();
+  const stamp = document.querySelector('#heroStamp');
+  assert.ok(stamp && !stamp.hidden, '#heroStamp 应显示');
+  assert.match(stamp.textContent, /上交易日 11-14 收盘/, '休市应标出上一交易日日期');
+
+  app.state.overview = { ...base, sessions: { cn: { state: 'open', label: '交易中', local: '10:30' } } };
+  app.renderHero();
+  assert.match(document.querySelector('#heroStamp').textContent, /实时/, '开盘应标实时');
+});
+
+test('DOM：板块资金与市场温度都标出日期与生成时间', () => {
+  app.state.overview = {
+    updatedAt: Date.now(), dataDate: '2026-11-14',
+    cn: [], global: [], commodities: [], fx: [],
+    sessions: { cn: { state: 'closed', label: '已收盘', local: '15:30' } },
+  };
+  app.state.sectors = {
+    industry: {
+      type: 'industry', total: 86, inflowCount: 30, netInflow: 12.5, updatedAt: Date.now(),
+      items: [{ code: 'BK1', name: '半导体', main: 8.2, pct: 1.4 }, { code: 'BK2', name: '白酒', main: -5.1, pct: -1.1 }],
+    },
+  };
+  app.state.sectorType = 'industry';
+  app.renderSectorPanel();
+  const sectorStamp = document.querySelector('#sectorStamp');
+  assert.match(sectorStamp.textContent, /2026-11-14 数据/, '板块资金应标数据日');
+  assert.match(sectorStamp.textContent, /更新 \d{2}:\d{2}:\d{2}/, '板块资金应标更新时间');
+
+  app.state.advice = {
+    score: 52, asOf: '2026-11-14', generatedAt: Date.now(),
+    temperature: { tone: 'flat', label: '中性' }, oneLine: '结构行情',
+    dimensions: [], focus: [], avoid: [],
+  };
+  app.renderPulse();
+  const pulseStamp = document.querySelector('#pulseStamp');
+  assert.match(pulseStamp.textContent, /2026-11-14 收盘口径/, '市场温度应标收盘口径日期');
+  assert.match(pulseStamp.textContent, /生成 \d{2}:\d{2}:\d{2}/, '市场温度应标生成时间');
+});
+
+/* ---------------------------------------------------------
+   顶栏：账号菜单 / 偏好设置 分离（v2.1.0）
+   --------------------------------------------------------- */
+test('DOM：账号抽屉含信息与退出，偏好设置不再重复账号项', () => {
+  app.state.auth = {
+    id: 'u1', username: 'tester', role: 'admin',
+    createdAt: Date.now() - 86400000, lastLoginAt: Date.now(), loginCount: 7,
+  };
+
+  app.openAccount();
+  const overlay = document.querySelector('#overlayRoot .overlay');
+  assert.ok(overlay, '账号抽屉应打开');
+  const text = overlay.textContent.replace(/\s+/g, ' ');
+  for (const kw of ['账号设置', 'tester', '管理员', '注册时间', '最近登录', '修改密码', '更新履历', '退出登录']) {
+    assert.ok(text.includes(kw), `账号抽屉缺内容：${kw}`);
+  }
+  assert.ok(overlay.querySelector('#acctLogout'), '退出登录按钮应在账号抽屉里');
+  assert.equal(overlay.querySelector('#acctAdminRow').hidden, false, '管理员应看到后台管理入口');
+
+  app.openSettings();
+  const settings = document.querySelector('#overlayRoot .overlay');
+  const st = settings.textContent.replace(/\s+/g, ' ');
+  for (const kw of ['偏好设置', '刷新与风险', '自动刷新', '风险偏好', '浏览器通知']) {
+    assert.ok(st.includes(kw), `偏好设置缺内容：${kw}`);
+  }
+  assert.equal(settings.querySelector('#acctLogout'), null, '偏好设置里不该再有退出按钮');
+  assert.equal(settings.querySelector('#setAccountName'), null, '偏好设置里不该再有账号信息');
+  assert.equal(settings.querySelector('#setAdminRow'), null, '偏好设置里不该再有后台入口');
+  for (const id of ['setAuto', 'setInterval', 'setRisk', 'setSound', 'setNotify', 'setExport', 'setReset']) {
+    assert.ok(settings.querySelector(`#${id}`), `偏好设置缺控件 #${id}`);
+  }
+});
+
+/* ---------------------------------------------------------
+   A股：涨跌榜 / 资金榜 左右合并（v2.1.0）
+   --------------------------------------------------------- */
+test('DOM：涨跌榜与资金榜各自合并为一张左右对照卡', () => {
+  assert.equal(document.querySelectorAll('.rank-grid .rank-panel').length, 2, '应合并成 2 张卡');
+  for (const id of ['rankGain', 'rankLoss', 'rankInflow', 'rankOutflow']) {
+    assert.ok(document.querySelector(`#${id}`), `缺少榜单挂载点 #${id}`);
+  }
+  const mk = (code, pct) => ({ secid: `1.${code}`, code, name: `股票${code}`, price: 10, pct, mainYi: pct * 2 });
+  app.state.ranks = {
+    gain: [mk('600001', 5)], loss: [mk('600002', -4)],
+    inflow: [mk('600003', 1)], outflow: [mk('600004', -1)],
+  };
+  app.renderRanks();
+  assert.equal(document.querySelectorAll('.rank-split .mini-row').length, 4, '四个榜单各渲染一行');
 });

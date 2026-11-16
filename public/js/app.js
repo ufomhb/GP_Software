@@ -457,14 +457,34 @@ function renderHero() {
       <div class="stat"><div class="s-label">主力净流入</div><div class="s-value ${toneClass(flow.last)}">${yiFmt(flow.last)}</div><div class="s-sub">全市场主力</div></div>
       <div class="stat"><div class="s-label">日内振幅</div><div class="s-value">${isNum(amplitude) ? `${nf(amplitude, 2)}%` : '--'}</div><div class="s-sub">最高 ${stockFmt(o.high)} / 最低 ${stockFmt(o.low)}</div></div>`;
   }
-  if (state.heroSeries) {
+  // 交易时段展示当日分时（完整交易时段轴）；休市时展示近 90 日收盘走势。
+  paintHeroChart(o, cnSess);
+}
+
+async function paintHeroChart(o, cnSess) {
+  const isOpen = cnSess && cnSess.state === 'open';
+  const paintDaily = () => {
+    if (!state.heroSeries) return false;
     areaChart($('#heroChart'), state.heroSeries, o.pct >= 0 ? COLORS.up : COLORS.down);
-  } else {
-    loadHeroSeries().then(() => {
-      const q = state.overview && state.overview.cn && state.overview.cn.find((x) => x.code === '000001');
-      if (q) areaChart($('#heroChart'), state.heroSeries, q.pct >= 0 ? COLORS.up : COLORS.down);
-    });
+    return true;
+  };
+  if (isOpen) {
+    try {
+      const k = await getKlineCached('1.000001', 1, 260);
+      if (state.overview) {
+        const preClose = Number(k.preClose) || Number(o.prevClose) || null;
+        intradayChart($('#heroChart'), { candles: k.candles || [], preClose, fullSession: true });
+        return;
+      }
+    } catch { /* 分时不可用时退回日线收盘走势 */ }
   }
+  // 图表库异常不应把整页刷新打断（异步链抛出会成为未捕获 rejection）。
+  try {
+    if (paintDaily()) return;
+    loadHeroSeries().then(() => {
+      try { paintDaily(); } catch { /* 忽略绘图失败 */ }
+    }).catch(() => { /* 历史走势取不到时保留上一帧 */ });
+  } catch { /* 忽略绘图失败 */ }
 }
 
 function renderIndexGrid() {
@@ -481,6 +501,7 @@ function renderIndexGrid() {
   el.innerHTML = cards.map((card) => {
     const q = getBySecid(card.secid) || {};
     const series = state.miniSeries[card.mini] || [];
+    const info = dataStamp(sessionOf(card.secid));
     return `<div class="index-card" data-index-secid="${card.secid}" data-index-view="${card.view}" title="查看 ${esc(card.name)}">
       <div class="idx-head"><span class="idx-name">${esc(card.name)}</span><span class="idx-code">${esc(card.code)}</span></div>
       <div class="idx-price ${toneClass(q.pct)}">${priceFmt(q.price)}</div>
@@ -488,6 +509,7 @@ function renderIndexGrid() {
         <span class="idx-chg ${toneClass(q.pct)}">${pctFmt(q.pct)}</span>
         ${sparkline(series, Number(q.pct) >= 0 ? COLORS.up : COLORS.down)}
       </div>
+      <div class="idx-stamp ${info.cls}" title="${esc(info.tip || info.label)}">${esc(info.label)}</div>
     </div>`;
   }).join('');
 }
@@ -549,6 +571,20 @@ function renderSectorPanel() {
   const data = state.sectors[state.sectorType];
   const kpis = $('#sectorKpis');
   const list = $('#sectorFlowList');
+  const stamp = $('#sectorStamp');
+  if (stamp) {
+    if (!data) {
+      stamp.className = 'data-stamp';
+      stamp.textContent = '--';
+    } else {
+      const info = dataStamp(sessionOf('1.000001'));
+      const tradeDate = lastTradeDateText();
+      stamp.className = `data-stamp ${info.cls}`;
+      // 板块资金本身没有独立日期字段：数据日取最近交易日，更新时刻取本次抓取时间。
+      stamp.textContent = `${tradeDate ? `${tradeDate} 数据` : '交易日数据'} · 更新 ${timeText(data.updatedAt)}`;
+      stamp.title = `板块主力资金为 ${data.type === 'concept' ? '概念' : '行业'} 口径，共 ${data.total} 个板块；数值为当日累计主力净流入`;
+    }
+  }
   if (kpis) {
     if (!data) {
       kpis.innerHTML = '<div class="kpi"><span class="k-label">加载中</span><span class="k-value">--</span></div>';
@@ -598,12 +634,22 @@ function renderPulse() {
   const line = $('#pulseLine');
   const dims = $('#dimList');
   const tags = $('#pulseTags');
+  const stamp = $('#pulseStamp');
   if (!a) {
     if (badge) badge.textContent = '计算中';
     if (line) line.textContent = '正在聚合指数、资金、情绪与外围市场数据…';
     if (dims) dims.innerHTML = '';
     if (tags) tags.innerHTML = '';
+    if (stamp) { stamp.className = 'data-stamp'; stamp.textContent = '--'; }
     return;
+  }
+  if (stamp) {
+    const asOf = a.asOf || lastTradeDateText();
+    const cell = dataStamp(sessionOf('1.000001'));
+    stamp.className = `data-stamp ${cell.cls}`;
+    // 市场温度是按「数据日」的指数、资金、涨跌家数算出来的，必须标清算的是哪一天。
+    stamp.textContent = `${asOf ? `${asOf} 收盘口径` : '--'} · 生成 ${timeText(a.generatedAt)}`;
+    stamp.title = `${cell.tip || ''}　温度分 = 趋势 / 资金 / 情绪 / 外围 四维加权；按 ${asOf || '最近交易日'} 收盘数据计算`;
   }
   if (badge) {
     badge.className = `badge tone-${a.temperature.tone}`;
@@ -6724,9 +6770,13 @@ if (!globalThis.__GP_NO_AUTOBOOT__) {
 // 仅供测试直接调用的渲染函数；生产页面用不到这些导出（ESM 导出不影响浏览器加载）
 export {
   state, esc, safeUrl, cleanName,
-  renderNewsList, renderRankTable,
+  renderNewsList, renderRankTable, renderRanks,
+  renderHero, renderIndexGrid, renderSectorPanel, renderPulse, renderWatchTable,
+  dataStamp, lastTradeDateText,
+  openAccount, openSettings, bindTouchReorder,
   renderFundWatchSummary, renderFundWatchTable,
   renderFundHoldSummary, renderFundHoldTable, renderFundSummary,
+  fundEstimateCell,
   renderPortfolioAdvice,
 };
 
