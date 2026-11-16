@@ -1,6 +1,16 @@
 [
 
   {
+    "version": "2.1.2",
+    "date": "2026-11-17",
+    "title": "修复发版后浏览器缓存导致页面能打开但无法操作",
+    "items": [
+      "修复：每次发版后 4 小时内再访问，页面能打开、登录页正常，但进去之后一直转圈或点了没反应，必须手动清理浏览器缓存才能恢复。原因是只有入口 app.js 带了版本号，它 import 的 core.js / util.js / dom.js / api.js / charts.js / views/funds.js 都是不带版本号的固定地址，被缓存住了新旧混用导致整个前端脚本加载失败",
+      "修复：现在 app.js 与 views/funds.js 中全部 9 处 import 都带上版本号，每次发版所有模块地址一起变化，旧缓存自然失效，以后发版无需再让用户清缓存",
+      "提示：浏览器缓存的 JS 有效期由 Cloudflare 的 Browser Cache TTL 决定（当前为 4 小时 max-age=14400，会覆盖源站的 no-cache）；如希望彻底以源站头为准，可在 Cloudflare 面板把 Browser Cache TTL 改为 Respect Existing Headers",
+      "排查：本次线上访问异常经全链路核查，服务端无 5xx、无崩溃、代码与本地一致，故障仅存在于浏览器缓存层"
+    ]
+  },  {
     "version": "2.1.1",
     "date": "2026-11-17",
     "title": "修正基金「当日涨跌 / 当日估值」口径：两者不再同源",

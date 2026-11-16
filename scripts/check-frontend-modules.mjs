@@ -46,7 +46,7 @@ for (const f of files) {
     const named = m[2];
     const spec = m[3];
     if (!spec.startsWith('.')) continue;
-    const target = resolve(dirname(f), spec);
+    const target = resolve(dirname(f), spec.split('?')[0]);
     const exp = exportsMap.get(target);
     if (!exp) { console.log(`[MISSING FILE] ${f} -> ${spec}`); problems++; continue; }
     if (defaultName && !exp.has('default')) { console.log(`[NO DEFAULT] ${f} imports default from ${spec}`); problems++; }
