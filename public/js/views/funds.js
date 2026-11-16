@@ -1,9 +1,9 @@
 /* 基金页渲染（P2 从 app.js 抽出，第一个按视图拆的模块）
    只负责把 state 里的数据渲染成 DOM；数据加载与交互仍留在 app.js。
    依赖：core.js（state）、util.js（格式化/转义）、dom.js（$）。 */
-import { state } from '../core.js?v=2.1.2';
-import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.1.2';
-import { $ } from '../dom.js?v=2.1.2';
+import { state } from '../core.js?v=2.1.3';
+import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.1.3';
+import { $ } from '../dom.js?v=2.1.3';
 
 
 function fundCategoryOf(name = '') {
@@ -85,19 +85,30 @@ function fundPortfolio() {
   };
 }
 
-/* 「当日涨跌」列 = 当天公布的真实净值涨跌幅。
-   净值没出就明确写「当日未出」，不拿估值冒充净值（ETF 例外：场内实时价就是当日涨跌）。 */
+/* 「当日涨跌」列 = 真实净值涨跌幅（不是估值）。
+   口径（2026-11-17 按用户要求改）：只要有一期准确净值就填上；
+   只有「今天是交易日、已过 15:00、今天净值还没出」时才留 --，不拿昨天的涨跌冒充今天。
+   显示最近一期净值时，副标题写「最新净值 · 日期」，一眼能看出不是今天。 */
 function fundDayPctCell(x) {
   const type = x.type || 'open';
   if (type === 'etf' || x.pctKind === 'market') {
     return `${pctFmt(x.pct)}<div class="t-sub">场内实时</div>`;
   }
-  if (isNum(x.navPctToday)) {
-    const d = x.navDate || x.date ? String(x.navDate || x.date).slice(5) : '';
-    return `${pctFmt(x.navPctToday)}<div class="t-sub">今日净值${d ? ` · ${d}` : ''}</div>`;
+  const pct = isNum(x.navPctShow) ? x.navPctShow : x.navPctToday;
+  const showDate = String(x.navPctShowDate || x.navDate || x.date || '').slice(5);
+  const isToday = x.navPctIsToday === true
+    || (x.navPctIsToday === undefined && isNum(x.navPctToday));
+  if (isNum(pct)) {
+    const tip = isToday
+      ? `今天已公布的净值涨跌幅${showDate ? `（净值日 ${showDate}）` : ''}`
+      : `今天还没到 15:00 收盘（或今天休市），显示最近一期已公布的净值涨跌幅${showDate ? `（净值日 ${showDate}）` : ''}`;
+    const sub = isToday
+      ? (showDate ? `今日净值 · ${showDate}` : '今日净值')
+      : (showDate ? `最新净值 · ${showDate}` : '最新净值');
+    return `<span class="${toneClass(pct)}" title="${esc(tip)}">${pctFmt(pct)}</span><div class="t-sub">${esc(sub)}</div>`;
   }
-  const navDate = x.navDate || x.date ? String(x.navDate || x.date).slice(5) : '';
-  const tip = `今日净值尚未公布${navDate ? `，最新净值日 ${navDate}` : ''}；预估涨跌幅见「当日估值」列`;
+  const navDate = showDate;
+  const tip = `今天是交易日且已过 15:00，今日净值尚未公布${navDate ? `，最新净值日 ${navDate}` : ''}；预估涨跌幅见「当日估值」列`;
   return `<span class="muted" title="${esc(tip)}">--</span><div class="t-sub">${esc(`当日未出${navDate ? ` · ${navDate}` : ''}`)}</div>`;
 }
 
@@ -217,7 +228,7 @@ function renderFundWatchTable() {
           <td><span class="t-name">${esc(cleanName(name))}</span><span class="t-code">${esc(x.code)}</span></td>
           <td data-col="type"><span class="fund-tag ${type}">${type === 'etf' ? 'ETF' : '场外'}</span></td>
           <td data-col="nav" class="t-price">${priceFmt(x.price)}${x.pctKind === 'holdings' || x.pctKind === 'etf' ? '<div class="t-sub">估算净值</div>' : ''}</td>
-          <td class="t-chg ${toneClass(x.navPctToday ?? (type === 'etf' ? x.pct : null))}">${fundDayPctCell(x)}</td>
+          <td class="t-chg ${toneClass(x.navPctShow ?? x.navPctToday ?? (type === 'etf' ? x.pct : null))}">${fundDayPctCell(x)}</td>
           <td data-col="est" class="t-chg">${fundEstimateCell(x)}</td>
           <td data-col="flow" class="t-chg ${toneClass(x.mainYi)}">${type === 'etf' ? yiFmt(x.mainYi) : '--'}</td>
           <td data-col="mv" class="t-price">${hr.marketValue === null ? '<span class="muted">--</span>' : nf(hr.marketValue, 2)}</td>
