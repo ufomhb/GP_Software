@@ -63,7 +63,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.1.0';
+const VERSION = '2.1.1';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -3024,6 +3024,8 @@ async function getFundWatch(codes, risk = 'balanced') {
   if (!list.length) return { items: [], updatedAt: Date.now() };
   return cached(`fundwatch:${list.join(',')}:${risk}`, 30000, async () => {
     const today = shanghaiToday();
+    // 15:00 之后才算「收盘」：此后的当日估值就是估值终值，冻结下来供事后和净值比对。
+    const pastClose = zonedParts('Asia/Shanghai').minutes >= CN_CLOSE_MINUTES;
     const etfCodes = list.filter((c) => isEtfLike(c, ''));
     const openCodes = list.filter((c) => !isEtfLike(c, ''));
     const etfQuotes = etfCodes.length
@@ -3064,10 +3066,7 @@ async function getFundWatch(codes, risk = 'balanced') {
         });
         // 官方盘中估值（天天基金 GSZ/GSZZL/GZTIME）：与「当日涨跌」口径分开返回，
         // 前端可同屏对比净值涨跌与估值偏差；非当日估值一律置空，避免拿旧估值冒充。
-        const gszVal = num(info.GSZ);
-        const gszzlVal = num(info.GSZZL);
-        const hasOfficialEst = gszVal !== null && gszVal > 0 && gszzlVal !== null
-          && String(info.GZTIME || '').startsWith(today);
+        const pair = resolveFundPctPair({ code, info, today, pastClose });
         let price = nav;
         if (r.kind === 'estimate') price = num(info.GSZ) ?? nav;
         else if ((r.kind === 'etf' || r.kind === 'holdings') && nav && Number.isFinite(r.pct)) {
@@ -3091,10 +3090,12 @@ async function getFundWatch(codes, risk = 'balanced') {
           pctStale: r.kind === 'stale',
           date: navDate,
           estimateTime: r.kind === 'estimate' ? (info.GZTIME || '') : '',
-          // 官方估值独立于「当日涨跌」口径（后者可能是已公布净值或穿透估算）。
-          estimate: hasOfficialEst ? gszVal : null,
-          estimatePct: hasOfficialEst ? gszzlVal : null,
-          estimateAt: hasOfficialEst ? String(info.GZTIME || '') : '',
+          // 「当日涨跌」只认今日净值；「当日估值」是 15:00 冻结的预估涨跌幅。
+          navPctToday: pair.navPctToday,
+          estimate: pair.estimateNav,
+          estimatePct: pair.estimatePct,
+          estimateAt: pair.estimateAt,
+          estimateFrozen: pair.estimateFrozen,
           mainYi: null,
           mainPct: null,
           amountYi: null,
@@ -3129,6 +3130,12 @@ async function getFundWatch(codes, risk = 'balanced') {
           pctNote: r.note,
           pctStale: r.kind === 'stale',
           date: navDate,
+          // 这条分支拿不到天天基金的官方估值（只有净值序列），当日估值留空。
+          navPctToday: navDate === today && navPct !== null ? navPct : null,
+          estimate: null,
+          estimatePct: null,
+          estimateAt: '',
+          estimateFrozen: false,
           mainYi: null,
           mainPct: null,
           amountYi: null,
@@ -3147,6 +3154,12 @@ async function getFundWatch(codes, risk = 'balanced') {
         navDate: today,
         navPct: q.pct,
         date: today,
+        // ETF 走场内实时价：它本身就是「当日涨跌」，没有独立的官方估值。
+        navPctToday: q.pct,
+        estimate: null,
+        estimatePct: null,
+        estimateAt: '',
+        estimateFrozen: false,
       });
     }
     for (const q of openItems) if (q) map.set(q.code, q);

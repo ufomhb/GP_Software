@@ -57,7 +57,7 @@ import {
   getFundHolding,
   fundHoldingRow,
   fundPortfolio,
-  fundPctCell,
+  fundDayPctCell,
   fundEstimateCell,
   renderFundSummary,
   renderFundWatchSummary,
@@ -4674,7 +4674,7 @@ function renderWatchFunds() {
   if (state.watchFundSort === 'name') sorted = [...items].sort((a, b) => cleanName(a.name || a.code).localeCompare(cleanName(b.name || b.code), 'zh-CN'));
   if ($('#watchFundSort')) $('#watchFundSort').value = state.watchFundSort;
   el.innerHTML = `<div class="table-scroll"><table class="table fund-watch-table">
-    <thead><tr><th>基金</th><th data-col="type">类型</th><th data-col="nav">最新</th><th>当日涨跌</th><th data-col="est">当日估值</th><th data-col="flow">主力净流入</th><th data-col="score">技术评分</th><th data-col="rating">评级 / 仓位</th><th data-col="navdate">净值日期</th><th>操作</th></tr></thead>
+    <thead><tr><th>基金</th><th data-col="type">类型</th><th data-col="nav">最新</th><th title="当天公布的真实净值涨跌幅；净值未出显示「当日未出」">当日涨跌</th><th data-col="est" title="15:00 收盘时的预估涨跌幅，冻结后不随准确净值改动，用来核对估值准不准">当日估值</th><th data-col="flow">主力净流入</th><th data-col="score">技术评分</th><th data-col="rating">评级 / 仓位</th><th data-col="navdate">净值日期</th><th>操作</th></tr></thead>
     <tbody>${sorted.map((x) => {
       const m = meta.get(x.code) || {};
       const type = x.type || m.type || 'open';
@@ -4684,7 +4684,7 @@ function renderWatchFunds() {
         <td><span class="fund-drag-grip">⋮⋮</span><span class="t-name">${esc(cleanName(name))}</span><span class="t-code">${esc(x.code)}</span></td>
         <td data-col="type"><span class="fund-tag ${type}">${type === 'etf' ? 'ETF' : '场外'}</span></td>
         <td data-col="nav" class="t-price">${priceFmt(x.price)}${x.pctKind === 'holdings' || x.pctKind === 'etf' ? '<div class="t-sub">估算净值</div>' : ''}</td>
-        <td class="t-chg ${toneClass(x.pct)}">${fundPctCell(x)}</td>
+        <td class="t-chg ${toneClass(x.navPctToday ?? (type === 'etf' ? x.pct : null))}">${fundDayPctCell(x)}</td>
         <td data-col="est" class="t-chg">${fundEstimateCell(x)}</td>
         <td data-col="flow" class="t-chg ${toneClass(x.mainYi)}">${type === 'etf' ? yiFmt(x.mainYi) : '--'}</td>
         <td data-col="score" class="t-price ${av && av.score >= 60 ? 'tone-up' : av && av.score < 45 ? 'tone-down' : ''}">${av ? av.score : '--'}${av && av.analysis && av.analysis.includesToday ? '<div class="t-sub">含今日估算</div>' : ''}</td>
@@ -6776,7 +6776,7 @@ export {
   openAccount, openSettings, bindTouchReorder,
   renderFundWatchSummary, renderFundWatchTable,
   renderFundHoldSummary, renderFundHoldTable, renderFundSummary,
-  fundEstimateCell,
+  fundEstimateCell, fundDayPctCell,
   renderPortfolioAdvice,
 };
 

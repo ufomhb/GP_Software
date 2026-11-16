@@ -1,6 +1,6 @@
 {
   "name": "global-pulse-terminal",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "private": true,
   "description": "寰球智投：A股、全球指数、期货、黄金白银实盘行情与板块资金流、规则化策略终端",
   "scripts": {

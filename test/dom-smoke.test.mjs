@@ -311,8 +311,13 @@ test('DOM：自选基金表同时有「当日涨跌」与「当日估值」两�
   ];
   app.state.fundWatchData = {
     items: [
-      { code: '510300', name: '沪深300ETF', type: 'etf', price: 3.9, pct: 1.2, pctKind: 'market', estimatePct: null },
-      { code: '005825', name: '联接基金', type: 'open', price: 1.23, pct: 0.8, pctKind: 'nav', estimate: 1.238, estimatePct: 0.65, estimateAt: '2026-11-17 14:30' },
+      { code: '510300', name: '沪深300ETF', type: 'etf', price: 3.9, pct: 1.2, pctKind: 'market', navPctToday: 1.2, estimatePct: null },
+      {
+        code: '005825', name: '联接基金', type: 'open', price: 1.23,
+        pct: 0.65, pctKind: 'estimate', estimate: 1.238,
+        // 关键：当日涨跌（真实净值 0.80%）与当日估值（15:00 冻结的 0.65%）是**两个不同的数**
+        navPctToday: 0.8, estimatePct: 0.65, estimateAt: '2026-11-17 15:00', estimateFrozen: true,
+      },
     ],
   };
   app.state.fundHoldings = {};
@@ -324,16 +329,39 @@ test('DOM：自选基金表同时有「当日涨跌」与「当日估值」两�
 
   const rowOpen = document.querySelector('#fundWatchTable tbody tr[data-fund-code="005825"]');
   const rowEtf = document.querySelector('#fundWatchTable tbody tr[data-fund-code="510300"]');
-  assert.match(rowOpen.querySelector('[data-col="est"]').textContent, /\+0\.65%/, '场外基金应显示官方盘中估值');
-  assert.match(rowEtf.querySelector('[data-col="est"]').textContent, /场内实时/, 'ETF 无独立估值，应注明场内实时');
+
+  const dayCell = rowOpen.children[3].textContent;
+  const estCell = rowOpen.querySelector('[data-col="est"]').textContent;
+  assert.match(dayCell, /\+0\.80%/, '当日涨跌应取真实净值（+0.80%）');
+  assert.match(dayCell, /今日净值/, '当日涨跌应标注净值口径');
+  assert.match(estCell, /\+0\.65%/, '当日估值应取冻结的预估涨跌幅（+0.65%）');
+  assert.match(estCell, /15:00 估值/, '冻结后的估值应标 15:00');
+  assert.doesNotMatch(estCell, /\+0\.80%/, '两列不能是同一个数（防止估值与净值同源）');
+
+  assert.match(rowEtf.querySelector('[data-col="est"]').textContent, /场内无估值/, 'ETF 无独立估值');
 });
 
-test('DOM：净值已公布时，估值单元格给出与净值的偏差提示', () => {
-  const html = app.fundEstimateCell({
-    type: 'open', estimatePct: 0.65, pct: 0.8, pctKind: 'nav', estimateAt: '2026-11-17 14:30',
+test('DOM：净值未公布时「当日涨跌」显示未出，不拿估值冒充', () => {
+  const html = app.fundDayPctCell({
+    type: 'open', navPctToday: null, navDate: '2026-11-16', pct: 0.65, pctKind: 'estimate',
   });
-  assert.match(html, /偏差/, '应提示估值与净值的偏差');
-  assert.match(html, /\+0\.65%/, '应显示估值涨跌');
+  assert.match(html, /当日未出/, '净值没出就明确写「当日未出」');
+  assert.doesNotMatch(html, /\+0\.65%/, '不能用估值冒充当日涨跌');
+});
+
+test('DOM：估值单元格区分「15:00 冻结」与「盘中估值」，并给出与净值的偏差', () => {
+  const frozen = app.fundEstimateCell({
+    type: 'open', estimatePct: 0.65, estimateAt: '2026-11-17 15:00', estimateFrozen: true,
+    navPctToday: 0.8, pctKind: 'nav',
+  });
+  assert.match(frozen, /15:00 估值/, '冻结估值要标 15:00');
+  assert.match(frozen, /偏差/, '与净值同屏时应给出偏差');
+
+  const live = app.fundEstimateCell({
+    type: 'open', estimatePct: 0.42, estimateAt: '2026-11-17 10:30', estimateFrozen: false,
+  });
+  assert.match(live, /盘中估值/, '未到 15:00 应标盘中估值');
+  assert.doesNotMatch(live, /偏差/, '净值未出没有偏差可比');
 });
 
 /* ---------------------------------------------------------
