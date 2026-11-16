@@ -2622,6 +2622,9 @@ strong { font-weight: 650; }
   cursor: pointer;
 }
 .account-chip[hidden] { display: none; }
+/* 账号 chip 从 span 改成了 button：重置按钮默认字体/外边距，外观保持一致 */
+button.account-chip { font-family: inherit; line-height: 1.25; }
+.account-chip:hover { border-color: rgba(56, 189, 248, 0.35); color: var(--text); }
 .account-dot {
   width: 7px;
   height: 7px;
@@ -2630,6 +2633,19 @@ strong { font-weight: 650; }
   background: var(--down);
   box-shadow: 0 0 8px rgba(22, 199, 132, 0.7);
 }
+
+/* 账号抽屉：头像 + 用户名 + 角色 */
+.account-hero { display: flex; align-items: center; gap: 12px; padding: 14px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(56, 189, 248, 0.05); }
+.account-avatar {
+  display: grid; place-items: center; flex: none;
+  width: 46px; height: 46px; border-radius: 50%;
+  font-size: 19px; font-weight: 700; color: #07101c;
+  background: linear-gradient(135deg, #38bdf8, #22c55e);
+}
+.account-hero-meta { min-width: 0; }
+.ah-name { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 15px; font-weight: 600; }
+.ah-sub { margin-top: 3px; color: var(--muted); font-family: var(--num); font-size: 10px; word-break: break-all; }
+.account-hero .badge { flex: none; }
 @media (max-width: 720px) {
   .account-chip { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
 }

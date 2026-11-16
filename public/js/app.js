@@ -5285,92 +5285,8 @@ async function openSourceStatus() {
 }
 
 /* ---------------------------------------------------------
-   微信推送设置（服务端保存配置，前端只负责录入与同步自选/持仓）
+   自选/持仓同步到服务端（推送配置与手机访问地址已移到后台管理 /admin.html）
    --------------------------------------------------------- */
-async function loadNetInfo() {
-  const box = $('#netUrls');
-  if (!box) return;
-  try {
-    const data = await api('/api/net', 12000);
-    state.netInfo = data || null;
-    const mobile = (data && data.mobile) || [];
-    if (!mobile.length) {
-      box.innerHTML = '<span class="muted small">当前只监听本机（127.0.0.1），手机还不能访问。用 <code>node server.js --host=0.0.0.0</code> 重启即可开启。</span>';
-      const note = $('#netNote');
-      if (note) note.textContent = '手机访问未开启：重启时加上 --host=0.0.0.0，终端会直接打印手机能打开的地址。';
-      return;
-    }
-    box.innerHTML = mobile
-      .map((u) => `<button class="net-url" data-net-url="${esc(u)}" type="button"><b>${esc(u)}</b><span>手机连同一 Wi-Fi 打开 · 点一下复制</span></button>`)
-      .join('');
-    box.querySelectorAll('[data-net-url]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const url = btn.dataset.netUrl;
-        try {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(url);
-            toast(`已复制：${url}`, 'ok', 2400);
-            return;
-          }
-        } catch { /* 退回直接提示 */ }
-        toast(url, 'ok', 5000);
-      });
-    });
-    const note = $('#netNote');
-    if (note) note.textContent = '手机与电脑连同一个 Wi-Fi，用下面的地址打开即可；页面已按手机屏宽自适应，自选基金与持仓会自动从服务端同步。';
-  } catch (err) {
-    box.innerHTML = `<span class="muted small">读取本机地址失败：${esc(err.message)}</span>`;
-  }
-}
-
-async function loadPushSettings() {
-  const status = $('#pushStatus');
-  try {
-    const data = await api('/api/push/config', 15000);
-    const cfg = data.config || {};
-    if ($('#pushEnabled')) $('#pushEnabled').checked = Boolean(cfg.enabled);
-    if ($('#pushChannel')) $('#pushChannel').value = cfg.channel || 'serverchan';
-    const slotOf = (key) => (Array.isArray(cfg.slots) ? cfg.slots.find((s) => s.key === key) : null) || {};
-    const st = slotOf('strategy');
-    const va = slotOf('valuation');
-    if ($('#slotStrategyEnabled')) $('#slotStrategyEnabled').checked = st.enabled !== false;
-    if ($('#slotStrategyTime')) $('#slotStrategyTime').value = st.time || '14:30';
-    if ($('#slotValuationEnabled')) $('#slotValuationEnabled').checked = va.enabled !== false;
-    if ($('#slotValuationTime')) $('#slotValuationTime').value = va.time || '19:30';
-    const secret = cfg.channel === 'wecom' || cfg.channel === 'custom' ? cfg.webhook : cfg.token;
-    if ($('#pushToken')) $('#pushToken').value = secret || '';
-    if ($('#pushTokenHint')) {
-      $('#pushTokenHint').textContent = {
-        serverchan: 'Server酱 SendKey（SCT 开头）',
-        pushplus: 'PushPlus token',
-        wecom: '企业微信群机器人 webhook 地址',
-        custom: '自定义 POST webhook 地址（JSON: {title, content}）',
-      }[cfg.channel] || '';
-    }
-    if (status) {
-      const f = cfg.lastResult;
-      const syncInfo = `${(cfg.funds || []).length} 只自选基金已同步`;
-      const slotText = [
-        st.enabled !== false ? `${st.time || '14:30'} 策略` : '策略（关）',
-        va.enabled !== false ? `${va.time || '19:30'} 估值` : '估值（关）',
-      ].join(' / ');
-      status.textContent = [
-        cfg.enabled ? '推送已开启' : '推送未开启',
-        `渠道：${data.channelLabel || cfg.channel}`,
-        `时段：${slotText}`,
-        syncInfo,
-        f ? (f.ok
-          ? `上次推送：${f.label || f.slot || ''} ${new Date(f.at).toLocaleString('zh-CN', { hour12: false })} 已受理${f.pushid ? `（单号 ${f.pushid}）` : ''}`
-          : `上次推送失败：${f.error || ''}`) : '尚未推送',
-        data.hint || '',
-      ].filter(Boolean).join(' · ');
-      status.classList.toggle('is-warn', Boolean(data.hint));
-    }
-  } catch (err) {
-    if (status) status.textContent = `读取推送配置失败：${err.message}`;
-  }
-}
-
 let pushSyncTimer = null;
 // 自选股票 + 自选基金 + 持仓统一同步到服务端（按账号隔离存储，换设备可恢复）。
 async function syncPushWatchlist() {
@@ -5388,11 +5304,67 @@ function schedulePushSync() {
   pushSyncTimer = setTimeout(() => { syncPushWatchlist(); }, 1500);
 }
 
+// 顶栏账号菜单：账号信息、密码、数据源、后台、履历与退出登录（退出按钮从顶栏移入这里）。
+async function logoutAccount() {
+  const btn = $('#acctLogout');
+  if (btn) { btn.disabled = true; btn.textContent = '退出中…'; }
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch { /* 忽略网络异常，仍回登录页 */ }
+  location.replace('/login.html');
+}
+
+function fmtAccountTime(ts) {
+  if (!ts) return '--';
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? '--' : d.toLocaleString('zh-CN', { hour12: false });
+}
+
+function openAccount() {
+  const u = state.auth;
+  if (!u) { redirectToLogin(); return; }
+  const isAdmin = u.role === 'admin' || u.role === 'super';
+  const roleLabel = u.role === 'super' ? '超级管理员' : u.role === 'admin' ? '管理员' : '普通用户';
+  mountOverlay(`
+    <div class="drawer">
+      <div class="drawer-head"><div><div class="eyebrow">ACCOUNT</div><h2>账号设置</h2></div><button class="modal-close" data-close>×</button></div>
+      <div class="account-hero">
+        <span class="account-avatar">${esc(String(u.username || '?').slice(0, 1).toUpperCase())}</span>
+        <div class="account-hero-meta">
+          <div class="ah-name">${esc(u.username)} <span class="badge tone-flat">${esc(roleLabel)}</span></div>
+          <div class="ah-sub">账号 ID：${esc(u.id)}</div>
+        </div>
+      </div>
+      <div class="setting-group">
+        <h3>账号信息</h3>
+        <div class="setting-row"><div><div class="sr-label">注册时间</div><div class="sr-sub">账号创建时间</div></div><b>${esc(fmtAccountTime(u.createdAt))}</b></div>
+        <div class="setting-row"><div><div class="sr-label">最近登录</div><div class="sr-sub">上一次登录时间</div></div><b>${esc(fmtAccountTime(u.lastLoginAt))}</b></div>
+        <div class="setting-row"><div><div class="sr-label">累计登录</div><div class="sr-sub">含当前会话</div></div><b>${Number(u.loginCount) || 0} 次</b></div>
+      </div>
+      <div class="setting-group">
+        <h3>安全与管理</h3>
+        <div class="setting-row"><div><div class="sr-label">修改密码</div><div class="sr-sub">修改后其它设备需要重新登录</div></div><button class="btn small" id="acctPassword">修改</button></div>
+        <div class="setting-row"><div><div class="sr-label">数据源状态</div><div class="sr-sub">查看当前行情源与备用源</div></div><button class="btn small" id="acctSource">查看</button></div>
+        <div class="setting-row" id="acctAdminRow" hidden><div><div class="sr-label">后台管理</div><div class="sr-sub">用户、登录记录、流量统计、推送与数据源</div></div><a class="btn small primary" href="/admin.html" target="_blank" rel="noreferrer">打开</a></div>
+        <div class="setting-row"><div><div class="sr-label">更新履历</div><div class="sr-sub">查看每个版本改了什么</div></div><button class="btn small" id="acctChangelog">查看</button></div>
+      </div>
+      <div class="setting-group">
+        <h3>会话</h3>
+        <p class="setting-note">退出后当前设备立即回到登录页；其它设备的会话不受影响，只有修改密码才会让所有设备重新登录。</p>
+        <button class="btn danger block" id="acctLogout">退出登录</button>
+      </div>
+    </div>`, 'drawer-overlay');
+  const adminRow = $('#acctAdminRow');
+  if (adminRow) adminRow.hidden = !isAdmin;
+  $('#acctPassword') && $('#acctPassword').addEventListener('click', openPasswordModal);
+  $('#acctSource') && $('#acctSource').addEventListener('click', () => { closeOverlay(); openSourceStatus(); });
+  $('#acctChangelog') && $('#acctChangelog').addEventListener('click', () => { closeOverlay(); openChangelog(); });
+  $('#acctLogout') && $('#acctLogout').addEventListener('click', logoutAccount);
+}
+
 function openSettings() {
   const s = state.settings;
   mountOverlay(`
     <div class="drawer">
-      <div class="drawer-head"><div><div class="eyebrow">PREFERENCES</div><h2>终端设置</h2></div><button class="modal-close" data-close>×</button></div>
+      <div class="drawer-head"><div><div class="eyebrow">PREFERENCES</div><h2>偏好设置</h2></div><button class="modal-close" data-close>×</button></div>
       <div class="setting-group">
         <h3>刷新与风险</h3>
         <div class="setting-row"><div><div class="sr-label">自动刷新</div><div class="sr-sub">关闭后仅手动刷新</div></div><input type="checkbox" id="setAuto" ${s.autoRefresh ? 'checked' : ''}></div>
@@ -5417,150 +5389,10 @@ function openSettings() {
         <div class="setting-row"><div><div class="sr-label">清空本地数据</div><div class="sr-sub">自选、预警和设置全部重置</div></div><button class="btn small danger" id="setReset">重置</button></div>
       </div>
       <div class="setting-group">
-        <h3>账号</h3>
-        <div class="setting-row"><div><div class="sr-label">当前账号</div><div class="sr-sub" id="setAccountRole">--</div></div><b id="setAccountName">--</b></div>
-        <div class="setting-row"><div><div class="sr-label">修改密码</div><div class="sr-sub">修改后其它设备需要重新登录</div></div><button class="btn small" id="setPassword">修改</button></div>
-        <div class="setting-row"><div><div class="sr-label">数据源状态</div><div class="sr-sub">查看当前行情源与备用源</div></div><button class="btn small" id="setSource">查看</button></div>
-        <div class="setting-row" id="setAdminRow" hidden><div><div class="sr-label">后台管理</div><div class="sr-sub">用户、登录记录、流量统计、推送与数据源</div></div><a class="btn small primary" href="/admin.html" target="_blank" rel="noreferrer">打开</a></div>
-        <div class="setting-row"><div><div class="sr-label">更新履历</div><div class="sr-sub">查看每个版本改了什么</div></div><button class="btn small" id="setChangelog">查看</button></div>
-      </div>
-      <div class="setting-group">
         <h3>关于</h3>
-        <p class="setting-note">寰球智投 v${APP_VERSION} · 数据来源：东方财富 / 腾讯 / 新浪公开行情接口。行情可能延迟、缺失或调整口径；本工具仅用于学习研究，不构成投资建议。<br>行情数据源、微信定时推送、手机访问地址已移到「后台管理」。</p>
+        <p class="setting-note">寰球智投 v${APP_VERSION} · 数据来源：东方财富 / 腾讯 / 新浪公开行情接口。行情可能延迟、缺失或调整口径；本工具仅用于学习研究，不构成投资建议。<br>账号信息、修改密码与退出登录请点顶栏账号；行情数据源、微信定时推送、手机访问地址在「后台管理」。</p>
       </div>
     </div>`, 'drawer-overlay');
-
-  const authUser = state.auth;
-  if ($('#setAccountName')) $('#setAccountName').textContent = authUser ? authUser.username : '--';
-  if ($('#setAccountRole')) {
-    $('#setAccountRole').textContent = authUser
-      ? (authUser.role === 'super' ? '超级管理员' : authUser.role === 'admin' ? '管理员' : '普通用户')
-      : '--';
-  }
-  if ($('#setAdminRow')) $('#setAdminRow').hidden = !(authUser && (authUser.role === 'admin' || authUser.role === 'super'));
-  $('#setChangelog') && $('#setChangelog').addEventListener('click', () => { closeOverlay(); openChangelog(); });
-  $('#setPassword') && $('#setPassword').addEventListener('click', openPasswordModal);
-  $('#setSource') && $('#setSource').addEventListener('click', () => { closeOverlay(); openSourceStatus(); });
-  $('#netCopy') && $('#netCopy').addEventListener('click', async () => {
-    const urls = (state.netInfo && state.netInfo.mobile) || [];
-    if (!urls.length) { toast('当前没有可用的手机地址', 'warn'); return; }
-    const text = urls[0];
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
-        toast(`已复制：${text}`, 'ok', 2600);
-        return;
-      }
-      toast(text, 'ok', 5000);
-    } catch {
-      toast(text, 'ok', 5000);
-    }
-  });
-  $('#netReload') && $('#netReload').addEventListener('click', () => loadNetInfo());
-  $('#pushChannel') && $('#pushChannel').addEventListener('change', () => {
-    const ch = $('#pushChannel').value;
-    $('#pushTokenHint').textContent = {
-      serverchan: 'Server酱 SendKey（SCT 开头）',
-      pushplus: 'PushPlus token',
-      wecom: '企业微信群机器人 webhook 地址',
-      custom: '自定义 POST webhook 地址（JSON: {title, content}）',
-    }[ch] || '';
-  });
-
-  // 收集屏幕上的推送设置（可带时段），保存与测试复用
-  const collectPushBody = () => {
-    const ch = $('#pushChannel') ? $('#pushChannel').value : 'serverchan';
-    const tokenVal = String(($('#pushToken') && $('#pushToken').value) || '').trim();
-    const body = {
-      enabled: Boolean($('#pushEnabled') && $('#pushEnabled').checked),
-      channel: ch,
-      weekdaysOnly: true,
-      slots: [
-        {
-          key: 'strategy',
-          label: '持仓策略（加仓/减仓/不变）',
-          time: String(($('#slotStrategyTime') && $('#slotStrategyTime').value) || '14:30').slice(0, 5),
-          enabled: Boolean($('#slotStrategyEnabled') && $('#slotStrategyEnabled').checked),
-        },
-        {
-          key: 'valuation',
-          label: '当日基金估值',
-          time: String(($('#slotValuationTime') && $('#slotValuationTime').value) || '19:30').slice(0, 5),
-          enabled: Boolean($('#slotValuationEnabled') && $('#slotValuationEnabled').checked),
-        },
-      ],
-    };
-    if (tokenVal && !tokenVal.includes('****')) {
-      if (ch === 'wecom' || ch === 'custom') body.webhook = tokenVal;
-      else body.token = tokenVal;
-    }
-    return body;
-  };
-
-  $('#pushSave') && $('#pushSave').addEventListener('click', async () => {
-    try {
-      await apiPost('/api/push/config', collectPushBody());
-      toast('推送设置已保存', 'ok');
-      loadPushSettings();
-    } catch (err) {
-      toast(`保存失败：${err.message}`, 'err');
-    }
-  });
-
-  $$('[data-push-preview]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const slot = btn.dataset.pushPreview || 'strategy';
-      try {
-        btn.disabled = true;
-        await syncPushWatchlist();
-        const data = await api(`/api/push/preview?slot=${encodeURIComponent(slot)}`, 45000);
-        mountOverlay(`<div class="modal">
-          <div class="modal-head"><div class="modal-title"><h2>推送预览</h2><span class="code">${esc(data.title || '')}</span></div><button class="modal-close" data-close>×</button></div>
-          <pre class="push-preview">${esc(data.content || '')}</pre>
-          <p class="muted small">这是该时段到点时实际发送的内容（预览使用当前自选与持仓）。</p>
-        </div>`);
-      } catch (err) {
-        toast(`预览失败：${err.message}`, 'err');
-      } finally {
-        btn.disabled = false;
-      }
-    });
-  });
-
-  $$('[data-push-test]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const slot = btn.dataset.pushTest || 'strategy';
-      const label = slot === 'valuation' ? '当日估值' : '持仓策略';
-      try {
-        btn.disabled = true;
-        const old = btn.textContent;
-        btn.textContent = '发送中…';
-        await syncPushWatchlist();
-        const body = collectPushBody();
-        body.slot = slot;
-        const data = await apiPost('/api/push/test', body, 60000);
-        const sent = data.sent || {};
-        const extra = sent.pushid ? `，受理单号 ${sent.pushid}` : '';
-        toast(`「${label}」已提交（${sent.endpoint || sent.channel || 'ok'}${extra}）`, 'ok', 6000);
-        const status = $('#pushStatus');
-        if (status) {
-          status.textContent = data.hint
-            ? `「${label}」已受理${extra}。${data.hint}`
-            : `「${label}」已受理${extra}。若微信仍未收到：确认 Server酱控制台「消息通道」已绑定微信，并检查当天免费额度。`;
-          status.classList.toggle('is-warn', Boolean(data.hint));
-        }
-        loadPushSettings();
-        btn.textContent = old;
-        btn.disabled = false;
-      } catch (err) {
-        toast(`${label} 测试推送失败：${err.message}`, 'err', 8000);
-        const status = $('#pushStatus');
-        if (status) status.textContent = `测试失败：${err.message}`;
-        btn.disabled = false;
-        btn.textContent = '测试';
-      }
-    });
-  });
 
   $('#setAuto').addEventListener('change', (e) => {
     s.autoRefresh = e.target.checked;
@@ -6662,27 +6494,16 @@ async function loadAuthState() {
       return null;
     }
     state.auth = user;
-    const isAdmin = user.role === 'admin' || user.role === 'super';
     const nameEl = $('#accountName');
     const chip = $('#accountChip');
-    const out = $('#logoutBtn');
     if (nameEl) nameEl.textContent = user.username;
     if (chip) {
       chip.hidden = false;
-      chip.title = isAdmin
-        ? `${user.role === 'super' ? '超级管理员' : '管理员'}：可在后台管理用户、推送、数据源与使用统计`
-        : '普通用户：可以操作行情、自选与持仓；系统设置请使用管理员账号';
-      chip.addEventListener('click', openSettings);
+      chip.title = '账号设置：账号信息、修改密码、后台管理与退出登录';
+      // 名字点开「账号」抽屉；齿轮才是刷新/风险/通知等偏好设置，两者不再重复。
+      chip.addEventListener('click', openAccount);
     }
-    if (out) {
-      out.hidden = false;
-      out.addEventListener('click', async () => {
-        out.disabled = true;
-        try { await fetch('/api/auth/logout', { method: 'POST' }); } catch { /* 忽略 */ }
-        location.replace('/login.html');
-      });
-    }
-    // 设置现在只含个人偏好，所有登录用户都能打开；系统级配置在 /admin.html。
+    // 设置只含个人偏好（刷新、风险、通知、数据），所有登录用户都能打开；系统级配置在 /admin.html。
     const settingsBtn = $('#settingsBtn');
     if (settingsBtn) settingsBtn.hidden = false;
     // 更新履历所有登录用户都能看
