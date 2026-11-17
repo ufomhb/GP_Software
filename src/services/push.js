@@ -392,10 +392,14 @@ function isTodayPct(r) {
   return Boolean(r) && !r.pctStale && Number.isFinite(Number(r.pct)) && r.pctKind !== 'stale';
 }
 
-function buildStrategyReport(port, pulse, opts = {}) {
-  const { rows, totals, today } = port;
-  const slotTime = opts.slotTime || '14:30';
-  const outlook = buildOutlook(pulse);
+/**
+ * 把持仓按三条策略规则分成 加仓 / 减仓 / 不变 三组（结构化结果）。
+ *
+ * 后台管理的「持仓策略」页面也用它：按天记录、次日评价必须和推送口径完全一致，
+ * 否则「建议」和「事后评价」会对着两套规则说话，改进策略就失去意义。
+ */
+function classifyPortfolio(port) {
+  const { rows, totals } = port;
   const hold = [];
   const add = [];
   const cut = [];
@@ -416,23 +420,36 @@ function buildStrategyReport(port, pulse, opts = {}) {
       const targetShares = Math.floor(targetMv / r.price);
       const delta = Math.min(-10, targetShares - r.shares);
       if (delta < 0) {
-        cut.push({ ...r, delta, ratioPct: (r.weight - 30), reason: `单只占比 ${r.weight.toFixed(1)}%，超过 40% 上限，建议降到 30% 左右（${pushNum(targetMv, 0)} 元）` });
+        cut.push({
+          code: r.code, name: r.name, action: 'cut', rule: 'concentration',
+          shares: r.shares, targetShares: r.shares + delta, delta,
+          price: r.price, pct, pctKind: r.pctKind, navDate: r.navDate || '', weight: r.weight,
+          score, ratioPct: r.weight - 30,
+          reason: `单只占比 ${r.weight.toFixed(1)}%，超过 40% 上限，建议降到 30% 左右（${pushNum(targetMv, 0)} 元）`,
+        });
         continue;
       }
     }
     if (score !== null && score >= 65 && pct <= -1.2) {
       const ratio = score >= 80 && pct <= -2 ? 0.1 : 0.05;
       const delta = roundShares(r.shares, r.marketValue * ratio / r.price);
-      add.push({ ...r, delta, ratioPct: ratio * 100, reason: `技术评分 ${score} 偏多，${src} ${pct.toFixed(2)}% 回落，建议加 ${chengText(ratio)}（分 2 批）` });
+      add.push({
+        code: r.code, name: r.name, action: 'add', rule: 'score-strong-dip',
+        shares: r.shares, targetShares: r.shares + delta, delta,
+        price: r.price, pct, pctKind: r.pctKind, navDate: r.navDate || '', weight: r.weight,
+        score, ratioPct: ratio * 100,
+        reason: `技术评分 ${score} 偏多，${src} ${pct.toFixed(2)}% 回落，建议加 ${chengText(ratio)}（分 2 批）`,
+      });
       continue;
     }
     if (score !== null && score < 45 && (pct >= 0.8 || pct <= -1.2)) {
       const ratio = score < 35 ? 0.1 : 0.05;
       const delta = roundShares(r.shares, r.marketValue * ratio / r.price);
       cut.push({
-        ...r,
-        delta,
-        ratioPct: ratio * 100,
+        code: r.code, name: r.name, action: 'cut', rule: score < 35 ? 'score-weak-drop' : 'score-weak',
+        shares: r.shares, targetShares: r.shares - delta, delta,
+        price: r.price, pct, pctKind: r.pctKind, navDate: r.navDate || '', weight: r.weight,
+        score, ratioPct: ratio * 100,
         reason: score < 35
           ? `技术评分 ${score} 弱势，${src}${pct >= 0 ? '反弹' : '继续下跌'} ${Math.abs(pct).toFixed(2)}%，建议减 ${chengText(ratio)}`
           : `技术评分 ${score} 偏弱，${src}${pct >= 0 ? '反弹' : '下跌'} ${Math.abs(pct).toFixed(2)}%，建议减 ${chengText(ratio)}`,
@@ -440,12 +457,24 @@ function buildStrategyReport(port, pulse, opts = {}) {
       continue;
     }
     hold.push({
-      ...r,
+      code: r.code, name: r.name, action: 'hold', rule: 'no-signal',
+      shares: r.shares, targetShares: r.shares, delta: 0,
+      price: r.price, pct, pctKind: r.pctKind, navDate: r.navDate || '', weight: r.weight,
+      score, ratioPct: 0,
+      rating: (av && av.rating && av.rating.label) || '',
       reason: av && av.rating && av.rating.label
         ? `评级「${av.rating.label}」${av.position ? `，参考仓位 ${av.position.text}` : ''}`
         : '无明确信号，保持现有仓位',
     });
   }
+  return { add, cut, hold, pending: pendingList, rows, totals };
+}
+
+function buildStrategyReport(port, pulse, opts = {}) {
+  const { rows, totals, today } = port;
+  const slotTime = opts.slotTime || '14:30';
+  const outlook = buildOutlook(pulse);
+  const { add, cut, hold, pending: pendingList } = classifyPortfolio(port);
 
   const line = (r, sign) => {
     const delta = sign === 0 ? 0 : sign * r.delta;
@@ -957,6 +986,7 @@ async function handlePushApi(req, res, url) {
     pushChannelLabel,
     maskPushConfig,
     collectPortfolio,
+    classifyPortfolio,
     buildStrategyReport,
     buildValuationReport,
     buildReportForSlot,
