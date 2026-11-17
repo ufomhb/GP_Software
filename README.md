@@ -39,7 +39,7 @@
 
 首次打开会跳转登录页。**第一个注册的账号是主账号**，自动继承推送配置里的持仓，并继续使用微信推送；后续账号的自选与持仓互相隔离。
 
-后台管理入口：`/admin.html`（管理员 / 超级管理员登录）。系统状态、用户权限、登录记录、每日流量与使用统计、微信推送、数据源、手机访问都已从终端设置移到后台。
+后台管理入口：`/admin.html`（管理员 / 超级管理员登录）。系统状态、用户权限、登录记录、每日流量与使用统计、微信推送、数据源、手机访问都已从终端设置移到后台；2026-11-17 起又新增两个板块：**部署到 NAS**（本机验证通过后一键推送代码，带 10 步进度）与**持仓策略**（按天记录加减仓建议、次日用净值验对错、按命中率自动调参）。
 
 ### 运行方式
 
@@ -112,6 +112,23 @@ node server.js                                       # 去掉 STORE 即回退到
 - NAS 上每天 03:30 自动备份到 `/data/backup/gp-data/`：`gp-YYYYMMDD.sqlite`（库快照）+ `data-YYYYMMDD.tar.gz`（其余文件，已排除库文件），各保留 7 份。
 - 自测：`node scripts/selfcheck-p0.mjs`（安全基线 39 项）、`node scripts/selfcheck-store.mjs`（存储层 23 项，含迁移校验、并发登录、重启保持、回退）。
 
+#### 数据库版本化迁移（schema v2，2026-11-17）
+
+库结构不再靠「改代码 + 手工 ALTER」，而是纳入版本管理：
+
+```bash
+node scripts/migrate.mjs --status          # 看当前版本 / 待执行迁移 / 结构漂移
+node scripts/migrate.mjs                   # 执行迁移（幂等，已最新则什么都不做）
+node scripts/migrate.mjs --db=/tmp/x.sqlite # 对指定库操作（演练 / 排查）
+node scripts/check-schema.mjs              # 只核对结构：缺表/缺列 → 退出码 1
+```
+
+- 版本号存在 SQLite 的 `PRAGMA user_version` 里，迁移条目在 `lib/store.js` 的 `MIGRATIONS` 数组；`SCHEMA_VERSION` 是代码期望的版本。
+- **服务启动时自动迁移**（`openDb()` → `migrateOnOpen()`）；每条迁移在独立事务里执行，成功才写版本号，失败整条回滚并抛出，服务**不会带着旧结构启动**（避免 `no such column` 静默 500）。
+- 老库（`user_version=0`）只有在结构与 `SCHEMA` 完全一致时才「认领」为当前版本，有缺则保持 0，让结构核对继续报错，不被版本号掩盖。
+- 改结构的标准动作（三处必须同一次提交）：`SCHEMA` 里加新表/新列（让全新安装正确）+ `MIGRATIONS` 追加一条带 `version` 的迁移（让老库跟上）+ 递增 `SCHEMA_VERSION`；测试 `test/store-migrations.test.mjs` 会拦住「只加迁移忘了改 SCHEMA」的疏漏。
+- 当前 v2 新增两张表：`strategy_records`（持仓策略按天记录，`payload` 存整条 JSON）、`strategy_meta`（规则参数 / 评价口径 / 调参历史 / 自动调参开关）。
+
 ### 日志与排障
 
 服务端把 `console` 输出同时写文件，后台「系统日志」菜单直接读这些文件，不用再登 NAS：
@@ -146,11 +163,15 @@ Cloudflare（gp.ufomhb.xyz）
 
 NAS 上的部署方式（**没有 git，靠 scp 同步代码**）：
 
+- **推荐：后台 `/admin.html` → 「部署到 NAS」→ 点「推送到 NAS」**（仅超级管理员，需二次确认）。流程固定 10 步并显示进度：检查本机工具与 NAS 连通性 → 打包代码 → 备份 NAS 现有代码 → **备份数据库快照**（`VACUUM INTO`）→ 上传 → 解压覆盖 `/data/gp` → **执行数据库迁移** → 重启 `gp-terminal` → **核对数据库结构** → 健康检查与版本核对。
+  - 迁移特意排在重启**之前**：失败时线上进程仍跑旧代码，会自动 `tar` 回滚文件，站点不受影响（数据库有快照可回退）。
+  - 只同步代码（`server.js` / `package.json` / `src` / `lib` / `public` / `scripts` / `data/changelog.json`），不动 NAS 上的 `data/` 运行时数据。
+  - 等价命令行：`node tools/deploy-nas.mjs`（与按钮共用同一套引擎 `src/lib/nas-deploy.js`）；`--dry` 只预检不推送。`tools/` 整个目录在 `.gitignore` 里，部署 CLI 需 `git add -f` 才会进库。
 - 代码目录 `/data/gp`（`server.js` / `lib` / `src` / `public` / `scripts` / `package.json` / `data`），systemd 单元 `/etc/systemd/system/gp-terminal.service`。
 - **`src/` 必须一起同步**：`server.js` 会 `require('./src/lib/*')`，只 copy server.js 会导致起不来。
 - Node 运行时：`/data/node24`（v24.22.3，2026-11-15 从 v20 升级，为 P1 的 `node:sqlite` 做准备）；旧的 `/data/node`（v20.19.4）保留，回滚时把单元里的 `PATH` 与 `ExecStart` 改回 `/data/node/bin/node` 即可。
-- 升级流程：备份 `/data/gp` → scp 覆盖代码 → `systemctl restart gp-terminal` → `curl -s localhost:8090/api/health` 验证。
-- 备份：`/data/backup/gp-code/`（代码，按次）与 `/data/backup/gp-data/`（每日 03:30，保留 7 天）。
+- 手工升级流程：备份 `/data/gp` → scp 覆盖代码 → `systemctl restart gp-terminal` → `curl -s localhost:8090/api/health` 验证。
+- 备份：`/data/backup/gp-code/`（代码，按次）、`/data/backup/gp-data/`（每日 03:30 快照，保留 7 天）与每次推送前的 `gp-before-<版本>-<时间>.sqlite` 库快照。
 
 > 仓库只保存代码与文档；账号、密钥、隧道凭证均在本地，不入库。
 
@@ -177,7 +198,7 @@ Environment=TRUST_PROXY=cloudflare
 
 ```bash
 npm install                               # 只装测试依赖 jsdom（运行时仍然零依赖）
-npm test                                  # 单元 + 集成 + DOM + 路由表 + 日志（56 项，起隔离实例，不碰 data/）
+npm test                                  # 单元 + 集成 + DOM + 路由表 + 日志 + 策略 + 部署（113 项，起隔离实例，不碰 data/）
 npm run selfcheck                         # 安全基线 39 项 + 存储层 23 项
 ```
 
@@ -187,6 +208,17 @@ npm run selfcheck                         # 安全基线 39 项 + 存储层 23 �
 - 前端已拆出 `public/js/util.js`（格式化/转义）、`public/js/dom.js`（选择器 `$` / `$$`、`toast`、`debounce`）、`public/js/api.js`（`api` / `apiPost` / 401 跳登录）、`public/js/core.js`（版本号、存储键、账号命名空间、本地存储、全局 `state`），以及第一个视图模块 `public/js/views/funds.js`（基金页 10 个渲染函数）。`app.js` 从 7,285 行降到 **6,756 行**，后续视图按同一模式拆。
 - 前端渲染约定：**外部文本进 `innerHTML` 前必须 `esc()`；进 `href`/`src` 前必须再过 `safeUrl()`**（`esc` 挡不住 `javascript:` 协议）。2026-11-15 审计了 225 处模板插值，35 处文本型全部安全，并补了 `safeUrl` 覆盖快讯链接等 2 处 href。
 - CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
+
+### v2.2.0 更新（2026-11-17）
+
+> 这一版把「改代码 → 上线」和「持仓策略 → 复盘」两件事都做成可操作的闭环。
+
+- **后台「部署到 NAS」**：本机验证通过后一键推送代码，10 步进度（检查连通性 / 打包 / 备份代码 / **备份库快照** / 上传 / 解压 / **执行迁移** / 重启 / **核对结构** / 健康检查）。仅超级管理员、需二次确认、同时只允许一个任务；迁移排在重启前，失败自动回滚代码。
+- **数据库版本化迁移（schema v2）**：用 `PRAGMA user_version` + `MIGRATIONS` 增量迁移，服务启动时自动升级；每条迁移独立事务、失败整条回滚；新增 `scripts/migrate.mjs`（`--status` / `--db=`）与 `scripts/check-schema.mjs`（缺表缺列退出码 1，多余历史列只告警）。
+- **后台「持仓策略」页**：每天 14:35 自动记录当天「加仓/减仓/不变」建议（与 14:30 推送同一套分组规则，收盘后才补记会标 `late`）；次日用**已公布净值**（盘中估算不算）判定前一天建议是否合理；展示总体/分动作/分评分区间的命中率。
+- **全自动调参**：样本 ≥ 5 且命中率 < 50% 时自动调整评分门槛（加仓命中差 → `addScore` +5，减仓命中差 → `cutScore` −5），每次调参，只动这两个参数、每天最多一次、命中率达标时不自动放宽；每次改写都留痕（前后值/命中率/样本数），页面可一键回滚。规则参数在页面可调，保存后推送与记录立即生效。
+- **持仓策略入库**：记录从 JSON 文件迁到 SQLite（`strategy_records` / `strategy_meta`），JSON 模式仍回落 `data/strategy-log.json`；SQLite 首次读到空表会自动导入旧 JSON，切库不丢历史。
+- **测试**：新增 deploy / schema / store-migrations / strategy-log / strategy-api 共 7 个用例文件；并修复测试脚手架并行运行时**随机端口撞车**导致的偶发失败（改为先探测空闲端口）。
 
 ### v2.0.1 更新（2026-11-15）
 
@@ -505,10 +537,12 @@ node server.js --port=8091
 │  ├─ lib/security.js         # HTTPS 判定、安全响应头、脱敏、同源校验、会话键与 Cookie
 │  ├─ lib/net-safety.js       # 内网地址识别、webhook 出站地址校验（防 SSRF）
 │  ├─ lib/log-files.js        # 日志落盘：按大小轮转 + console 镜像 + 末尾读取
+│  ├─ lib/nas-deploy.js       # 推送到 NAS 的引擎：10 步流程、进度事件、失败回滚
 │  ├─ services/push.js        # 推送子系统：配置归一、持仓聚合、报告生成、渠道发送、时段调度、/api/push/*
+│  ├─ services/strategy-log.js # 持仓策略：按天记录、次日评价、命中率统计、自动调参
 │  └─ http/routes.js          # HTTP 路由分发：handleAuth / handleAdmin / handleApi
 ├─ test/
-│  ├─ helpers/app.mjs         # 测试脚手架（临时目录 + 随机端口起隔离实例）
+│  ├─ helpers/app.mjs         # 测试脚手架（临时目录 + 探测空闲端口起隔离实例）
 │  ├─ auth.test.mjs           # 注册 / 登录 / 改密 / 会话失效
 │  ├─ portfolio.test.mjs      # 自选与持仓的清洗、隔离、sqlite 模式
 │  ├─ security.test.mjs       # 安全头、同源、穿越、SSRF、后台权限、日志脱敏
@@ -516,26 +550,37 @@ node server.js --port=8091
 │  ├─ unit-security.test.mjs  # src/lib 纯函数单测
 │  ├─ unit-push.test.mjs      # 推送时段/幂等/配置归一
 │  ├─ routes.test.mjs         # 路由表：源码里的每个 /api 端点都要被分发器认得
+│  ├─ deploy.test.mjs         # 部署引擎步骤表 + 推送接口鉴权与确认位
+│  ├─ schema.test.mjs         # 结构核对：一致/缺列报错/多列告警/无库
+│  ├─ store-migrations.test.mjs # 版本认领、按序迁移、失败回滚、v2 建表
+│  ├─ strategy-log.test.mjs   # 记录/评价/命中率/自动调参（含回滚）
+│  ├─ strategy-api.test.mjs   # 策略接口 HTTP 往返与参数持久化
 │  └─ dom-smoke.test.mjs      # jsdom 载入真实页面，验证渲染与转义
 ├─ .github/workflows/test.yml # CI：语法检查 + npm test + 两个 selfcheck
 ├─ scripts/
 │  ├─ migrate-json-to-sqlite.mjs # JSON → SQLite 迁移与校验
+│  ├─ migrate.mjs             # 库结构版本迁移（--status / --db=）
+│  ├─ check-schema.mjs        # 代码期望结构 vs 线上实际结构核对
 │  ├─ backup-sqlite.mjs       # VACUUM INTO 一致性快照
 │  ├─ selfcheck-p0.mjs        # 安全基线自测（隔离实例，39 项）
 │  ├─ selfcheck-store.mjs     # 存储层自测（迁移/并发/重启/回退，23 项）
 │  └─ superadmin.js           # 超级管理员账号创建与重置
 ├─ public/
 │  ├─ index.html              # 单页终端
+│  ├─ admin.html              # 后台管理单页（用户/统计/日志/部署/持仓策略/推送…）
 │  ├─ css/app.css             # 深色行情终端样式
+│  ├─ css/admin.css           # 后台样式（含部署进度条、策略页）
 │  ├─ js/util.js              # 纯工具：格式化、esc、safeUrl（P2 从 app.js 抽出）
 │  ├─ js/dom.js               # 选择器、toast、debounce
 │  ├─ js/api.js               # fetch 封装：超时、401 跳登录、错误提取
 │  ├─ js/core.js              # 版本号、存储键、账号命名空间、本地存储、全局 state
+│  ├─ js/admin.js             # 后台各板块渲染与交互（含管理部署进度轮询）
 │  ├─ js/views/funds.js       # 基金页渲染（第一个按视图拆的模块）
 │  ├─ js/app.js               # 视图、交互、自选/预警、设置
 │  ├─ js/charts.js            # ECharts 图表封装
 │  └─ vendor/echarts.min.js   # 本地 ECharts
-├─ data/gp.sqlite             # STORE=sqlite 时的数据库（含账号/会话/持仓/统计）
+├─ data/gp.sqlite             # STORE=sqlite 时的数据库（账号/会话/持仓/统计 + 策略记录与参数）
+├─ data/strategy-log.json      # JSON 模式下的持仓策略记录（sqlite 模式会自动导入库，不再使用）
 ├─ data/boards.json           # 行业/概念/地域板块清单快照
 ├─ data/source-config.json    # 数据源选择（首次切换后生成）
 ├─ data/auction-YYYYMMDD.json # 当日全市场开盘快照（竞价分布，自动保留 30 天）
@@ -546,6 +591,8 @@ node server.js --port=8091
 │  ├─ 改造方案-安全加固与存储改造.md # 安全加固 / SQLite 存储改造方案（2026-11-15）
 │  └─ screenshots/            # README 里的预览图（16 张现用 + archive/ 3 张过期版本）
 ├─ 启动.bat                    # Windows 一键启动
+├─ tools/deploy-nas.mjs        # 命令行推送代码到 NAS（与后台按钮同一引擎；tools/ 在 .gitignore）
+├─ tools/deploy.bat            # 双击版包装（调用上面的 .mjs）
 ├─ package.json
 └─ README.md
 ```
