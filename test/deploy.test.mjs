@@ -3,19 +3,38 @@
  *
  * 只测不依赖网络的部分：
  *  - 部署引擎的步骤表与快照结构；
- *  - 鉴权与确认位闸门（防止误触发真实推送、防止未登录调用）。
+ *  - 鉴权与确认位闸门（防止误触发真实推送、防止未登录 / 非超级管理员调用）。
  * 真正的推送流程需要 NAS 可连，交给手工验证，不放进自动测试。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { scryptSync } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startApp, bootstrapAdmin } from './helpers/app.mjs';
+import { startApp, bootstrapAdmin, makeUser } from './helpers/app.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 const nasDeploy = require('../src/lib/nas-deploy.js');
+
+/** 造一个已知密码的超级管理员，并登录成客户端 */
+async function loginSuper(username, password) {
+  const salt = 'c0ffee1234567890';
+  const users = [makeUser({
+    id: 'usuper0001',
+    username,
+    salt,
+    hash: scryptSync(password, salt, 64).toString('hex'),
+    primary: true,
+    role: 'super',
+  })];
+  const seeded = await startApp({ seed: { users } });
+  const client = seeded.client();
+  const res = await client.post('/api/auth/login', { username, password });
+  assert.equal(res.status, 200, `super 登录失败：${res.status} ${res.text}`);
+  return { app: seeded, client };
+}
 
 test('部署模块：7 步流程与快照结构', () => {
   assert.equal(nasDeploy.STEPS.length, 7);
@@ -45,12 +64,19 @@ test('推送接口：未登录被拒绝', async (t) => {
   assert.equal(res.status, 401, '未登录必须被拒绝');
 });
 
-test('推送接口：缺少 confirm 时不触发推送', async (t) => {
+test('推送接口：非超级管理员被拒绝', async (t) => {
   const app = await startApp();
   t.after(() => app.stop());
   const admin = await bootstrapAdmin(app, 'depadmin', 'depadminpass1');
-  const res = await admin.req('/api/admin/deploy/start', { method: 'POST', json: {} });
+  const res = await admin.req('/api/admin/deploy/start', { method: 'POST', json: { confirm: true } });
+  assert.equal(res.status, 403, '只有超级管理员能推送');
+});
+
+test('推送接口：super 但缺少 confirm 时不触发推送', async (t) => {
+  const { app, client } = await loginSuper('depsup', 'depsupass1');
+  t.after(() => app.stop());
+  const res = await client.req('/api/admin/deploy/start', { method: 'POST', json: {} });
   assert.equal(res.status, 400, '没有 confirm=true 必须拒绝');
-  const data = await res.json();
+  const data = res.body || {};
   assert.match(String(data.error || ''), /confirm/i);
 });

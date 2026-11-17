@@ -178,10 +178,13 @@ function createDeployToNas(options = {}) {
     return run(['ssh', ...sshArgs(remoteCmd)], opts);
   }
 
-  function scpArgs(useLegacy, remoteTarget) {
+  /**
+   * scp 选项。注意 scp 语义是 `scp [选项] 源... 目的地`：
+   * 远端地址必须放在最后，本地文件在它前面（顺序写反会把远端当源文件去读）。
+   */
+  function scpOptions(useLegacy) {
     const args = ['-i', keyPath, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new'];
     if (useLegacy) args.push('-O'); // NAS 是 BusyBox，没有 sftp-server，必须用旧 scp 协议
-    args.push(remoteTarget);
     return args;
   }
 
@@ -316,7 +319,7 @@ function createDeployToNas(options = {}) {
       pushLog('info', '检查本机 scp / ssh 与部署私钥…');
       if (!fs.existsSync(keyPath)) throw new Error(`缺少部署私钥：${keyPath}`);
       const ver = await run(['ssh', '-V'], { timeoutMs: 15000 });
-      const vm = /OpenSSH_(\d+)\.(\d+)/.exec(ver.output || '');
+      const vm = /OpenSSH.*?(\d+)\.(\d+)/.exec(ver.output || '');
       sshVersion = vm ? `${vm[1]}.${vm[2]}` : '';
       pushLog('info', `本机 OpenSSH 版本：${sshVersion || '未知（按默认协议上传）'}`);
       const ping = await ssh('echo PRE_OK; grep -m1 version /data/gp/package.json; systemctl is-active gp-terminal', { timeoutMs: 30000 });
@@ -343,7 +346,7 @@ function createDeployToNas(options = {}) {
 
       // 3. backup
       setStep('backup', 'running');
-      const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15);
+      const stamp = new Date().toISOString().replace(/[-:TZ]/g, '').slice(0, 14);
       const backupName = `gp-before-${localVersion || 'x'}-${stamp}.tar.gz`;
       const backup = await ssh(
         `mkdir -p ${BACKUP_DIR} && cd ${NAS_DIR} && tar czf ${BACKUP_DIR}/${backupName} server.js package.json src lib public scripts data/changelog.json && ls -l ${BACKUP_DIR}/${backupName}`,
@@ -361,33 +364,31 @@ function createDeployToNas(options = {}) {
       // 4. upload
       setStep('upload', 'running');
       pushLog('info', `上传到 ${REMOTE_PKG}…`);
-      const useLegacy = !sshVersion || Number(String(sshVersion).split('.')[0]) >= 9;
-      let upload = await run(['scp', ...scpArgs(useLegacy, `${NAS_USER}@${NAS_HOST}:${REMOTE_PKG}`), pkgPath], {
-        timeoutMs: 300000,
-        onLine: (line) => {
-          pushLog('info', line);
-          const pm2 = /(\d{1,3})%/.exec(line);
-          if (pm2 && job) {
-            const sub = Math.min(100, Number(pm2[1]));
-            const step = STEPS.find((s) => s.id === 'upload');
-            job.percent = Math.min(99, Math.round(job.basePercent + (step.weight * sub) / 100));
-          }
-        },
-      });
-      // OpenSSH 9 起 scp 默认走 SFTP，BusyBox 上没有 sftp-server：失败时退回旧协议再试一次
-      if (!upload.ok && !useLegacy) {
-        pushLog('warn', 'scp 默认协议失败，回退 -O（旧 scp 协议）重试…');
-        upload = await run(['scp', ...scpArgs(true, `${NAS_USER}@${NAS_HOST}:${REMOTE_PKG}`), pkgPath], {
-          timeoutMs: 300000,
-          onLine: (line) => pushLog('info', line),
-        });
-        if (!upload.ok) {
-          pushLog('warn', '旧协议仍失败，再试一次去掉 -O 的默认协议…');
-          upload = await run(['scp', ...scpArgs(false, `${NAS_USER}@${NAS_HOST}:${REMOTE_PKG}`), pkgPath], {
-            timeoutMs: 300000,
-            onLine: (line) => pushLog('info', line),
-          });
+      // OpenSSH 9 起 scp 默认走 SFTP，而 NAS 是 BusyBox 没有 sftp-server，所以优先用 -O 旧协议。
+      const major = Number(String(sshVersion || '').split('.')[0]) || 0;
+      const useLegacy = !sshVersion || major >= 9;
+      const remoteTarget = `${NAS_USER}@${NAS_HOST}:${REMOTE_PKG}`;
+      const uploadProgress = (line) => {
+        pushLog('info', line);
+        const pm2 = /(\d{1,3})%/.exec(line);
+        if (pm2 && job) {
+          const sub = Math.min(100, Number(pm2[1]));
+          const step = STEPS.find((s) => s.id === 'upload');
+          job.percent = Math.min(99, Math.round(job.basePercent + (step.weight * sub) / 100));
         }
+      };
+      // 注意参数顺序：本地文件在前，远端地址在最后（scp 的语义是 源... 目的地）
+      let upload = await run(['scp', ...scpOptions(useLegacy), pkgPath, remoteTarget], {
+        timeoutMs: 300000,
+        onLine: uploadProgress,
+      });
+      if (!upload.ok) {
+        const retryLegacy = !useLegacy;
+        pushLog('warn', retryLegacy ? '默认协议失败，改用 -O（旧 scp 协议）重试…' : '旧协议失败，改用默认（SFTP）协议重试…');
+        upload = await run(['scp', ...scpOptions(retryLegacy), pkgPath, remoteTarget], {
+          timeoutMs: 300000,
+          onLine: uploadProgress,
+        });
       }
       if (!upload.ok) throw new Error(`上传失败：${String(upload.output || '').trim().split(/\r?\n/).slice(-3).join(' / ') || 'scp 退出异常'}`);
       setStep('upload', 'done');
@@ -433,7 +434,17 @@ function createDeployToNas(options = {}) {
       const errTail = await ssh(`tail -n 12 ${NAS_DIR}/logs/server.log 2>/dev/null`, { timeoutMs: 30000, sshVersion });
       const errLines = String(errTail.output || '').split(/\r?\n/).filter((l) => /error|Error|ERROR|stack/.test(l)).slice(-4);
       for (const line of errLines) pushLog('warn', `启动日志：${line.slice(0, 200)}`);
-      nasInfoCache = { at: 0, data: null }; // 强制下次刷新
+      // 刚做完健康检查，直接把这批结果写进缓存，前端下一次轮询就能看到 NAS 版本（省一次 SSH）
+      nasInfoCache = {
+        at: Date.now(),
+        data: {
+          reachable: true,
+          version: nasVersion,
+          service: 'active',
+          checkedAt: Date.now(),
+          message: '',
+        },
+      };
       pendingCache = { at: 0, data: null };
       setStep('health', 'done', `线上版本 ${nasVersion}`);
 
