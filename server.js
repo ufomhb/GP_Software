@@ -3741,7 +3741,25 @@ function freezeFundEstimate(code, today, live) {
    - 今天还没到 15:00 收盘，或者今天不是交易日 → 显示最近一期已公布净值的涨跌幅，标「最新净值 · 日期」
    - 今天是交易日、且已过 15:00，但今天的净值还没出 → 返回 null，前端显示 --（不能让昨天的涨跌冒充今天）
    注意：navPctToday 保持「只认今天」的严格语义，供「当日估值」计算与今日净值的偏差用，不受这里影响。 */
-function fundDayPctView({ navDate, navPct, today }) {
+/* navDate 到 today 之间隔了几个交易日（只算周一~周五，不含法定节假日）。
+   用来识别「净值公布节奏比市场慢一档」的基金：QDII 通常 T+2 才披露净值，
+   如果用普通基金的 T+1 口径判断，它会在收盘后长时间显示 --，看着像没数据。 */
+function fundNavLagTradingDays(navDate, today) {
+  const a = Date.parse(`${navDate}T00:00:00Z`);
+  const b = Date.parse(`${today}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return 0;
+  let lag = 0;
+  for (let t = a + 86400000; t <= b; t += 86400000) {
+    const wd = new Date(t).getUTCDay();
+    if (wd !== 0 && wd !== 6) lag += 1;
+  }
+  return lag;
+}
+
+// 名称就能判定为「延迟披露」的品种：QDII 及主要投向境外市场的基金。
+const LAGGED_NAV_NAME = /QDII|海外|全球|美元|美国|美股|纳斯达克|标普|恒生|港股|香港|亚太|欧洲|日本|德国|法国|英国|中概|新兴市场|印度|越南|原油|黄金/i;
+
+function fundDayPctView({ navDate, navPct, today, name }) {
   const date = String(navDate || '');
   // 注意 Number(null) === 0：缺数据必须先显式判空，否则会被当成「0% 涨跌」显示出来。
   const present = navPct !== null && navPct !== undefined && navPct !== '';
@@ -3749,10 +3767,13 @@ function fundDayPctView({ navDate, navPct, today }) {
   const now = zonedParts('Asia/Shanghai');
   const isTradingDay = now.weekday !== 0 && now.weekday !== 6;
   const pastClose = now.minutes >= CN_CLOSE_MINUTES;
-  if (!date || pct === null) return { pct: null, date, isToday: false };
-  if (date === today) return { pct, date, isToday: true };
-  if (isTradingDay && pastClose) return { pct: null, date, isToday: false };
-  return { pct, date, isToday: false };
+  if (!date || pct === null) return { pct: null, date, isToday: false, lagging: false };
+  if (date === today) return { pct, date, isToday: true, lagging: false };
+  // 延迟披露的基金（lag>=2 个交易日，或名称即 QDII 类）：收盘后也回退显示最近一期净值，
+  // 不让它长期挂着 --；普通基金仍按「等今天的净值」留空。
+  const lagging = fundNavLagTradingDays(date, today) >= 2 || LAGGED_NAV_NAME.test(String(name || ''));
+  if (isTradingDay && pastClose && !lagging) return { pct: null, date, isToday: false, lagging: false };
+  return { pct, date, isToday: false, lagging };
 }
 
 function resolveFundPctPair({ code, info, today, pastClose }) {
