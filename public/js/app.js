@@ -19,7 +19,7 @@ import {
   sectorCompareBar,
   usSectorFlowBar,
   COLORS,
-} from './charts.js?v=2.1.3';
+} from './charts.js?v=2.1.4';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -37,11 +37,11 @@ import {
   esc,
   safeUrl,
   timeText,
-} from './util.js?v=2.1.3';
+} from './util.js?v=2.1.4';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.1.3';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.1.3';
+import { $, $$, toast, debounce } from './dom.js?v=2.1.4';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.1.4';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -49,7 +49,7 @@ import {
   DEFAULT_WATCH, DEFAULT_FUNDS,
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
-} from './core.js?v=2.1.3';
+} from './core.js?v=2.1.4';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -64,7 +64,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.1.3';
+} from './views/funds.js?v=2.1.4';
 
 
 /* =========================================================
@@ -4684,7 +4684,7 @@ function renderWatchFunds() {
         <td><span class="fund-drag-grip">⋮⋮</span><span class="t-name">${esc(cleanName(name))}</span><span class="t-code">${esc(x.code)}</span></td>
         <td data-col="type"><span class="fund-tag ${type}">${type === 'etf' ? 'ETF' : '场外'}</span></td>
         <td data-col="nav" class="t-price">${priceFmt(x.price)}${x.pctKind === 'holdings' || x.pctKind === 'etf' ? '<div class="t-sub">估算净值</div>' : ''}</td>
-        <td class="t-chg ${toneClass(x.navPctToday ?? (type === 'etf' ? x.pct : null))}">${fundDayPctCell(x)}</td>
+        <td class="t-chg ${toneClass(x.navPctShow ?? x.navPctToday ?? (type === 'etf' ? x.pct : null))}">${fundDayPctCell(x)}</td>
         <td data-col="est" class="t-chg">${fundEstimateCell(x)}</td>
         <td data-col="flow" class="t-chg ${toneClass(x.mainYi)}">${type === 'etf' ? yiFmt(x.mainYi) : '--'}</td>
         <td data-col="score" class="t-price ${av && av.score >= 60 ? 'tone-up' : av && av.score < 45 ? 'tone-down' : ''}">${av ? av.score : '--'}${av && av.analysis && av.analysis.includesToday ? '<div class="t-sub">含今日估算</div>' : ''}</td>

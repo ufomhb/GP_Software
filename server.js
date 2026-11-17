@@ -63,7 +63,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.1.3';
+const VERSION = '2.1.4';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -3033,15 +3033,15 @@ async function getFundWatch(codes, risk = 'balanced') {
       : [];
     const infoRows = openCodes.length ? await fetchFundMNFInfo(openCodes).catch(() => []) : [];
     const infoMap = new Map(infoRows.map((r) => [r.FCODE, r]));
-    // 已经有「今天」口径的场外基金不必再算；其余用场内穿透估算补上当日涨跌。
-    const hasTodayInfo = (info) => {
-      const gzToday =
-        Number(info.GSZ) > 0 && Number.isFinite(num(info.GSZZL)) && String(info.GZTIME || '').startsWith(today);
-      return gzToday || String(info.PDATE || '') === today;
-    };
+    // 「当日估值」要不要算，只看今天有没有冻结过，与「今日净值是否已公布」无关：
+    // 净值公布后估值仍必须保留，否则两列没法对比。官方估值可用时则不必穿透估算。
     const needEst = openCodes.filter((code) => {
+      if (frozenFundEstimate(code, today)) return false;
       const info = infoMap.get(code);
-      return !info || !hasTodayInfo(info);
+      const gzToday =
+        info && Number(info.GSZ) > 0 && Number.isFinite(num(info.GSZZL))
+        && String(info.GZTIME || '').startsWith(today);
+      return !gzToday;
     });
     const estMap = needEst.length
       ? await estimateFundDayPctBatch(
@@ -3066,7 +3066,7 @@ async function getFundWatch(codes, risk = 'balanced') {
         });
         // 官方盘中估值（天天基金 GSZ/GSZZL/GZTIME）：与「当日涨跌」口径分开返回，
         // 前端可同屏对比净值涨跌与估值偏差；非当日估值一律置空，避免拿旧估值冒充。
-        const pair = resolveFundPctPair({ code, info, today, pastClose });
+        const pair = resolveFundPctPair({ code, info, today, pastClose, est });
         let price = nav;
         if (r.kind === 'estimate') price = num(info.GSZ) ?? nav;
         else if ((r.kind === 'etf' || r.kind === 'holdings') && nav && Number.isFinite(r.pct)) {
@@ -3095,10 +3095,12 @@ async function getFundWatch(codes, risk = 'balanced') {
           navPctShow: pair.navPctShow,
           navPctShowDate: pair.navPctShowDate,
           navPctIsToday: pair.navPctIsToday,
+          navPctLagging: pair.navPctLagging,
           estimate: pair.estimateNav,
           estimatePct: pair.estimatePct,
           estimateAt: pair.estimateAt,
           estimateFrozen: pair.estimateFrozen,
+          estimateKind: pair.estimateKind,
           mainYi: null,
           mainPct: null,
           amountYi: null,
@@ -3111,7 +3113,13 @@ async function getFundWatch(codes, risk = 'balanced') {
         const navDate = String(latest.FSRQ || '');
         const navPct = num(latest.JZZZL);
         const nav = num(latest.DWJZ);
-        const dayPct = fundDayPctView({ navDate, navPct, today });
+        const pair = resolveFundPctPair({
+          code,
+          info: { PDATE: navDate, NAVCHGRT: navPct, SHORTNAME: '' },
+          today,
+          pastClose,
+          est,
+        });
         const r = resolveFundTodayPct({ navDate, navPct, gsz: 0, gszzl: null, gzTime: '', est, today });
         let price = nav;
         if ((r.kind === 'etf' || r.kind === 'holdings') && nav && Number.isFinite(r.pct)) {
@@ -3134,15 +3142,17 @@ async function getFundWatch(codes, risk = 'balanced') {
           pctNote: r.note,
           pctStale: r.kind === 'stale',
           date: navDate,
-          // 这条分支拿不到天天基金的官方估值（只有净值序列），当日估值留空。
-          navPctToday: navDate === today && navPct !== null ? navPct : null,
-          navPctShow: dayPct.pct,
-          navPctShowDate: dayPct.date,
-          navPctIsToday: dayPct.isToday,
-          estimate: null,
-          estimatePct: null,
-          estimateAt: '',
-          estimateFrozen: false,
+          // 这条分支拿不到天天基金的官方数据（只有净值序列），估值只能靠穿透估算。
+          navPctToday: pair.navPctToday,
+          navPctShow: pair.navPctShow,
+          navPctShowDate: pair.navPctShowDate,
+          navPctIsToday: pair.navPctIsToday,
+          navPctLagging: pair.navPctLagging,
+          estimate: pair.estimateNav,
+          estimatePct: pair.estimatePct,
+          estimateAt: pair.estimateAt,
+          estimateFrozen: pair.estimateFrozen,
+          estimateKind: pair.estimateKind,
           mainYi: null,
           mainPct: null,
           amountYi: null,
@@ -3166,10 +3176,12 @@ async function getFundWatch(codes, risk = 'balanced') {
         navPctShow: q.pct,
         navPctShowDate: today,
         navPctIsToday: true,
+        navPctLagging: false,
         estimate: null,
         estimatePct: null,
         estimateAt: '',
         estimateFrozen: false,
+        estimateKind: '',
       });
     }
     for (const q of openItems) if (q) map.set(q.code, q);
@@ -3727,7 +3739,7 @@ function freezeFundEstimate(code, today, live) {
   const all = fundEstimateStore();
   const day = all[today] || (all[today] = {});
   if (day[String(code)]) return day[String(code)];
-  day[String(code)] = { pct: live.pct, at: live.at || '', nav: live.nav ?? null };
+  day[String(code)] = { pct: live.pct, at: live.at || '', nav: live.nav ?? null, kind: live.kind || 'official' };
   persistFundEstimateStore();
   return day[String(code)];
 }
@@ -3756,9 +3768,7 @@ function fundNavLagTradingDays(navDate, today) {
   return lag;
 }
 
-// 名称就能判定为「延迟披露」的品种：QDII 及主要投向境外市场的基金。
-const LAGGED_NAV_NAME = /QDII|海外|全球|美元|美国|美股|纳斯达克|标普|恒生|港股|香港|亚太|欧洲|日本|德国|法国|英国|中概|新兴市场|印度|越南|原油|黄金/i;
-
+// 名称就能判定为「延迟披露」的品种复用既有 isQdiiFund()，避免两套判定标准互相打架。
 function fundDayPctView({ navDate, navPct, today, name }) {
   const date = String(navDate || '');
   // 注意 Number(null) === 0：缺数据必须先显式判空，否则会被当成「0% 涨跌」显示出来。
@@ -3771,71 +3781,85 @@ function fundDayPctView({ navDate, navPct, today, name }) {
   if (date === today) return { pct, date, isToday: true, lagging: false };
   // 延迟披露的基金（lag>=2 个交易日，或名称即 QDII 类）：收盘后也回退显示最近一期净值，
   // 不让它长期挂着 --；普通基金仍按「等今天的净值」留空。
-  const lagging = fundNavLagTradingDays(date, today) >= 2 || LAGGED_NAV_NAME.test(String(name || ''));
+  const lagging = fundNavLagTradingDays(date, today) >= 2 || isQdiiFund(name);
   if (isTradingDay && pastClose && !lagging) return { pct: null, date, isToday: false, lagging: false };
   return { pct, date, isToday: false, lagging };
 }
 
-function resolveFundPctPair({ code, info, today, pastClose }) {
+/* 两个口径必须各自独立地算，不能"二选一"：
+   - navPctShow：当日涨跌，来自真实净值（口径见 fundDayPctView）
+   - estimatePct：当日估值，来自穿透估算/官方估值，15:00 后冻结
+   过去的实现是单一口径（净值一出就只剩 nav，估值被整体丢弃），
+   导致今日净值公布后「当日估值」变成 --，两列无法对比——估值就失去意义了。 */
+function resolveFundPctPair({ code, info, today, pastClose, est }) {
   const gsz = num(info && info.GSZ);
   const gszzl = num(info && info.GSZZL);
   const gzTime = String((info && info.GZTIME) || '');
   const navDate = String((info && info.PDATE) || '');
   const navPct = num(info && info.NAVCHGRT);
   const navPctToday = navDate === today && navPct !== null ? navPct : null;
-  const dayView = fundDayPctView({ navDate, navPct, today });
-  const live = gsz !== null && gsz > 0 && gszzl !== null && gzTime.startsWith(today)
-    ? { pct: gszzl, at: gzTime, nav: gsz }
-    : null;
+  const name = String((info && info.SHORTNAME) || (info && info.NAME) || '');
+  const dayView = fundDayPctView({ navDate, navPct, today, name });
 
-  const frozen = frozenFundEstimate(code, today);
-  if (frozen) {
-    return {
-      navPctToday,
-      navPctShow: dayView.pct,
-      navPctShowDate: dayView.date,
-      navPctIsToday: dayView.isToday,
-      estimatePct: Number(frozen.pct),
-      estimateAt: frozen.at || '',
-      estimateNav: frozen.nav === null || frozen.nav === undefined ? null : Number(frozen.nav),
-      estimateFrozen: true,
-    };
-  }
-  // 收盘后第一次拿到当日估值就固化为「当日估值终值」，之后无论净值怎么变都不动它。
-  if (live && pastClose) {
-    const saved = freezeFundEstimate(code, today, live);
-    return {
-      navPctToday,
-      navPctShow: dayView.pct,
-      navPctShowDate: dayView.date,
-      navPctIsToday: dayView.isToday,
-      estimatePct: Number(saved.pct),
-      estimateAt: saved.at || '',
-      estimateNav: saved.nav === null || saved.nav === undefined ? null : Number(saved.nav),
-      estimateFrozen: true,
-    };
-  }
-  if (live) {
-    return {
-      navPctToday,
-      navPctShow: dayView.pct,
-      navPctShowDate: dayView.date,
-      navPctIsToday: dayView.isToday,
-      estimatePct: live.pct,
-      estimateAt: live.at,
-      estimateNav: live.nav,
-      estimateFrozen: false,
-    };
-  }
-  return {
+  const fin = (v) => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+  // 估值来源优先级：已冻结终值 > 官方盘中估值 > 场内穿透估算。
+  // 这三者和「今日净值是否已公布」完全无关。
+  const official = fin(gsz) && Number(gsz) > 0 && fin(gszzl) && gzTime.startsWith(today)
+    ? { pct: Number(gszzl), at: gzTime, nav: Number(gsz), kind: 'official' }
+    : null;
+  const viaEst = est && fin(est.pct)
+    ? { pct: Number(est.pct), at: '', nav: null, kind: est.kind === 'etf' ? 'etf' : 'holdings' }
+    : null;
+  const candidate = official || viaEst;
+
+  const base = {
     navPctToday,
     navPctShow: dayView.pct,
     navPctShowDate: dayView.date,
     navPctIsToday: dayView.isToday,
+    navPctLagging: dayView.lagging,
+  };
+
+  const frozen = frozenFundEstimate(code, today);
+  if (frozen) {
+    return {
+      ...base,
+      estimatePct: Number(frozen.pct),
+      estimateAt: frozen.at || '',
+      estimateNav: frozen.nav === null || frozen.nav === undefined ? null : Number(frozen.nav),
+      estimateFrozen: true,
+      estimateKind: frozen.kind || 'official',
+    };
+  }
+  // 收盘后第一次拿到当日估值就固化为「当日估值终值」，之后无论净值怎么变都不动它。
+  if (candidate && pastClose) {
+    const saved = freezeFundEstimate(code, today, candidate);
+    return {
+      ...base,
+      estimatePct: Number(saved.pct),
+      estimateAt: saved.at || '',
+      estimateNav: saved.nav === null || saved.nav === undefined ? null : Number(saved.nav),
+      estimateFrozen: true,
+      estimateKind: saved.kind || 'official',
+    };
+  }
+  if (candidate) {
+    return {
+      ...base,
+      estimatePct: candidate.pct,
+      estimateAt: candidate.at,
+      estimateNav: candidate.nav,
+      estimateFrozen: false,
+      estimateKind: candidate.kind,
+    };
+  }
+  return {
+    ...base,
     estimatePct: null,
     estimateAt: '',
     estimateNav: null,
     estimateFrozen: false,
+    estimateKind: '',
   };
 }
 

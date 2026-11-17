@@ -1,9 +1,9 @@
 /* 基金页渲染（P2 从 app.js 抽出，第一个按视图拆的模块）
    只负责把 state 里的数据渲染成 DOM；数据加载与交互仍留在 app.js。
    依赖：core.js（state）、util.js（格式化/转义）、dom.js（$）。 */
-import { state } from '../core.js?v=2.1.3';
-import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.1.3';
-import { $ } from '../dom.js?v=2.1.3';
+import { state } from '../core.js?v=2.1.4';
+import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.1.4';
+import { $ } from '../dom.js?v=2.1.4';
 
 
 function fundCategoryOf(name = '') {
@@ -99,9 +99,15 @@ function fundDayPctCell(x) {
   const isToday = x.navPctIsToday === true
     || (x.navPctIsToday === undefined && isNum(x.navPctToday));
   if (isNum(pct)) {
-    const tip = isToday
-      ? `今天已公布的净值涨跌幅${showDate ? `（净值日 ${showDate}）` : ''}`
-      : `今天还没到 15:00 收盘（或今天休市），显示最近一期已公布的净值涨跌幅${showDate ? `（净值日 ${showDate}）` : ''}`;
+    const lagging = x.navPctLagging === true;
+    let tip;
+    if (isToday) {
+      tip = `今天已公布的净值涨跌幅${showDate ? `（净值日 ${showDate}）` : ''}`;
+    } else if (lagging) {
+      tip = `该基金净值公布有滞后（如 QDII / 境外市场基金），今天还拿不到当日净值，显示最近一期已公布的净值涨跌幅${showDate ? `（净值日 ${showDate}）` : ''}`;
+    } else {
+      tip = `今天还没到 15:00 收盘（或今天休市），显示最近一期已公布的净值涨跌幅${showDate ? `（净值日 ${showDate}）` : ''}`;
+    }
     const sub = isToday
       ? (showDate ? `今日净值 · ${showDate}` : '今日净值')
       : (showDate ? `最新净值 · ${showDate}` : '最新净值');
@@ -113,7 +119,8 @@ function fundDayPctCell(x) {
 }
 
 /* 「当日估值」列 = 预估涨跌幅：15:00 收盘时的最终估值，冻结后不随净值公布而改变，
-   这样才能和「当日涨跌」的真实净值对比，看估值准不准。 */
+   这样才能和「当日涨跌」的真实净值对比，看估值准不准。
+   注意：估值必须与「今日净值是否已出」无关——净值一公布就清空估值，两列就没法对比了。 */
 function fundEstimateCell(x) {
   const type = x.type || 'open';
   if (type === 'etf' || x.pctKind === 'market') {
@@ -122,19 +129,26 @@ function fundEstimateCell(x) {
   if (isNum(x.estimatePct)) {
     const hm = x.estimateAt ? String(x.estimateAt).slice(11, 16) : '';
     const frozen = x.estimateFrozen === true;
+    const kindText = x.estimateKind === 'etf'
+      ? '目标 ETF 场内涨跌穿透'
+      : x.estimateKind === 'holdings'
+        ? '前十大重仓涨跌穿透加权'
+        : '天天基金官方盘中估值';
     let tip = frozen
-      ? `15:00 收盘估值（已冻结，不会因为晚上的准确净值而改动）${hm ? `　取值时刻 ${hm}` : ''}`
-      : '官方盘中估值（还没到 15:00，仍会变动；15:00 后冻结成当日估值）';
-    if (frozen && isNum(x.navPctToday)) {
-      const diff = Number(x.estimatePct) - Number(x.navPctToday);
-      tip += `；与今日净值偏差 ${diff >= 0 ? '+' : ''}${diff.toFixed(2)} 个百分点`;
+      ? `15:00 收盘估值（来源：${kindText}；已冻结，不会因为晚上的准确净值而改动）${hm ? `　取值时刻 ${hm}` : ''}`
+      : `盘中估值（来源：${kindText}）；还没到 15:00，仍会变动，15:00 后冻结成当日估值`;
+    let diff = null;
+    if (isNum(x.navPctToday)) {
+      diff = Number(x.estimatePct) - Number(x.navPctToday);
+      tip += `；与今日净值（${pctFmt(x.navPctToday)}）的偏差 ${diff >= 0 ? '+' : ''}${diff.toFixed(2)} 个百分点`;
     }
-    // 冻结后强调「15:00 估值」（用户口径：这是 15 点收盘那一刻的预估涨跌幅），
-    // 不再显示抓取时看到的 14:xx，避免被误读成「14 点的估值」。
     const sub = frozen ? '15:00 估值' : `盘中估值${hm ? ` ${hm}` : ''}`;
-    return `<span class="${toneClass(x.estimatePct)}" title="${esc(tip)}">${pctFmt(x.estimatePct)}</span><div class="t-sub">${esc(sub)}</div>`;
+    const diffLine = diff === null
+      ? ''
+      : `<div class="t-sub ${diff >= 0 ? 'tone-up' : 'tone-down'}">差 ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}pp</div>`;
+    return `<span class="${toneClass(x.estimatePct)}" title="${esc(tip)}">${pctFmt(x.estimatePct)}</span><div class="t-sub">${esc(sub)}</div>${diffLine}`;
   }
-  // 没有官方估值时，用场内穿透估算兜底，但明确标出口径。
+  // 没有独立估值时，用场内穿透估算兜底，但明确标出口径。
   if (x.pctKind === 'etf' || x.pctKind === 'holdings') {
     return `<span class="${toneClass(x.pct)}">${pctFmt(x.pct)}</span><div class="t-sub">穿透估算</div>`;
   }
@@ -217,7 +231,7 @@ function renderFundWatchTable() {
   const sorted = [...items].sort((a, b) => (order.get(a.code) ?? 999) - (order.get(b.code) ?? 999));
   el.innerHTML = `
     <div class="table-scroll"><table class="table fund-watch-table">
-      <thead><tr><th>基金</th><th data-col="type">类型</th><th data-col="nav">最新</th><th title="当天公布的真实净值涨跌幅；净值未出显示「当日未出」">当日涨跌</th><th data-col="est" title="15:00 收盘时的预估涨跌幅，冻结后不随准确净值改动，用来核对估值准不准">当日估值</th><th data-col="flow">主力净流入</th><th data-col="mv">持有市值</th><th>持有收益</th><th data-col="score">技术评分</th><th data-col="rating">评级 / 仓位</th><th>操作</th></tr></thead>
+      <thead><tr><th>基金</th><th data-col="type">类型</th><th data-col="nav">最新</th><th title="真实净值涨跌幅：今日净值已出就显示今日；未出则显示最近一期已公布净值（QDII 等滞后披露的基金同样回退显示）；只有普通基金在交易日 15:00 后等当日净值时才显示 --">当日涨跌</th><th data-col="est" title="15:00 收盘时的预估涨跌幅，冻结后不随准确净值改动；今日净值公布后仍保留，便于与当日涨跌对比">当日估值</th><th data-col="flow">主力净流入</th><th data-col="mv">持有市值</th><th>持有收益</th><th data-col="score">技术评分</th><th data-col="rating">评级 / 仓位</th><th>操作</th></tr></thead>
       <tbody>${sorted.map((x) => {
         const m = meta.get(x.code) || {};
         const type = x.type || m.type || 'open';
