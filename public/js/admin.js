@@ -15,7 +15,7 @@ const VIEW_LABELS = {
 const ROLE_LABELS = { super: '超级管理员', admin: '管理员', user: '普通用户' };
 const ACTION_LABELS = {
   login: '登录', register: '注册', password: '修改密码', reset: '重置密码',
-  role: '角色变更', kick: '强制下线', clear: '清空日志',
+  role: '角色变更', kick: '强制下线', clear: '清空日志', deploy: '推送部署',
 };
 
 const state = {
@@ -25,6 +25,8 @@ const state = {
   loginsLoaded: false,
   users: [],
   chartSeries: [],
+  deploy: null,
+  deployTimer: null,
 };
 
 function esc(value) {
@@ -234,11 +236,12 @@ async function doLogin(ev) {
 
 function switchSection(section) {
   state.section = section;
+  if (section !== 'deploy') clearTimeout(state.deployTimer);
   $$('#adminNav button').forEach((btn) => btn.classList.toggle('is-active', btn.dataset.sec === section));
   $$('.admin-section').forEach((sec) => sec.classList.toggle('is-active', sec.id === `sec-${section}`));
   const titles = {
     overview: '概览', users: '用户管理', logins: '登录记录', stats: '使用统计',
-    system: '系统状态', logs: '系统日志', push: '定时推送', source: '数据源', net: '手机访问', changelog: '更新履历',
+    system: '系统状态', logs: '系统日志', deploy: '部署到 NAS', push: '定时推送', source: '数据源', net: '手机访问', changelog: '更新履历',
   };
   $('#adminTitle').textContent = titles[section] || '后台管理';
   $('#adminRefreshAt').textContent = '';
@@ -253,6 +256,7 @@ function loadSection(section) {
     stats: loadStats,
     system: loadSystem,
     logs: loadLogs,
+    deploy: loadDeploy,
     push: loadPush,
     source: loadSource,
     net: loadNet,
@@ -865,6 +869,174 @@ function bindLogs() {
   }, 5000);
 }
 
+/* ---------------- 部署到 NAS ---------------- */
+
+const DEP_ICON = { pending: '○', running: '◐', done: '●', failed: '✕' };
+
+function depStatusClass(status) {
+  return ['pending', 'running', 'done', 'failed'].includes(status) ? status : 'pending';
+}
+
+function renderDeploySteps(steps) {
+  const box = $('#depSteps');
+  if (!box) return;
+  if (!steps || !steps.length) {
+    box.innerHTML = '<li class="admin-empty">尚未推送</li>';
+    return;
+  }
+  box.innerHTML = steps.map((s) => `
+    <li class="dep-step ${depStatusClass(s.status)}">
+      <i>${DEP_ICON[depStatusClass(s.status)]}</i>
+      <span>${esc(s.label)}</span>
+      ${s.detail ? `<small>${esc(s.detail)}</small>` : ''}
+    </li>`).join('');
+}
+
+function renderDeployLog(log) {
+    const box = $('#depLog');
+    if (!box) return;
+    if (!log || !log.length) {
+      box.textContent = '等待推送…';
+      return;
+    }
+    const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 4;
+    box.textContent = log.map((e) => {
+      const mark = e.level === 'error' ? '✗' : e.level === 'warn' ? '!' : '·';
+      const time = fmtClock(e.at);
+      return `${mark} ${time}  ${e.text}`;
+    }).join('\n');
+    if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+function renderDeploy(data) {
+  const isSuper = state.me && state.me.role === 'super';
+  const supported = Boolean(data && data.supported);
+  const job = data && data.job;
+  const running = Boolean(job && job.status === 'running');
+  const nas = (data && data.nas) || {};
+  const pending = (data && data.pending) || {};
+  const last = (data && data.last) || null;
+
+  $('#depTarget').textContent = supported
+    ? `${data.host} · ${data.target}`
+    : `${data.platform} 上运行`;
+
+  const nasVersion = nas.version
+    ? `v${esc(nas.version)}`
+    : nas.reachable === false
+      ? `<span class="muted">${esc(nas.message || '无法连接')}</span>`
+      : '-';
+
+  const infoRows = [
+    ['本机版本', `v${esc((data && data.localVersion) || '-')}`],
+    ['NAS 线上版本', nasVersion],
+    ['NAS 服务状态', nas.service ? esc(nas.service) : '-'],
+    ['未推送改动', pending.changedCount
+      ? `<b>${n(pending.changedCount)}</b> 个文件比上次推送更新`
+      : '无（本地与 NAS 一致）'],
+    ['上次推送', last
+      ? `${esc(fmtDateTime(last.at))} · ${last.ok ? '成功' : '失败'}${last.nasVersion ? ` · 线上 v${esc(last.nasVersion)}` : ''}`
+      : '从未推送'],
+  ];
+  $('#depInfo').innerHTML = infoRows.map(([label, value]) => `
+    <div class="admin-kv"><span>${label}</span><b>${value}</b></div>`).join('');
+
+  // 进度条
+  const wrap = $('#depProgressWrap');
+  if (job) {
+    wrap.hidden = false;
+    const pct = Math.max(2, Math.min(100, n(job.percent)));
+    const fill = $('#depProgressFill');
+    fill.style.width = `${pct}%`;
+    fill.classList.toggle('is-failed', job.status === 'failed');
+    fill.classList.toggle('is-done', job.status === 'success');
+    $('#depProgressNum').textContent = `${n(job.percent)}%`;
+    const statusText = job.status === 'running' ? '推送中…' : job.status === 'success' ? '已完成' : '推送失败';
+    const used = job.finishedAt || (job.status === 'running' ? Date.now() : job.startedAt);
+    $('#depJobMeta').textContent = `${statusText}${job.startedAt ? ` · 用时 ${fmtDuration(used - job.startedAt)}` : ''}`;
+    renderDeploySteps(job.steps);
+    renderDeployLog(job.log);
+  } else {
+    wrap.hidden = true;
+    $('#depJobMeta').textContent = '—';
+    renderDeploySteps(null);
+    renderDeployLog(null);
+  }
+
+  // 按钮与提示
+  const btn = $('#depStart');
+  btn.disabled = running || !supported || !isSuper;
+  btn.textContent = running ? '推送中…' : '推送到 NAS';
+
+  let hint = '';
+  if (!supported) {
+    hint = '当前服务运行在 NAS 上，源文件只在本机开发机；请在本机后台点推送。';
+  } else if (!isSuper) {
+    hint = '只有超级管理员能发起推送（当前账号可以查看进度）。';
+  } else if (running) {
+    hint = '正在推送，请勿关闭页面；完成后会自动刷新状态。';
+  } else if (pending.changedCount) {
+    const names = (pending.changedFiles || []).join('、');
+    hint = `检测到 <b>${n(pending.changedCount)}</b> 个本地文件比上次推送更新：${esc(names)}${pending.changedCount > (pending.changedFiles || []).length ? ' 等' : ''}`;
+  } else {
+    hint = '本地代码与 NAS 一致，没有需要推送的改动。';
+  }
+  $('#depNote').innerHTML = hint;
+
+  // 正在跑就继续轮询
+  if (running && state.section === 'deploy') scheduleDeployPoll(900);
+}
+
+function scheduleDeployPoll(delay = 900) {
+  clearTimeout(state.deployTimer);
+  state.deployTimer = setTimeout(() => {
+    if (state.section === 'deploy') loadDeploy();
+  }, delay);
+}
+
+async function loadDeploy() {
+  try {
+    const data = await api('/api/admin/deploy/status', 30000);
+    state.deploy = data;
+    renderDeploy(data);
+  } catch (err) {
+    $('#depInfo').innerHTML = `<div class="admin-empty">读取失败：${esc(err.message)}</div>`;
+    $('#depNote').textContent = err.message;
+  }
+}
+
+async function startDeploy() {
+  const data = state.deploy || {};
+  if (!data.supported) {
+    toast('本机才能推送：当前运行在 NAS 上', 'err');
+    return;
+  }
+  const version = data.localVersion ? `v${data.localVersion}` : '最新';
+  const ok = window.confirm(
+    `确认把本机 ${version} 的代码推送到 NAS 吗？\n\n`
+    + '推送流程：备份 NAS 现有代码 → 上传 → 覆盖 /data/gp → 重启 gp-terminal → 健康检查。\n'
+    + '期间线上站点会短暂不可用（约 10–30 秒）。',
+  );
+  if (!ok) return;
+
+  const btn = $('#depStart');
+  btn.disabled = true;
+  try {
+    await apiPost('/api/admin/deploy/start', { confirm: true }, 30000);
+    toast('推送已开始，正在上传…', 'ok');
+    await loadDeploy();
+  } catch (err) {
+    toast(`推送启动失败：${err.message}`, 'err');
+    btn.disabled = false;
+    await loadDeploy();
+  }
+}
+
+function bindDeploy() {
+  $('#depRefresh').addEventListener('click', () => loadDeploy());
+  $('#depStart').addEventListener('click', startDeploy);
+}
+
 /* ---------------- 启动 ---------------- */
 
 function bindChrome() {
@@ -877,6 +1049,7 @@ function bindChrome() {
   $$('[data-goto-sec]').forEach((btn) => btn.addEventListener('click', () => switchSection(btn.dataset.gotoSec)));
   $('#adminRefresh').addEventListener('click', () => loadSection(state.section));
   bindLogs();
+  bindDeploy();
   setInterval(() => {
     if (state.section === 'logins') loadLogins();
     else if (state.section === 'stats') loadStats();

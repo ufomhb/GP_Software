@@ -8,8 +8,8 @@
   <meta name="robots" content="noindex,nofollow">
   <title>寰球智投 · 后台管理</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.1.4">
-  <link rel="stylesheet" href="/css/admin.css?v=2.1.4">
+  <link rel="stylesheet" href="/css/app.css?v=2.1.5">
+  <link rel="stylesheet" href="/css/admin.css?v=2.1.5">
 </head>
 <body class="admin-body">
   <!-- 登录 -->
@@ -51,6 +51,7 @@
         <button type="button" data-sec="stats">使用统计</button>
         <button type="button" data-sec="system">系统状态</button>
         <button type="button" data-sec="logs">系统日志</button>
+        <button type="button" data-sec="deploy">部署到 NAS</button>
         <button type="button" data-sec="push">定时推送</button>
         <button type="button" data-sec="source">数据源</button>
         <button type="button" data-sec="net">手机访问</button>
@@ -189,6 +190,40 @@
         </article>
       </section>
 
+      <!-- 部署到 NAS：本机验证通过后，手动把最新代码推上去 -->
+      <section class="admin-section" id="sec-deploy">
+        <div class="admin-deploy-grid">
+          <article class="admin-card">
+            <div class="admin-card-head">
+              <h2>推送最新代码到 NAS</h2>
+              <span class="muted small" id="depTarget">—</span>
+            </div>
+            <div id="depInfo" class="admin-kv-list"><div class="admin-empty">加载中…</div></div>
+            <div class="admin-actions">
+              <button type="button" class="admin-btn primary" id="depStart">推送到 NAS</button>
+              <button type="button" class="admin-btn" id="depRefresh">刷新状态</button>
+            </div>
+            <p class="admin-note" id="depNote">—</p>
+            <p class="admin-note muted">
+              只推送代码（server.js / src / lib / public / scripts / package.json + 更新履历），不动 NAS 上的 data 运行时数据；
+              推送会自动备份、覆盖、重启 gp-terminal 并做健康检查，通常 10–30 秒。
+            </p>
+          </article>
+          <article class="admin-card">
+            <div class="admin-card-head">
+              <h2>推送进度</h2>
+              <span class="muted small" id="depJobMeta">—</span>
+            </div>
+            <div class="dep-progress" id="depProgressWrap" hidden>
+              <div class="dep-progress-track"><span id="depProgressFill"></span></div>
+              <b class="dep-progress-num" id="depProgressNum">0%</b>
+            </div>
+            <ul id="depSteps" class="dep-steps"><li class="admin-empty">尚未推送</li></ul>
+            <pre class="admin-log dep-log" id="depLog">等待推送…</pre>
+          </article>
+        </div>
+      </section>
+
       <!-- 定时推送 -->
       <section class="admin-section" id="sec-push">
         <article class="admin-card">
@@ -261,6 +296,6 @@
     </main>
   </div>
 
-  <script src="/js/admin.js?v=2.1.4"></script>
+  <script src="/js/admin.js?v=2.1.5"></script>
 </body>
 </html>

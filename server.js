@@ -63,7 +63,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.1.4';
+const VERSION = '2.1.5';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -7332,6 +7332,11 @@ function topIpOf(entry) {
    ========================================================= */
 const { createHttpRoutes } = require('./src/http/routes');
 
+// 部署引擎：后台「部署到 NAS」板块用。只在本机开发环境（win32）可用，
+// 在 NAS 上运行时 supported=false，接口会明确回「本机才有源文件」。
+const { createDeployToNas } = require('./src/lib/nas-deploy');
+const deployToNas = createDeployToNas({ rootDir: __dirname, version: VERSION });
+
 const httpRoutes = createHttpRoutes({
   ALLOW_REGISTER,
   FUND_SORT_MAP,
@@ -7354,6 +7359,7 @@ const httpRoutes = createHttpRoutes({
   crypto,
   currentUser,
   dataStore,
+  deployToNas,
   dropSession,
   estimateFundDayPctBatch,
   fetchFundMNFInfo,

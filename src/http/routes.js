@@ -31,6 +31,7 @@ function createHttpRoutes(deps) {
     crypto,
     currentUser,
     dataStore,
+    deployToNas,
     dropSession,
     estimateFundDayPctBatch,
     fetchFundMNFInfo,
@@ -525,6 +526,26 @@ async function handleAdmin(req, res, url) {
       filter: q.get('q') || '',
     });
     return { ok: true, files: logsStore.list(), ...view };
+  }
+
+  /* ---------------------------------------------------------
+     部署：把本机最新代码推送到 NAS（2026-11-17）
+     - status 只读，管理员都能看进度与版本对比；
+     - start 会重启线上服务，只允许 super，且仅限本机开发环境可用；
+     - 前端靠轮询 status 显示进度（响应层只输出 JSON）。
+     --------------------------------------------------------- */
+  if (p === '/api/admin/deploy/status' && req.method === 'GET') {
+    return deployToNas.snapshotWithNas();
+  }
+
+  if (p === '/api/admin/deploy/start' && req.method === 'POST') {
+    requireSuper(req);
+    // 显式确认位：防止误点、脚本误触发（路由回归测试也会打到这个端点）。
+    const body = req.body || {};
+    if (body.confirm !== true) throw Object.assign(new Error('缺少确认参数 confirm=true'), { status: 400 });
+    const started = deployToNas.start();
+    recordLoginEvent(req, { user: actor, ok: true, action: 'deploy', reason: `推送到 NAS（任务 ${started.id}）` });
+    return { ok: true, jobId: started.id };
   }
 
   throw Object.assign(new Error('未知接口'), { status: 404 });
