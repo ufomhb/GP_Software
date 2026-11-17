@@ -593,6 +593,40 @@ async function handleAdmin(req, res, url) {
     return res;
   }
 
+  if (p === '/api/admin/strategy/auto-tune' && req.method === 'POST') {
+    const body = req.body || {};
+    // 只改自动调参的开关/门槛时不用跑；显式 run=true 才立刻执行一次
+    if (body.run === true) {
+      const res = strategyLog.runAutoTune({ force: body.force === true });
+      recordLoginEvent(req, {
+        user: actor,
+        ok: true,
+        action: 'strategy',
+        reason: res.tuned ? `手动执行自动调参（改 ${res.tune.changes.length} 项）` : `自动调参未变更（${res.reason || '样本不足'}）`,
+      });
+      return res;
+    }
+    const res = strategyLog.setAutoTuneConfig(body.autoTune || body);
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'strategy',
+      reason: `自动调参设置（${res.autoTune.enabled ? '开' : '关'}）`,
+    });
+    return res;
+  }
+
+  if (p === '/api/admin/strategy/rollback' && req.method === 'POST') {
+    const res = strategyLog.rollbackLastTune();
+    recordLoginEvent(req, {
+      user: actor,
+      ok: Boolean(res.ok),
+      action: 'strategy',
+      reason: res.ok ? '回滚上一次自动调参' : '没有可回滚的调参记录',
+    });
+    return res;
+  }
+
   throw Object.assign(new Error('未知接口'), { status: 404 });
 }
 

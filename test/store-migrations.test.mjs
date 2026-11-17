@@ -76,17 +76,18 @@ test('迁移：结构有缺的老库不写版本号', () => {
 
 test('迁移：按版本号依次执行待迁移项', () => {
   withDb('apply', null, (db) => {
-    // 先认领到 v1
+    // 先认领到当前版本
     store.runMigrations(db);
-    assert.equal(version(db), 1);
+    const base = store.SCHEMA_VERSION;
+    assert.equal(version(db), base);
 
     const migrations = [
-      { version: 3, name: 'v3 不该在这一步执行', sql: ['ALTER TABLE users ADD COLUMN c3 TEXT'] },
-      { version: 2, name: '给 users 加 note 列', sql: ["ALTER TABLE users ADD COLUMN note TEXT NOT NULL DEFAULT ''"] },
+      { version: base + 2, name: 'v+2 不该在这一步执行', sql: ['ALTER TABLE users ADD COLUMN c3 TEXT'] },
+      { version: base + 1, name: '给 users 加 note 列', sql: ["ALTER TABLE users ADD COLUMN note TEXT NOT NULL DEFAULT ''"] },
     ];
-    const report = store.runMigrations(db, { migrations, targetVersion: 3 });
-    assert.deepEqual(report.applied.map((a) => a.version), [2, 3], '应按版本号升序执行');
-    assert.equal(version(db), 3);
+    const report = store.runMigrations(db, { migrations, targetVersion: base + 2 });
+    assert.deepEqual(report.applied.map((a) => a.version), [base + 1, base + 2], '应按版本号升序执行');
+    assert.equal(version(db), base + 2);
     assert.ok(hasColumn(db, 'users', 'note'));
     assert.ok(hasColumn(db, 'users', 'c3'));
     // 注意：这里只加了迁移、没改 SCHEMA，于是线上库相对 SCHEMA 多出两列。
@@ -123,19 +124,38 @@ test('迁移：每条迁移加的列都必须同时出现在 SCHEMA 里', () => 
 test('迁移：中途失败整条回滚，版本号不动', () => {
   withDb('fail', null, (db) => {
     store.runMigrations(db);
-    assert.equal(version(db), 1);
+    const base = store.SCHEMA_VERSION;
+    assert.equal(version(db), base);
 
     const migrations = [{
-      version: 2,
+      version: base + 1,
       name: '故意失败',
       sql: ['CREATE TABLE tmp_probe (x INTEGER)'],
       run: () => { throw new Error('boom'); },
     }];
 
-    assert.throws(() => store.runMigrations(db, { migrations, targetVersion: 2 }), /boom/);
-    assert.equal(version(db), 1, '失败后版本号必须保持不变');
+    assert.throws(() => store.runMigrations(db, { migrations, targetVersion: base + 1 }), /boom/);
+    assert.equal(version(db), base, '失败后版本号必须保持不变');
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => String(r.name));
     assert.ok(!tables.includes('tmp_probe'), '失败迁移里建的表必须被回滚掉');
+  });
+});
+
+test('迁移：v2 会给老库补上持仓策略的两张表', () => {
+  withDb('v2', (db) => {
+    // 模拟一个「v1 时代」的库：没有策略表，版本记为 1
+    db.exec('DROP TABLE IF EXISTS strategy_records');
+    db.exec('DROP TABLE IF EXISTS strategy_meta');
+    db.exec('PRAGMA user_version = 1');
+  }, (db) => {
+    const before = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => String(r.name));
+    assert.ok(!before.includes('strategy_records'), '构造的 v1 库不应有策略表');
+    const report = store.runMigrations(db);
+    assert.equal(version(db), store.SCHEMA_VERSION);
+    assert.ok(report.applied.some((a) => a.version === 2), '应执行 v2 迁移');
+    const after = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => String(r.name));
+    assert.ok(after.includes('strategy_records'), 'v2 应创建 strategy_records');
+    assert.ok(after.includes('strategy_meta'), 'v2 应创建 strategy_meta');
   });
 });
 
@@ -164,7 +184,7 @@ test('状态查询：库文件存在就报告 hasDb（不受 STORE 环境变量�
     assert.equal(status.hasDb, true, '库文件存在时必须报告 hasDb');
     assert.equal(status.currentVersion, 0, '新建库版本号为 0，等待认领');
     assert.equal(status.targetVersion, store.SCHEMA_VERSION);
-    assert.equal(status.pending.length, 0, '没有跨版本的迁移项要执行');
+    assert.equal(status.pending.length, store.MIGRATIONS.filter((m) => m.version <= store.SCHEMA_VERSION).length, '未认领的库应列出待执行迁移');
     assert.deepEqual(status.drift.missingColumns, [], '全新库不应有缺列');
   } finally {
     rmSync(dir, { recursive: true, force: true });

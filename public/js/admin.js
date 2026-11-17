@@ -1197,12 +1197,38 @@ function renderStrategyHistory(data) {
   }).join('');
 }
 
+function renderStrategyTune(data) {
+  const cfg = data.autoTune || {};
+  const enabled = $('#stTuneEnabled');
+  if (enabled) enabled.value = cfg.enabled === false ? '0' : '1';
+  if ($('#stTuneMinSamples')) $('#stTuneMinSamples').value = cfg.minSamples === undefined ? 5 : cfg.minSamples;
+  if ($('#stTuneMinHit')) $('#stTuneMinHit').value = cfg.minHitRate === undefined ? 0.5 : cfg.minHitRate;
+  if ($('#stTuneStep')) $('#stTuneStep').value = cfg.step === undefined ? 5 : cfg.step;
+
+  const tunes = data.tunes || [];
+  const last = tunes[0];
+  $('#stTuneMeta').textContent = cfg.enabled === false
+    ? '已关闭，只给建议'
+    : last
+      ? `最近一次：${esc(last.date)}${last.trigger === 'manual' ? '（手动运行）' : '（自动）'}${last.rolledBackAt ? ' · 已回滚' : ''}`
+      : '开启，等样本凑够就开始自动调';
+
+  $('#stTuneHistory').innerHTML = tunes.length
+    ? tunes.map((t) => {
+      const changes = (t.changes || []).map((c) => `${esc(c.field)} ${esc(c.from)} → ${esc(c.to)}（命中 ${(Number(c.hitRate) * 100).toFixed(0)}%，${n(c.samples)} 条样本）`).join('；');
+      const rolled = t.rolledBackAt ? ' <span class="st-tag skip">已回滚</span>' : '';
+      return `<li class="st-sug ${t.trigger === 'manual' ? 'info' : 'ok'}">${esc(fmtDateTime(t.at))}${t.trigger === 'manual' ? '（手动）' : ''}${rolled} · ${changes || '无变更'}</li>`;
+    }).join('')
+    : '<li class="admin-empty">还没有自动调参记录</li>';
+}
+
 function renderStrategy(data) {
   state.strategy = data;
   renderStrategyToday(data);
   renderStrategyStats(data);
   renderStrategySuggestions(data);
   renderStrategyParams(data);
+  renderStrategyTune(data);
   renderStrategyHistory(data);
 }
 
@@ -1290,6 +1316,61 @@ function stReset() {
   toast('已填入默认值，记得点「保存参数」', 'info');
 }
 
+async function stTuneSave() {
+  const btn = $('#stTuneSave');
+  btn.disabled = true;
+  try {
+    const autoTune = {
+      enabled: $('#stTuneEnabled').value === '1',
+      minSamples: Number($('#stTuneMinSamples').value),
+      minHitRate: Number($('#stTuneMinHit').value),
+      step: Number($('#stTuneStep').value),
+    };
+    const res = await apiPost('/api/admin/strategy/auto-tune', { autoTune }, 30000);
+    toast(`自动调参已${res.autoTune.enabled ? '开启' : '关闭'}`, 'ok');
+    await loadStrategy();
+  } catch (err) {
+    toast(`保存失败：${err.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function stTuneRun() {
+  const btn = $('#stTuneRun');
+  btn.disabled = true;
+  try {
+    const res = await apiPost('/api/admin/strategy/auto-tune', { run: true, force: true }, 60000);
+    if (res.tuned) {
+      const list = res.tune.changes.map((c) => `${c.field} ${c.from}→${c.to}`).join('，');
+      toast(`已自动调参：${list}`, 'ok');
+    } else {
+      toast(`本次没有调整：${res.reason || '样本不足或命中率达标'}`, 'info');
+    }
+    await loadStrategy();
+  } catch (err) {
+    toast(`运行失败：${err.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function stTuneRollback() {
+  if (!window.confirm('把上一次自动调参改掉的评分门槛改回去？')) return;
+  const btn = $('#stTuneRollback');
+  btn.disabled = true;
+  try {
+    const res = await apiPost('/api/admin/strategy/rollback', {}, 30000);
+    if (res.ok) toast('已回滚上一次自动调参', 'ok');
+    else toast(res.reason === 'no-tune-history' ? '没有可回滚的调参记录' : '回滚失败', 'warn');
+    await loadStrategy();
+  } catch (err) {
+    toast(`回滚失败：${err.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function bindStrategy() {
   $('#stRefresh').addEventListener('click', () => loadStrategy());
   $('#stRecord').addEventListener('click', () => stRecord(false));
@@ -1299,6 +1380,9 @@ function bindStrategy() {
   $('#stEvaluate').addEventListener('click', stEvaluate);
   $('#stSave').addEventListener('click', stSave);
   $('#stReset').addEventListener('click', stReset);
+  $('#stTuneSave').addEventListener('click', stTuneSave);
+  $('#stTuneRun').addEventListener('click', stTuneRun);
+  $('#stTuneRollback').addEventListener('click', stTuneRollback);
   // 明细展开/收起（列表是动态渲染的，用事件委托）
   $('#stHistory').addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-st-toggle]');

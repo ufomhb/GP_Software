@@ -8,8 +8,8 @@
   <meta name="robots" content="noindex,nofollow">
   <title>寰球智投 · 后台管理</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.1.9">
-  <link rel="stylesheet" href="/css/admin.css?v=2.1.9">
+  <link rel="stylesheet" href="/css/app.css?v=2.2.0">
+  <link rel="stylesheet" href="/css/admin.css?v=2.2.0">
 </head>
 <body class="admin-body">
   <!-- 登录 -->
@@ -282,6 +282,31 @@
         </article>
 
         <article class="admin-card">
+          <div class="admin-card-head"><h2>自动调参</h2><span class="muted small" id="stTuneMeta">—</span></div>
+          <div class="st-params">
+            <label><span>开关</span>
+              <select id="stTuneEnabled">
+                <option value="1">开启（按命中率自动改参数）</option>
+                <option value="0">关闭（只给文字建议）</option>
+              </select>
+            </label>
+            <label><span>最少可判定样本</span><input type="number" id="stTuneMinSamples" min="2" max="50" step="1"></label>
+            <label><span>触发命中率（低于就调）</span><input type="number" id="stTuneMinHit" min="0.05" max="0.95" step="0.05"></label>
+            <label><span>每次调整幅度</span><input type="number" id="stTuneStep" min="1" max="20" step="1"></label>
+          </div>
+          <div class="admin-actions">
+            <button type="button" class="admin-btn primary" id="stTuneSave">保存设置</button>
+            <button type="button" class="admin-btn" id="stTuneRun">立即运行一次</button>
+            <button type="button" class="admin-btn danger" id="stTuneRollback">回滚上一次</button>
+          </div>
+          <p class="admin-note">
+            规则：每天最多自动调一次；只动「加仓评分门槛 / 减仓评分门槛」，命中率达标时**不会自动放宽**（避免越调越松）。
+            每次调参都记录前后值与样本，可一键回滚。
+          </p>
+          <ul id="stTuneHistory" class="st-suggestions"><li class="admin-empty">还没有自动调参记录</li></ul>
+        </article>
+
+        <article class="admin-card">
           <div class="admin-card-head"><h2>历史记录</h2><span class="muted small" id="stHistoryMeta">—</span></div>
           <div id="stHistory" class="st-history"><div class="admin-empty">加载中…</div></div>
         </article>
@@ -359,6 +384,6 @@
     </main>
   </div>
 
-  <script src="/js/admin.js?v=2.1.9"></script>
+  <script src="/js/admin.js?v=2.2.0"></script>
 </body>
 </html>

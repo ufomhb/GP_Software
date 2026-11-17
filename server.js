@@ -63,7 +63,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.1.9';
+const VERSION = '2.2.0';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -6918,11 +6918,14 @@ const { loadPushConfig, pushChannelLabel, runPushTick, handlePushApi } = pushSer
    --------------------------------------------------------- */
 const { createStrategyLog } = require('./src/services/strategy-log');
 const strategyLog = createStrategyLog({
-  fs,
-  path,
-  dataDir: path.join(__dirname, 'data'),
-  readJsonFile: dataStore.readJsonFile,
-  writeJsonFile: dataStore.writeJsonFile,
+  // 存储走 dataStore：SQLite 模式进 strategy_records/strategy_meta 两张表，
+  // JSON 模式回落到 data/strategy-log.json（兼容旧数据）。
+  strategyStore: {
+    loadRecords: dataStore.loadStrategyRecords,
+    saveRecord: dataStore.saveStrategyRecord,
+    loadMeta: dataStore.loadStrategyMeta,
+    saveMeta: dataStore.saveStrategyMeta,
+  },
   collectPortfolio: pushService.collectPortfolio,
   classifyPortfolio: pushService.classifyPortfolio,
   normalizeStrategyRules: pushService.normalizeStrategyRules,
