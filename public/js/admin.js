@@ -15,7 +15,7 @@ const VIEW_LABELS = {
 const ROLE_LABELS = { super: '超级管理员', admin: '管理员', user: '普通用户' };
 const ACTION_LABELS = {
   login: '登录', register: '注册', password: '修改密码', reset: '重置密码',
-  role: '角色变更', kick: '强制下线', clear: '清空日志', deploy: '推送部署',
+  role: '角色变更', kick: '强制下线', clear: '清空日志', deploy: '推送部署', strategy: '策略记录',
 };
 
 const state = {
@@ -27,6 +27,7 @@ const state = {
   chartSeries: [],
   deploy: null,
   deployTimer: null,
+  strategy: null,
 };
 
 function esc(value) {
@@ -241,7 +242,7 @@ function switchSection(section) {
   $$('.admin-section').forEach((sec) => sec.classList.toggle('is-active', sec.id === `sec-${section}`));
   const titles = {
     overview: '概览', users: '用户管理', logins: '登录记录', stats: '使用统计',
-    system: '系统状态', logs: '系统日志', deploy: '部署到 NAS', push: '定时推送', source: '数据源', net: '手机访问', changelog: '更新履历',
+    system: '系统状态', logs: '系统日志', deploy: '部署到 NAS', strategy: '持仓策略', push: '定时推送', source: '数据源', net: '手机访问', changelog: '更新履历',
   };
   $('#adminTitle').textContent = titles[section] || '后台管理';
   $('#adminRefreshAt').textContent = '';
@@ -257,6 +258,7 @@ function loadSection(section) {
     system: loadSystem,
     logs: loadLogs,
     deploy: loadDeploy,
+    strategy: loadStrategy,
     push: loadPush,
     source: loadSource,
     net: loadNet,
@@ -1037,6 +1039,274 @@ function bindDeploy() {
   $('#depStart').addEventListener('click', startDeploy);
 }
 
+/* ---------------- 持仓策略 ---------------- */
+
+// 页面输入框 → 规则 / 评价口径字段的映射（顺序即页面顺序）
+const ST_RULE_FIELDS = [
+  ['ruleAddScore', 'addScore'], ['ruleAddDip', 'addDip'],
+  ['ruleStrongScore', 'strongScore'], ['ruleStrongDip', 'strongDip'],
+  ['ruleCutScore', 'cutScore'], ['ruleCutRise', 'cutRise'], ['ruleCutDip', 'cutDip'],
+  ['ruleWeakScore', 'weakScore'],
+  ['ruleConcPct', 'concentrationPct'], ['ruleConcTarget', 'concentrationTargetPct'],
+];
+const ST_BAND_FIELDS = [
+  ['bandAdd', 'addBand'], ['bandCut', 'cutBand'], ['bandHold', 'holdBand'], ['bandWindow', 'evalWindow'],
+];
+const ST_DEFAULT_RULES = {
+  addScore: 65, addDip: 1.2, strongScore: 80, strongDip: 2,
+  cutScore: 45, cutRise: 0.8, cutDip: 1.2, weakScore: 35,
+  concentrationPct: 40, concentrationTargetPct: 30,
+};
+const ST_DEFAULT_BANDS = { addBand: 0.3, cutBand: 0.3, holdBand: 0.8, evalWindow: 3 };
+
+const ST_ACTION_LABEL = { add: '加仓', cut: '减仓', hold: '不变' };
+const ST_VERDICT = {
+  right: { icon: '✓', label: '合理', cls: 'ok' },
+  wrong: { icon: '✗', label: '不合理', cls: 'bad' },
+  flat: { icon: '~', label: '中性', cls: 'flat' },
+  skipped: { icon: '?', label: '未评价', cls: 'skip' },
+};
+
+function stRate(v) {
+  return v === null || v === undefined ? '—' : `${(Number(v) * 100).toFixed(0)}%`;
+}
+
+function renderStrategyToday(data) {
+  const rec = data.todayRecord;
+  const rows = [];
+  rows.push(['记录状态', rec ? `已记录 · ${esc(fmtClock(rec.createdAt))}${rec.source === 'auto' ? '（自动）' : ''}` : '今天还没记录']);
+  if (rec) {
+    const c = (rec.snapshot && rec.snapshot.counts) || {};
+    rows.push(['建议分布', `<span class="st-tag add">加 ${n(c.add)}</span> <span class="st-tag cut">减 ${n(c.cut)}</span> <span class="st-tag hold">不变 ${n(c.hold)}</span>${c.pending ? ` <span class="st-tag skip">未更新 ${n(c.pending)}</span>` : ''}`]);
+    const mv = rec.snapshot && rec.snapshot.marketValue;
+    if (mv) rows.push(['当时市值', `${n(mv).toLocaleString('zh-CN')} 元 · 当日 ${rec.snapshot.portfolioPct === null ? '—' : `${Number(rec.snapshot.portfolioPct).toFixed(2)}%`}`]);
+  }
+  $('#stToday').innerHTML = rows.map(([label, value]) => `
+    <div class="admin-kv"><span>${label}</span><b>${value}</b></div>`).join('');
+
+  const time = fmtClock(Date.now());
+  $('#stNote').innerHTML = data.isWeekday
+    ? `今天是交易日（${esc(data.today)}），14:35 之后会自动记录当天建议；也可以随时手动记录。当前 ${esc(time)}。`
+    : `今天不是工作日，不会自动记录；如需留档可手动记录。`;
+}
+
+function renderStrategyStats(data) {
+  const stats = data.stats || {};
+  const overall = stats.overall || {};
+  const byAction = stats.byAction || {};
+  $('#stHitMeta').textContent = stats.days
+    ? `${n(stats.days)} 个交易日 · ${n(stats.items)} 条建议`
+    : '还没有可评价的记录';
+
+  const rows = [];
+  rows.push(['总体命中率', `${stRate(overall.hitRate)} <span class="muted small">（对 ${n(overall.right)} / 错 ${n(overall.wrong)}，中性 ${n(overall.flat)}，未评 ${n(overall.skipped)}）</span>`]);
+  for (const action of ['add', 'cut', 'hold']) {
+    const a = byAction[action] || {};
+    rows.push([`${ST_ACTION_LABEL[action]}命中率`, `${stRate(a.hitRate)} <span class="muted small">（${n(a.right)}/${n(a.decided)} 条可判定）</span>`]);
+  }
+  $('#stStats').innerHTML = rows.map(([label, value]) => `
+    <div class="admin-kv"><span>${label}</span><b>${value}</b></div>`).join('');
+
+  // 按评分区间：看「评分门槛」是否定得合理
+  const byScore = stats.byScore || {};
+  const keys = Object.keys(byScore).sort();
+  $('#stScoreTable').innerHTML = keys.length
+    ? `<table class="admin-table st-table">
+      <thead><tr><th>评分区间</th><th>条数</th><th>对</th><th>错</th><th>命中率</th></tr></thead>
+      <tbody>${keys.map((k) => {
+      const b = byScore[k];
+      return `<tr><td>${esc(k)}</td><td>${n(b.n)}</td><td class="ok">${n(b.right)}</td><td class="bad">${n(b.wrong)}</td><td>${stRate(b.hitRate)}</td></tr>`;
+    }).join('')}</tbody></table>`
+    : '';
+}
+
+function renderStrategySuggestions(data) {
+  const list = data.suggestions || [];
+  $('#stSuggestions').innerHTML = list.length
+    ? list.map((s) => `<li class="st-sug ${esc(s.level || 'info')}">${esc(s.text)}</li>`).join('')
+    : '<li class="admin-empty">样本还不够，先积累几天记录再看建议</li>';
+}
+
+function renderStrategyParams(data) {
+  const rules = data.rules || {};
+  const bands = data.bands || {};
+  for (const [id, key] of ST_RULE_FIELDS) {
+    const el = $(`#${id}`);
+    if (el) el.value = rules[key] === undefined ? '' : rules[key];
+  }
+  for (const [id, key] of ST_BAND_FIELDS) {
+    const el = $(`#${id}`);
+    if (el) el.value = bands[key] === undefined ? '' : bands[key];
+  }
+}
+
+function renderStrategyHistory(data) {
+  const records = data.records || [];
+  $('#stHistoryMeta').textContent = records.length ? `最近 ${records.length} 天（最多保留 300 天）` : '还没有记录';
+  if (!records.length) {
+    $('#stHistory').innerHTML = '<div class="admin-empty">还没有记录。点上面的「记录今日建议」开始积累，第二天会自动用已公布净值评价。</div>';
+    return;
+  }
+  $('#stHistory').innerHTML = records.map((rec) => {
+    const c = (rec.snapshot && rec.snapshot.counts) || {};
+    const ev = rec.eval;
+    const sum = ev && ev.summary;
+    const hitText = sum
+      ? `命中 ${n(sum.right)}/${n(sum.decided)}（${stRate(sum.hitRate)}）${sum.flat ? ` · 中性 ${n(sum.flat)}` : ''}${sum.skipped ? ` · 未评 ${n(sum.skipped)}` : ''}`
+      : '次日待评价';
+    const items = (ev && ev.items) || rec.items || [];
+    const detail = items.map((it) => {
+      const v = ST_VERDICT[it.verdict] || null;
+      const evalPct = it.evalPct === null || it.evalPct === undefined
+        ? '<span class="muted">—</span>'
+        : `<span class="${Number(it.evalPct) >= 0 ? 'ok' : 'bad'}">${Number(it.evalPct) >= 0 ? '+' : ''}${Number(it.evalPct).toFixed(2)}%</span>`;
+      const dayPct = it.pct === null || it.pct === undefined ? '—' : `${Number(it.pct) >= 0 ? '+' : ''}${Number(it.pct).toFixed(2)}%`;
+      const share = it.action === 'hold' || it.delta === 0
+        ? `${n(it.shares).toLocaleString('zh-CN')} 份（不变）`
+        : `${n(it.shares).toLocaleString('zh-CN')} → ${n(it.targetShares).toLocaleString('zh-CN')}`;
+      return `<tr>
+        <td>${esc(it.name)}<div class="t-sub muted">${esc(it.code)}</div></td>
+        <td><span class="st-tag ${esc(it.action)}">${ST_ACTION_LABEL[it.action] || esc(it.action)}</span></td>
+        <td>${share}</td>
+        <td>${dayPct}</td>
+        <td>${evalPct}</td>
+        <td>${v ? `<span class="st-verdict ${v.cls}">${v.icon} ${v.label}</span>` : '<span class="muted">待评价</span>'}</td>
+        <td class="st-reason">${esc(it.note || it.reason || '')}</td>
+      </tr>`;
+    }).join('');
+
+    return `<article class="st-day">
+      <header class="st-day-head">
+        <b>${esc(rec.date)}</b>
+        <span class="st-tag add">加 ${n(c.add)}</span>
+        <span class="st-tag cut">减 ${n(c.cut)}</span>
+        <span class="st-tag hold">不变 ${n(c.hold)}</span>
+        ${c.pending ? `<span class="st-tag skip">未更新 ${n(c.pending)}</span>` : ''}
+        <span class="st-day-hit">${hitText}</span>
+        <button type="button" class="admin-link" data-st-toggle="${esc(rec.date)}">明细</button>
+      </header>
+      <div class="st-day-body" data-st-body="${esc(rec.date)}" hidden>
+        <table class="admin-table st-table">
+          <thead><tr><th>基金</th><th>建议</th><th>份额</th><th>决策日涨跌</th><th>次日净值</th><th>判定</th><th>说明</th></tr></thead>
+          <tbody>${detail || '<tr><td colspan="7" class="muted">当天没有可给出动作的持仓</td></tr>'}</tbody>
+        </table>
+      </div>
+    </article>`;
+  }).join('');
+}
+
+function renderStrategy(data) {
+  state.strategy = data;
+  renderStrategyToday(data);
+  renderStrategyStats(data);
+  renderStrategySuggestions(data);
+  renderStrategyParams(data);
+  renderStrategyHistory(data);
+}
+
+async function loadStrategy() {
+  try {
+    const data = await api('/api/admin/strategy', 30000);
+    renderStrategy(data);
+  } catch (err) {
+    $('#stToday').innerHTML = `<div class="admin-empty">读取失败：${esc(err.message)}</div>`;
+    $('#stNote').textContent = err.message;
+  }
+}
+
+async function stRecord(force) {
+  const btn = force ? $('#stReRecord') : $('#stRecord');
+  btn.disabled = true;
+  try {
+    const res = await apiPost('/api/admin/strategy/record', { force }, 60000);
+    if (res.recorded) {
+      const c = res.counts || {};
+      toast(`已记录 ${res.date}：加 ${n(c.add)} 减 ${n(c.cut)} 不变 ${n(c.hold)}`, 'ok');
+    } else {
+      toast('今天已经记录过了，需要更新请点「覆盖重记」', 'warn');
+    }
+    await loadStrategy();
+  } catch (err) {
+    toast(`记录失败：${err.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function stEvaluate() {
+  const btn = $('#stEvaluate');
+  btn.disabled = true;
+  try {
+    const res = await apiPost('/api/admin/strategy/evaluate', {}, 60000);
+    toast(res.evaluated > 0 ? `补评价完成，新评价 ${res.evaluated} 天` : '暂时没有可评价的记录（次日净值还没出）', res.evaluated > 0 ? 'ok' : 'info');
+    await loadStrategy();
+  } catch (err) {
+    toast(`评价失败：${err.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function stCollectParams() {
+  const rules = {};
+  const bands = {};
+  for (const [id, key] of ST_RULE_FIELDS) {
+    const el = $(`#${id}`);
+    if (el) rules[key] = Number(el.value);
+  }
+  for (const [id, key] of ST_BAND_FIELDS) {
+    const el = $(`#${id}`);
+    if (el) bands[key] = Number(el.value);
+  }
+  return { rules, bands };
+}
+
+async function stSave() {
+  const btn = $('#stSave');
+  btn.disabled = true;
+  try {
+    const res = await apiPost('/api/admin/strategy/config', stCollectParams(), 30000);
+    renderStrategyParams({ rules: res.rules, bands: res.bands });
+    toast('参数已保存，推送与记录立即生效', 'ok');
+    await loadStrategy();
+  } catch (err) {
+    toast(`保存失败：${err.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function stReset() {
+  for (const [id, key] of ST_RULE_FIELDS) {
+    const el = $(`#${id}`);
+    if (el) el.value = ST_DEFAULT_RULES[key];
+  }
+  for (const [id, key] of ST_BAND_FIELDS) {
+    const el = $(`#${id}`);
+    if (el) el.value = ST_DEFAULT_BANDS[key];
+  }
+  toast('已填入默认值，记得点「保存参数」', 'info');
+}
+
+function bindStrategy() {
+  $('#stRefresh').addEventListener('click', () => loadStrategy());
+  $('#stRecord').addEventListener('click', () => stRecord(false));
+  $('#stReRecord').addEventListener('click', () => {
+    if (window.confirm('用当前最新数据覆盖今天的记录？已经做过的次日评价不受影响。')) stRecord(true);
+  });
+  $('#stEvaluate').addEventListener('click', stEvaluate);
+  $('#stSave').addEventListener('click', stSave);
+  $('#stReset').addEventListener('click', stReset);
+  // 明细展开/收起（列表是动态渲染的，用事件委托）
+  $('#stHistory').addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-st-toggle]');
+    if (!btn) return;
+    const date = btn.getAttribute('data-st-toggle');
+    const body = $('[data-st-body="' + date + '"]');
+    if (body) body.hidden = !body.hidden;
+  });
+}
+
 /* ---------------- 启动 ---------------- */
 
 function bindChrome() {
@@ -1050,6 +1320,7 @@ function bindChrome() {
   $('#adminRefresh').addEventListener('click', () => loadSection(state.section));
   bindLogs();
   bindDeploy();
+  bindStrategy();
   setInterval(() => {
     if (state.section === 'logins') loadLogins();
     else if (state.section === 'stats') loadStats();

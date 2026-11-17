@@ -8,8 +8,8 @@
   <meta name="robots" content="noindex,nofollow">
   <title>寰球智投 · 后台管理</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.1.8">
-  <link rel="stylesheet" href="/css/admin.css?v=2.1.8">
+  <link rel="stylesheet" href="/css/app.css?v=2.1.9">
+  <link rel="stylesheet" href="/css/admin.css?v=2.1.9">
 </head>
 <body class="admin-body">
   <!-- 登录 -->
@@ -52,6 +52,7 @@
         <button type="button" data-sec="system">系统状态</button>
         <button type="button" data-sec="logs">系统日志</button>
         <button type="button" data-sec="deploy">部署到 NAS</button>
+        <button type="button" data-sec="strategy">持仓策略</button>
         <button type="button" data-sec="push">定时推送</button>
         <button type="button" data-sec="source">数据源</button>
         <button type="button" data-sec="net">手机访问</button>
@@ -122,6 +123,8 @@
                 <option value="role">角色变更</option>
                 <option value="kick">强制下线</option>
                 <option value="clear">清空日志</option>
+                <option value="deploy">推送部署</option>
+                <option value="strategy">策略记录</option>
               </select>
               <button type="button" class="admin-btn" id="loginRefresh">刷新</button>
               <button type="button" class="admin-btn danger" id="loginClear" hidden>清空日志</button>
@@ -224,6 +227,66 @@
         </div>
       </section>
 
+      <!-- 持仓策略：按天记录建议 + 次日净值评价 + 调参改进 -->
+      <section class="admin-section" id="sec-strategy">
+        <div class="st-grid">
+          <article class="admin-card">
+            <div class="admin-card-head"><h2>今日建议</h2><span class="muted small" id="stDate">—</span></div>
+            <div id="stToday" class="admin-kv-list"><div class="admin-empty">加载中…</div></div>
+            <div class="admin-actions">
+              <button type="button" class="admin-btn primary" id="stRecord">记录今日建议</button>
+              <button type="button" class="admin-btn" id="stReRecord">覆盖重记</button>
+              <button type="button" class="admin-btn" id="stEvaluate">补评价</button>
+              <button type="button" class="admin-btn" id="stRefresh">刷新</button>
+            </div>
+            <p class="admin-note" id="stNote">—</p>
+          </article>
+          <article class="admin-card">
+            <div class="admin-card-head"><h2>次日命中率</h2><span class="muted small" id="stHitMeta">—</span></div>
+            <div id="stStats" class="admin-kv-list"><div class="admin-empty">加载中…</div></div>
+            <div id="stScoreTable" class="admin-table-wrap"></div>
+          </article>
+        </div>
+
+        <article class="admin-card">
+          <div class="admin-card-head"><h2>改进建议</h2><span class="muted small">按命中率给出，改不改由你决定</span></div>
+          <ul id="stSuggestions" class="st-suggestions"><li class="admin-empty">加载中…</li></ul>
+        </article>
+
+        <article class="admin-card">
+          <div class="admin-card-head"><h2>策略参数</h2><span class="muted small">保存后推送与记录立即使用新参数</span></div>
+          <div class="st-params">
+            <label><span>加仓评分门槛</span><input type="number" id="ruleAddScore" min="40" max="100" step="1"></label>
+            <label><span>加仓需要的跌幅 %</span><input type="number" id="ruleAddDip" min="0.2" max="10" step="0.1"></label>
+            <label><span>强信号评分</span><input type="number" id="ruleStrongScore" min="60" max="100" step="1"></label>
+            <label><span>强信号跌幅 %</span><input type="number" id="ruleStrongDip" min="0.5" max="15" step="0.1"></label>
+            <label><span>减仓评分门槛</span><input type="number" id="ruleCutScore" min="5" max="70" step="1"></label>
+            <label><span>减仓反弹触发 %</span><input type="number" id="ruleCutRise" min="0.1" max="10" step="0.1"></label>
+            <label><span>减仓下跌触发 %</span><input type="number" id="ruleCutDip" min="0.2" max="10" step="0.1"></label>
+            <label><span>弱势评分</span><input type="number" id="ruleWeakScore" min="5" max="60" step="1"></label>
+            <label><span>单只占比上限 %</span><input type="number" id="ruleConcPct" min="20" max="90" step="1"></label>
+            <label><span>集中度目标 %</span><input type="number" id="ruleConcTarget" min="10" max="80" step="1"></label>
+            <label><span>加仓判对阈值 %</span><input type="number" id="bandAdd" min="0.1" max="20" step="0.1"></label>
+            <label><span>减仓判对阈值 %</span><input type="number" id="bandCut" min="0.1" max="20" step="0.1"></label>
+            <label><span>不变的合理波动 %</span><input type="number" id="bandHold" min="0.1" max="20" step="0.1"></label>
+            <label><span>评价窗口（工作日）</span><input type="number" id="bandWindow" min="1" max="10" step="1"></label>
+          </div>
+          <div class="admin-actions">
+            <button type="button" class="admin-btn primary" id="stSave">保存参数</button>
+            <button type="button" class="admin-btn" id="stReset">恢复默认</button>
+          </div>
+          <p class="admin-note">
+            口径：记录与推送共用同一套规则；次日评价只认**已公布净值**（盘中估算不算）。
+            加仓命中 = 次日涨过阈值；减仓命中 = 次日跌过阈值；不变命中 = 次日波动在合理区间内。
+          </p>
+        </article>
+
+        <article class="admin-card">
+          <div class="admin-card-head"><h2>历史记录</h2><span class="muted small" id="stHistoryMeta">—</span></div>
+          <div id="stHistory" class="st-history"><div class="admin-empty">加载中…</div></div>
+        </article>
+      </section>
+
       <!-- 定时推送 -->
       <section class="admin-section" id="sec-push">
         <article class="admin-card">
@@ -296,6 +359,6 @@
     </main>
   </div>
 
-  <script src="/js/admin.js?v=2.1.8"></script>
+  <script src="/js/admin.js?v=2.1.9"></script>
 </body>
 </html>

@@ -114,6 +114,7 @@ function createHttpRoutes(deps) {
     statsDateKey,
     statsForDayUser,
     statsStore,
+    strategyLog,
     topIpOf,
     userDataFile,
     userStatsSummary,
@@ -546,6 +547,50 @@ async function handleAdmin(req, res, url) {
     const started = deployToNas.start();
     recordLoginEvent(req, { user: actor, ok: true, action: 'deploy', reason: `推送到 NAS（任务 ${started.id}）` });
     return { ok: true, jobId: started.id };
+  }
+
+  /* ---------------------------------------------------------
+     持仓策略：按天记录 + 次日评价（2026-11-17）
+     - GET  snapshot：今日建议、历史记录、命中率统计、调参建议
+     - POST record：立即记录当天建议（force=true 覆盖当天已有记录）
+     - POST evaluate：手动补评价（正常由每分钟的 tick 自动完成）
+     - POST config：保存策略规则参数（推送与记录立即生效）
+     --------------------------------------------------------- */
+  if (p === '/api/admin/strategy' && req.method === 'GET') {
+    return strategyLog.snapshot();
+  }
+
+  if (p === '/api/admin/strategy/record' && req.method === 'POST') {
+    const body = req.body || {};
+    const res = await strategyLog.recordNow({
+      force: body.force === true,
+      slotTime: '14:30',
+      source: body.source === 'auto' ? 'auto' : 'manual',
+    });
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'strategy',
+      reason: res.recorded ? `记录当日持仓策略（${res.date}）` : `当日持仓策略已存在（${res.date}）`,
+    });
+    return res;
+  }
+
+  if (p === '/api/admin/strategy/evaluate' && req.method === 'POST') {
+    const res = await strategyLog.evaluateNow();
+    return res;
+  }
+
+  if (p === '/api/admin/strategy/config' && req.method === 'POST') {
+    const body = req.body || {};
+    const res = strategyLog.saveConfig({ rules: body.rules, bands: body.bands });
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'strategy',
+      reason: '调整持仓策略参数',
+    });
+    return res;
   }
 
   throw Object.assign(new Error('未知接口'), { status: 404 });

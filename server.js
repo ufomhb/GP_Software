@@ -63,7 +63,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.1.8';
+const VERSION = '2.1.9';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -6894,6 +6894,10 @@ function applySourceConfig(req, q) {
    ========================================================= */
 const { createPushService } = require('./src/services/push');
 
+// 持仓策略按天记录要先读「当前策略参数」，而参数又由策略日志持久化 ——
+// 用一层闭包把循环依赖解开：push 需要时再去问 strategyLogRef。
+let strategyLogRef = null;
+
 const pushService = createPushService({
   store: dataStore,
   loadUsers,
@@ -6903,8 +6907,29 @@ const pushService = createPushService({
   currentUser,
   sanitizePortfolio,
   market: { getFundWatch, shanghaiToday },
+  getStrategyRules: () => (strategyLogRef ? strategyLogRef.getRules() : null),
 });
 const { loadPushConfig, pushChannelLabel, runPushTick, handlePushApi } = pushService;
+
+/* ---------------------------------------------------------
+   持仓策略按天记录 + 次日评价（2026-11-17）
+   存储 data/strategy-log.json（data/ 不进推送包，线上各算各的）。
+   分组口径直接复用 pushService.classifyPortfolio，避免两套规则漂移。
+   --------------------------------------------------------- */
+const { createStrategyLog } = require('./src/services/strategy-log');
+const strategyLog = createStrategyLog({
+  fs,
+  path,
+  dataDir: path.join(__dirname, 'data'),
+  readJsonFile: dataStore.readJsonFile,
+  writeJsonFile: dataStore.writeJsonFile,
+  collectPortfolio: pushService.collectPortfolio,
+  classifyPortfolio: pushService.classifyPortfolio,
+  normalizeStrategyRules: pushService.normalizeStrategyRules,
+  defaultRules: pushService.DEFAULT_STRATEGY_RULES,
+  todayKey: shanghaiToday,
+});
+strategyLogRef = strategyLog;
 
 /* =========================================================
    账号体系：注册 / 登录 / 会话
@@ -7442,6 +7467,7 @@ const httpRoutes = createHttpRoutes({
   statsDateKey,
   statsForDayUser,
   statsStore,
+  strategyLog,
   topIpOf,
   userDataFile,
   userStatsSummary,
@@ -7712,7 +7738,11 @@ server.listen(PORT, HOST, () => {
     console.log('  手机访问:   已关闭（当前只监听本机）。需要手机打开请运行: node server.js --host=0.0.0.0');
   }
   // 每分钟检查一次是否到了基金策略推送时间（时区按东八区）。
-  setInterval(() => { runPushTick().catch(() => {}); }, 60000);
+  setInterval(() => {
+    runPushTick().catch(() => {});
+    // 持仓策略：补齐昨日评价 + 14:35 后自动记录当天建议（内部做幂等与交易日判断）
+    strategyLog.tick().catch(() => {});
+  }, 60000);
   const pushCfg = loadPushConfig();
   if (pushCfg.enabled) {
     const slotsText = (pushCfg.slots || [])

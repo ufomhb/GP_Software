@@ -489,3 +489,43 @@
 .dep-step.failed i { color: var(--up); }
 
 .dep-log { margin-top: 10px; max-height: 220px; overflow: auto; white-space: pre-wrap; font-size: 11.5px; line-height: 1.6; }
+
+/* =========================================================
+   持仓策略（2026-11-17）：今日建议 / 命中率 / 调参 / 历史明细
+   ========================================================= */
+.st-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-bottom: 14px; }
+#sec-strategy .admin-card { margin-bottom: 14px; }
+
+.st-tag { display: inline-block; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.st-tag.add { color: var(--up); background: rgba(239, 68, 68, 0.12); }
+.st-tag.cut { color: #22c55e; background: rgba(34, 197, 94, 0.12); }
+.st-tag.hold, .st-tag.skip { color: var(--muted); background: rgba(148, 163, 184, 0.12); }
+
+.st-suggestions { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.st-sug { padding: 9px 12px; border-radius: 8px; font-size: 12.5px; line-height: 1.7; background: rgba(148, 163, 184, 0.08); border-left: 3px solid var(--muted); }
+.st-sug.warn { border-left-color: var(--gold); background: rgba(235, 190, 80, 0.1); }
+.st-sug.ok { border-left-color: #22c55e; background: rgba(34, 197, 94, 0.1); }
+
+.st-params { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.st-params label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--muted); }
+.st-params input {
+  width: 100%; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--line);
+  background: rgba(148, 163, 184, 0.06); color: inherit; font-size: 12.5px;
+}
+.st-params input:focus { outline: none; border-color: rgba(56, 189, 248, 0.62); }
+
+.st-history { display: grid; gap: 10px; }
+.st-day { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.st-day-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; padding: 9px 12px; background: rgba(148, 163, 184, 0.06); font-size: 12.5px; }
+.st-day-head b { font-weight: 600; }
+.st-day-hit { color: var(--muted); font-size: 11.5px; margin-left: auto; }
+.st-day-body { padding: 2px 0 0; }
+
+.st-verdict.ok { color: #22c55e; }
+.st-verdict.bad { color: var(--up); }
+.st-verdict.flat { color: var(--gold); }
+.st-verdict.skip { color: var(--muted); }
+.st-table td { font-size: 12px; }
+.st-table .ok { color: #22c55e; }
+.st-table .bad { color: var(--up); }
+.st-reason { color: var(--muted); max-width: 330px; }

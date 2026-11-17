@@ -12,6 +12,45 @@
  */
 const { assertSafeOutboundUrl } = require('../lib/net-safety');
 
+/**
+ * 策略规则参数（2026-11-17）：原先写死在 classifyPortfolio 的数字提出来，做成可调参数。
+ * 后台「持仓策略」页面调整后，推送与「按天记录」都立即使用新参数，
+ * 次日评价再用新参数的效果做验证 —— 这就是「不断改进策略」的闭环。
+ */
+const DEFAULT_STRATEGY_RULES = {
+  addScore: 65,              // 评分 ≥ addScore 且当日跌幅 ≥ addDip 才建议加仓
+  addDip: 1.2,               // 加仓需要的当日跌幅（正数表示跌多少）
+  strongScore: 80,           // 评分 ≥ strongScore 且跌幅 ≥ strongDip 时加 10%（否则 5%）
+  strongDip: 2,
+  cutScore: 45,              // 评分 < cutScore 且（涨 ≥ cutRise 或 跌 ≥ cutDip）才建议减仓
+  cutRise: 0.8,
+  cutDip: 1.2,
+  weakScore: 35,             // 评分 < weakScore 减 10%，否则减 5%
+  concentrationPct: 40,      // 单只占比上限，超过则强制减仓
+  concentrationTargetPct: 30,
+};
+
+function normalizeStrategyRules(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const num = (key, min, max) => {
+    const v = Number(src[key]);
+    if (!Number.isFinite(v)) return DEFAULT_STRATEGY_RULES[key];
+    return Math.min(max, Math.max(min, v));
+  };
+  return {
+    addScore: num('addScore', 40, 100),
+    addDip: num('addDip', 0.2, 10),
+    strongScore: num('strongScore', 60, 100),
+    strongDip: num('strongDip', 0.5, 15),
+    cutScore: num('cutScore', 5, 70),
+    cutRise: num('cutRise', 0.1, 10),
+    cutDip: num('cutDip', 0.2, 10),
+    weakScore: num('weakScore', 5, 60),
+    concentrationPct: num('concentrationPct', 20, 90),
+    concentrationTargetPct: num('concentrationTargetPct', 10, 80),
+  };
+}
+
 function createPushService(deps) {
   const {
     store, // dataStore：push_config 的读写
@@ -22,8 +61,19 @@ function createPushService(deps) {
     currentUser,
     sanitizePortfolio,
     market, // { getFundWatch, shanghaiToday }
+    getStrategyRules, // 可选：() => 策略规则参数（由后台页面调的参数持久化而来）
   } = deps;
   const { getFundWatch, shanghaiToday } = market || {};
+
+  // 每次取当前参数而不是缓存：后台调参后无需重启即生效
+  function currentStrategyRules() {
+    try {
+      const fromConfig = typeof getStrategyRules === 'function' ? getStrategyRules() : null;
+      return normalizeStrategyRules(fromConfig);
+    } catch {
+      return { ...DEFAULT_STRATEGY_RULES };
+    }
+  }
 
 /* =========================================================
    微信定时推送（基金持仓策略）
@@ -398,7 +448,8 @@ function isTodayPct(r) {
  * 后台管理的「持仓策略」页面也用它：按天记录、次日评价必须和推送口径完全一致，
  * 否则「建议」和「事后评价」会对着两套规则说话，改进策略就失去意义。
  */
-function classifyPortfolio(port) {
+function classifyPortfolio(port, rules = DEFAULT_STRATEGY_RULES) {
+  const R = normalizeStrategyRules(rules);
   const { rows, totals } = port;
   const hold = [];
   const add = [];
@@ -415,8 +466,8 @@ function classifyPortfolio(port) {
     const pct = r.pct;
     const src = r.pctKind === 'nav' ? '今日净值' : r.pctKind === 'market' ? '今日场内' : '今日穿透估算';
     // 1) 集中度强制减仓
-    if (r.weight !== null && r.weight > 40 && totals.marketValue > 0) {
-      const targetMv = totals.marketValue * 0.3;
+    if (r.weight !== null && r.weight > R.concentrationPct && totals.marketValue > 0) {
+      const targetMv = totals.marketValue * (R.concentrationTargetPct / 100);
       const targetShares = Math.floor(targetMv / r.price);
       const delta = Math.min(-10, targetShares - r.shares);
       if (delta < 0) {
@@ -424,14 +475,14 @@ function classifyPortfolio(port) {
           code: r.code, name: r.name, action: 'cut', rule: 'concentration',
           shares: r.shares, targetShares: r.shares + delta, delta,
           price: r.price, pct, pctKind: r.pctKind, navDate: r.navDate || '', weight: r.weight,
-          score, ratioPct: r.weight - 30,
-          reason: `单只占比 ${r.weight.toFixed(1)}%，超过 40% 上限，建议降到 30% 左右（${pushNum(targetMv, 0)} 元）`,
+          score, ratioPct: r.weight - R.concentrationTargetPct,
+          reason: `单只占比 ${r.weight.toFixed(1)}%，超过 ${R.concentrationPct}% 上限，建议降到 ${R.concentrationTargetPct}% 左右（${pushNum(targetMv, 0)} 元）`,
         });
         continue;
       }
     }
-    if (score !== null && score >= 65 && pct <= -1.2) {
-      const ratio = score >= 80 && pct <= -2 ? 0.1 : 0.05;
+    if (score !== null && score >= R.addScore && pct <= -R.addDip) {
+      const ratio = score >= R.strongScore && pct <= -R.strongDip ? 0.1 : 0.05;
       const delta = roundShares(r.shares, r.marketValue * ratio / r.price);
       add.push({
         code: r.code, name: r.name, action: 'add', rule: 'score-strong-dip',
@@ -442,8 +493,8 @@ function classifyPortfolio(port) {
       });
       continue;
     }
-    if (score !== null && score < 45 && (pct >= 0.8 || pct <= -1.2)) {
-      const ratio = score < 35 ? 0.1 : 0.05;
+    if (score !== null && score < R.cutScore && (pct >= R.cutRise || pct <= -R.cutDip)) {
+      const ratio = score < R.weakScore ? 0.1 : 0.05;
       const delta = roundShares(r.shares, r.marketValue * ratio / r.price);
       cut.push({
         code: r.code, name: r.name, action: 'cut', rule: score < 35 ? 'score-weak-drop' : 'score-weak',
@@ -474,7 +525,7 @@ function buildStrategyReport(port, pulse, opts = {}) {
   const { rows, totals, today } = port;
   const slotTime = opts.slotTime || '14:30';
   const outlook = buildOutlook(pulse);
-  const { add, cut, hold, pending: pendingList } = classifyPortfolio(port);
+  const { add, cut, hold, pending: pendingList } = classifyPortfolio(port, currentStrategyRules());
 
   const line = (r, sign) => {
     const delta = sign === 0 ? 0 : sign * r.delta;
@@ -979,6 +1030,8 @@ async function handlePushApi(req, res, url) {
   return {
     PUSH_SLOT_DEFAULTS,
     PUSH_DEFAULTS,
+    DEFAULT_STRATEGY_RULES,
+    normalizeStrategyRules,
     normalizePushConfig,
     loadPushConfig,
     savePushConfig,
