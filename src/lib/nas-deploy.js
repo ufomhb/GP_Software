@@ -35,13 +35,14 @@ const CODE_ITEMS = ['server.js', 'package.json', 'src', 'lib', 'public', 'script
 const STEPS = [
   { id: 'preflight', label: '检查本机工具与 NAS 连通性', weight: 6 },
   { id: 'package', label: '打包本地最新代码', weight: 8 },
-  { id: 'backup', label: '备份 NAS 现有代码', weight: 12 },
-  { id: 'dbsafe', label: '备份 NAS 数据库快照', weight: 10 },
-  { id: 'upload', label: '上传代码包到 NAS', weight: 24 },
-  { id: 'extract', label: '解压覆盖到 /data/gp', weight: 8 },
-  { id: 'restart', label: '重启 gp-terminal 服务', weight: 12 },
-  { id: 'schema', label: '核对数据库结构', weight: 10 },
-  { id: 'health', label: '健康检查与版本核对', weight: 10 },
+  { id: 'backup', label: '备份 NAS 现有代码', weight: 11 },
+  { id: 'dbsafe', label: '备份 NAS 数据库快照', weight: 9 },
+  { id: 'upload', label: '上传代码包到 NAS', weight: 22 },
+  { id: 'extract', label: '解压覆盖到 /data/gp', weight: 7 },
+  { id: 'migrate', label: '执行数据库结构迁移', weight: 11 },
+  { id: 'restart', label: '重启 gp-terminal 服务', weight: 11 },
+  { id: 'schema', label: '核对数据库结构', weight: 7 },
+  { id: 'health', label: '健康检查与版本核对', weight: 8 },
 ];
 
 const LOG_LIMIT = 260;          // 状态里保留的日志条数
@@ -431,6 +432,23 @@ function createDeployToNas(options = {}) {
       }
       pushLog('info', '代码已覆盖到 /data/gp');
       setStep('extract', 'done');
+
+      // 6. 数据库迁移：用刚上传的新代码把库升到新结构（脚本内部按 PRAGMA user_version 逐条执行）。
+      // 特意放在重启之前：迁移失败时线上进程仍跑旧代码，可以立刻回滚文件，站点不受影响。
+      setStep('migrate', 'running');
+      const migrate = await ssh(`cd ${NAS_DIR} && ${nasNode} scripts/migrate.mjs`, { timeoutMs: 240000 });
+      const migrateLines = String(migrate.output || '').trim().split(/\r?\n/).filter(Boolean);
+      for (const line of migrateLines.slice(0, 12)) pushLog(migrate.ok ? 'info' : 'warn', line);
+      if (!migrate.ok) {
+        pushLog('warn', '迁移失败，回滚 /data/gp 代码到推送前的备份…');
+        const restore = await ssh(`cd ${NAS_DIR} && tar xzf ${BACKUP_DIR}/${backupName} && echo CODE_RESTORED`, { timeoutMs: 180000 });
+        if (/CODE_RESTORED/.test(restore.output || '')) {
+          pushLog('info', `已回滚代码（${backupName}），数据库未改动，线上服务继续按旧代码运行`);
+          throw new Error(`数据库迁移失败，代码已自动回滚、数据库未改动（数据库快照：${dbSnapName}）`);
+        }
+        throw new Error(`数据库迁移失败，且代码回滚未成功，请人工恢复：cd ${NAS_DIR} && tar xzf ${BACKUP_DIR}/${backupName}`);
+      }
+      setStep('migrate', 'done', migrateLines[0] || '无需迁移');
 
       // 6. restart
       setStep('restart', 'running');

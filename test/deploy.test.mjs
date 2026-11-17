@@ -36,10 +36,10 @@ async function loginSuper(username, password) {
   return { app: seeded, client };
 }
 
-test('部署模块：9 步流程与快照结构', () => {
-  assert.equal(nasDeploy.STEPS.length, 9);
+test('部署模块：10 步流程与快照结构', () => {
+  assert.equal(nasDeploy.STEPS.length, 10);
   const ids = nasDeploy.STEPS.map((s) => s.id);
-  assert.deepEqual(ids, ['preflight', 'package', 'backup', 'dbsafe', 'upload', 'extract', 'restart', 'schema', 'health']);
+  assert.deepEqual(ids, ['preflight', 'package', 'backup', 'dbsafe', 'upload', 'extract', 'migrate', 'restart', 'schema', 'health']);
   assert.ok(nasDeploy.STEPS.every((s) => typeof s.weight === 'number' && s.weight > 0));
   assert.equal(nasDeploy.STEPS.reduce((sum, s) => sum + s.weight, 0), 100, '步骤权重应合计 100%');
 
