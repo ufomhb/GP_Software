@@ -1074,7 +1074,9 @@ function stRate(v) {
 function renderStrategyToday(data) {
   const rec = data.todayRecord;
   const rows = [];
-  rows.push(['记录状态', rec ? `已记录 · ${esc(fmtClock(rec.createdAt))}${rec.source === 'auto' ? '（自动）' : ''}` : '今天还没记录']);
+  rows.push(['记录状态', rec
+    ? `已记录 · ${esc(fmtClock(rec.createdAt))}${rec.source === 'auto' ? '（自动）' : '（手动）'}${rec.late ? ' · 收盘后补记' : ''}`
+    : '今天还没记录']);
   if (rec) {
     const c = (rec.snapshot && rec.snapshot.counts) || {};
     rows.push(['建议分布', `<span class="st-tag add">加 ${n(c.add)}</span> <span class="st-tag cut">减 ${n(c.cut)}</span> <span class="st-tag hold">不变 ${n(c.hold)}</span>${c.pending ? ` <span class="st-tag skip">未更新 ${n(c.pending)}</span>` : ''}`]);

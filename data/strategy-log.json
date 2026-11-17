@@ -1,0 +1,178 @@
+{
+  "rules": {
+    "addScore": 65,
+    "addDip": 1.2,
+    "strongScore": 80,
+    "strongDip": 2,
+    "cutScore": 45,
+    "cutRise": 0.8,
+    "cutDip": 1.2,
+    "weakScore": 35,
+    "concentrationPct": 40,
+    "concentrationTargetPct": 30
+  },
+  "bands": {
+    "addBand": 0.3,
+    "cutBand": 0.3,
+    "holdBand": 0.8,
+    "evalWindow": 3
+  },
+  "records": [
+    {
+      "date": "2026-11-17",
+      "slotTime": "14:30",
+      "source": "auto",
+      "late": true,
+      "createdAt": 1794924517678,
+      "rules": {
+        "addScore": 65,
+        "addDip": 1.2,
+        "strongScore": 80,
+        "strongDip": 2,
+        "cutScore": 45,
+        "cutRise": 0.8,
+        "cutDip": 1.2,
+        "weakScore": 35,
+        "concentrationPct": 40,
+        "concentrationTargetPct": 30
+      },
+      "snapshot": {
+        "today": "2026-11-17",
+        "marketValue": 112917.37599999999,
+        "portfolioPct": -0.9846653312222237,
+        "dayProfit": -830.511286612408,
+        "profit": -14779.950299999997,
+        "counts": {
+          "add": 0,
+          "cut": 2,
+          "hold": 5,
+          "pending": 1
+        }
+      },
+      "items": [
+        {
+          "code": "016531",
+          "name": "鹏华碳中和主题混合C",
+          "action": "cut",
+          "rule": "score-weak",
+          "shares": 5973,
+          "targetShares": 5673,
+          "delta": 300,
+          "price": 1.5218,
+          "pct": -6.36,
+          "pctKind": "nav",
+          "navDate": "2026-11-17",
+          "weight": 8.05,
+          "score": 41,
+          "reason": "技术评分 41 偏弱，今日净值下跌 6.36%，建议减 0.5 成"
+        },
+        {
+          "code": "015790",
+          "name": "永赢高端装备智选混合发起C",
+          "action": "cut",
+          "rule": "score-weak-drop",
+          "shares": 10396,
+          "targetShares": 9396,
+          "delta": 1000,
+          "price": 0.8332,
+          "pct": -3.5,
+          "pctKind": "nav",
+          "navDate": "2026-11-17",
+          "weight": 7.67,
+          "score": 30,
+          "reason": "技术评分 30 弱势，今日净值继续下跌 3.50%，建议减 1 成"
+        },
+        {
+          "code": "000960",
+          "name": "招商医药健康产业股票",
+          "action": "hold",
+          "rule": "no-signal",
+          "shares": 6057,
+          "targetShares": 6057,
+          "delta": 0,
+          "price": 2.432,
+          "pct": 0,
+          "pctKind": "nav",
+          "navDate": "2026-11-17",
+          "weight": 13.05,
+          "score": 26,
+          "reason": "评级「防御」，参考仓位 0-1 成"
+        },
+        {
+          "code": "017811",
+          "name": "东方人工智能主题混合C",
+          "action": "hold",
+          "rule": "no-signal",
+          "shares": 4137,
+          "targetShares": 4137,
+          "delta": 0,
+          "price": 2.356,
+          "pct": 2.14,
+          "pctKind": "nav",
+          "navDate": "2026-11-17",
+          "weight": 8.63,
+          "score": 46,
+          "reason": "评级「偏空」，参考仓位 1-2.5 成"
+        },
+        {
+          "code": "012349",
+          "name": "天弘恒生科技ETF联接C",
+          "action": "hold",
+          "rule": "no-signal",
+          "shares": 17969,
+          "targetShares": 17969,
+          "delta": 0,
+          "price": 0.5058,
+          "pct": -1.1,
+          "pctKind": "nav",
+          "navDate": "2026-11-17",
+          "weight": 8.05,
+          "score": 32,
+          "reason": "评级「防御」，参考仓位 0-1 成"
+        },
+        {
+          "code": "012863",
+          "name": "汇添富中证电池主题ETF发起式联接C",
+          "action": "hold",
+          "rule": "no-signal",
+          "shares": 16488,
+          "targetShares": 16488,
+          "delta": 0,
+          "price": 0.5446,
+          "pct": -0.87,
+          "pctKind": "nav",
+          "navDate": "2026-11-17",
+          "weight": 7.95,
+          "score": 36,
+          "reason": "评级「偏空」，参考仓位 1-2.5 成"
+        },
+        {
+          "code": "002963",
+          "name": "易方达黄金ETF联接C",
+          "action": "hold",
+          "rule": "no-signal",
+          "shares": 9113,
+          "targetShares": 9113,
+          "delta": 0,
+          "price": 2.6388,
+          "pct": 0.32,
+          "pctKind": "nav",
+          "navDate": "2026-11-17",
+          "weight": 21.3,
+          "score": 16,
+          "reason": "评级「防御」，参考仓位 0-1 成"
+        }
+      ],
+      "pending": [
+        {
+          "code": "021277",
+          "name": "广发全球精选股票(QDII)人民币C",
+          "navDate": "2026-11-16",
+          "navPct": -3.06
+        }
+      ],
+      "eval": null
+    }
+  ],
+  "updatedAt": 1794924517678
+}

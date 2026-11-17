@@ -152,13 +152,15 @@ function createStrategyLog(deps) {
 
   /* ---------------- 记录 ---------------- */
 
-  function buildRecord(port, { slotTime = '14:30', source = 'manual', date } = {}) {
+  function buildRecord(port, { slotTime = '14:30', source = 'manual', date, late = false } = {}) {
     const cls = classifyPortfolio(port);
     const items = [...cls.add, ...cls.cut, ...cls.hold];
     return {
       date: date || dateKeyOf(),
       slotTime,
       source,
+      // late=true 表示这条是收盘后才补记的（用的是当日已公布净值，不是 14:30 的盘中口径）
+      late: Boolean(late),
       createdAt: Date.now(),
       rules: { ...normalizeStrategyRules(defaultRules) },
       snapshot: {
@@ -465,7 +467,9 @@ function createStrategyLog(deps) {
     let recorded = false;
     const exists = store.records.some((r) => r.date === today);
     if (!exists && shanghaiClockMinutes() >= AUTO_RECORD_AFTER) {
-      store.records.push(buildRecord(port, { slotTime: '14:30', source: 'auto', date: today }));
+      // 15:05 之后补记的，标注 late：用的是收盘后的净值口径，不是 14:30 的盘中决策
+      const late = shanghaiClockMinutes() > 15 * 60 + 5;
+      store.records.push(buildRecord(port, { slotTime: '14:30', source: 'auto', date: today, late }));
       recorded = true;
     }
     if (evaluated > 0 || recorded) {
