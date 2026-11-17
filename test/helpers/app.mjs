@@ -9,6 +9,7 @@
  */
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +19,29 @@ const require = createRequire(import.meta.url);
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 let portCursor = 19000 + Math.floor(Math.random() * 400);
+
+/** 真占一下端口再释放，确认没被别的测试进程占了 */
+function isPortFree(port) {
+  return new Promise((resolve) => {
+    const srv = createServer();
+    srv.once('error', () => resolve(false));
+    srv.once('listening', () => srv.close(() => resolve(true)));
+    srv.listen(port, '127.0.0.1');
+  });
+}
+
+/**
+ * 挑一个真正空闲的端口。
+ * 背景：多个测试文件是独立进程并行跑的，各自随机起点仍可能撞到同一个端口，
+ * 撞上时请求会打到兄弟实例（例如对方已有账号 → 注册被 403 拒绝），表现为莫名的 flake。
+ */
+async function pickFreePort() {
+  for (let i = 0; i < 80; i += 1) {
+    const port = portCursor++;
+    if (await isPortFree(port)) return port;
+  }
+  throw new Error('找不到空闲端口给测试实例');
+}
 
 export class Client {
   constructor(base) {
@@ -89,7 +113,7 @@ export async function startApp(opts = {}) {
     store.close();
   }
 
-  const port = portCursor++;
+  const port = await pickFreePort();
   const child = spawn(process.execPath, ['server.js', `--port=${port}`, '--host=127.0.0.1'], {
     cwd: work,
     stdio: ['ignore', 'pipe', 'pipe'],

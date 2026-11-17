@@ -174,5 +174,13 @@
       "eval": null
     }
   ],
-  "updatedAt": 1794924517678
+  "tunes": [],
+  "autoTune": {
+    "enabled": true,
+    "minSamples": 5,
+    "minHitRate": 0.5,
+    "step": 5,
+    "lastTuneDate": "2026-11-17"
+  },
+  "updatedAt": 1794928210426
 }
