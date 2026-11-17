@@ -29,14 +29,19 @@ const BACKUP_DIR = '/data/backup/gp-code';
 const CODE_ITEMS = ['server.js', 'package.json', 'src', 'lib', 'public', 'scripts', 'data/changelog.json'];
 
 // 每一步的权重（百分比），步内还可按 scp 打印的百分比细化为子进度。
+// 数据库相关的两步（dbsafe / schema）是 2026-11-17 加的：
+// 代码推送不会动 NAS 上的 data/gp.sqlite，所以推送前先做一致性快照，
+// 重启后再核对「代码期望的结构」与「线上实际结构」是否一致。
 const STEPS = [
-  { id: 'preflight', label: '检查本机工具与 NAS 连通性', weight: 8 },
-  { id: 'package', label: '打包本地最新代码', weight: 10 },
-  { id: 'backup', label: '备份 NAS 现有代码', weight: 14 },
-  { id: 'upload', label: '上传代码包到 NAS', weight: 30 },
-  { id: 'extract', label: '解压覆盖到 /data/gp', weight: 10 },
-  { id: 'restart', label: '重启 gp-terminal 服务', weight: 14 },
-  { id: 'health', label: '健康检查与版本核对', weight: 14 },
+  { id: 'preflight', label: '检查本机工具与 NAS 连通性', weight: 6 },
+  { id: 'package', label: '打包本地最新代码', weight: 8 },
+  { id: 'backup', label: '备份 NAS 现有代码', weight: 12 },
+  { id: 'dbsafe', label: '备份 NAS 数据库快照', weight: 10 },
+  { id: 'upload', label: '上传代码包到 NAS', weight: 24 },
+  { id: 'extract', label: '解压覆盖到 /data/gp', weight: 8 },
+  { id: 'restart', label: '重启 gp-terminal 服务', weight: 12 },
+  { id: 'schema', label: '核对数据库结构', weight: 10 },
+  { id: 'health', label: '健康检查与版本核对', weight: 10 },
 ];
 
 const LOG_LIMIT = 260;          // 状态里保留的日志条数
@@ -312,6 +317,7 @@ function createDeployToNas(options = {}) {
     const pkgPath = path.join(getTmpDir(), 'gp-deploy.tar.gz');
     let sshVersion = '';
     let nasBefore = '';
+    let nasNode = '/data/node24/bin/node';
 
     try {
       // 1. preflight
@@ -327,6 +333,11 @@ function createDeployToNas(options = {}) {
       const pm = /"version"\s*:\s*"([^"]+)"/.exec(ping.output || '');
       nasBefore = pm ? pm[1] : '';
       pushLog('info', `NAS 当前版本：${nasBefore || '未知'}，服务状态：${/active/.test(ping.output) ? 'active' : '见日志'}`);
+      // NAS 上的 node 位置（数据库快照/结构核对要直接调它，不依赖登录 shell 的 PATH）
+      const nodeProbe = await ssh('command -v node || ls -1 /data/node24/bin/node 2>/dev/null', { timeoutMs: 20000 });
+      const nodeLine = String(nodeProbe.output || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0];
+      if (nodeLine && /node/.test(nodeLine)) nasNode = nodeLine;
+      pushLog('info', `NAS 上的 node：${nasNode}`);
       setStep('preflight', 'done');
 
       // 2. package
@@ -359,6 +370,25 @@ function createDeployToNas(options = {}) {
       } else {
         pushLog('info', `备份完成：${backupName}`);
         setStep('backup', 'done', backupName);
+      }
+
+      // 3.5 数据库快照：代码不推 data/，但改结构前必须先有一份可回滚的库。
+      // VACUUM INTO 是在线一致性快照，服务在跑也能安全执行；失败只告警不阻断。
+      setStep('dbsafe', 'running');
+      const dbSnapName = `gp-before-${localVersion || 'x'}-${stamp}.sqlite`;
+      const dbBackup = await ssh(
+        `cd ${NAS_DIR} && if [ -f data/gp.sqlite ]; then ${nasNode} scripts/backup-sqlite.mjs /data/backup/gp-data/${dbSnapName}; else echo NO_SQLITE; fi`,
+        { timeoutMs: 240000 },
+      );
+      if (!dbBackup.ok) {
+        pushLog('warn', `数据库快照未成功（继续推送）：${String(dbBackup.output || '').trim().split(/\r?\n/).slice(-2).join(' / ')}`);
+        setStep('dbsafe', 'done', '跳过/失败');
+      } else if (/NO_SQLITE/.test(dbBackup.output || '')) {
+        pushLog('info', 'NAS 上没有 SQLite 库（JSON 存储模式），跳过数据库快照');
+        setStep('dbsafe', 'done', 'JSON 模式跳过');
+      } else {
+        pushLog('info', `数据库快照完成：${dbSnapName}`);
+        setStep('dbsafe', 'done', dbSnapName);
       }
 
       // 4. upload
@@ -411,6 +441,18 @@ function createDeployToNas(options = {}) {
         throw new Error(`重启后服务未进入 active 状态：${String(restart.output || '').trim().slice(-160)}`);
       }
       setStep('restart', 'done');
+
+      // 7. schema：代码结构 vs 线上库结构对照。
+      // 推送不动 data/gp.sqlite，所以「加列/改约束」这类改动不会自动生效；
+      // 这里把问题变成一次明确的失败提示（而不是等某个接口静默 500）。
+      setStep('schema', 'running');
+      const schemaCheck = await ssh(`cd ${NAS_DIR} && ${nasNode} scripts/check-schema.mjs`, { timeoutMs: 120000 });
+      const schemaLines = String(schemaCheck.output || '').trim().split(/\r?\n/).filter(Boolean);
+      for (const line of schemaLines.slice(0, 14)) pushLog(schemaCheck.ok ? 'info' : 'warn', line);
+      if (!schemaCheck.ok) {
+        throw new Error('数据库结构与新代码不一致：服务已重启，缺表/缺列的接口会报错。请按上面的差异做迁移，或回滚代码（数据库快照已生成）');
+      }
+      setStep('schema', 'done', schemaLines[0] || '一致');
 
       // 7. health
       setStep('health', 'running');
