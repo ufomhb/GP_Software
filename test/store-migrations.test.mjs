@@ -149,3 +149,35 @@ test('迁移：库版本高于代码期望时只告警不降级', () => {
     assert.match(report.warnings.join(' '), /高于/);
   });
 });
+
+test('状态查询：库文件存在就报告 hasDb（不受 STORE 环境变量影响）', () => {
+  // 回归：曾经按 MODE==='json' 短路，导致 SSH 会话里跑迁移脚本时
+  // 明明 NAS 上有库却被判成「没有库、无需迁移」，迁移被静默跳过。
+  const dir = mkdtempSync(join(tmpdir(), 'gp-schema-status-'));
+  const file = join(dir, 'gp.sqlite');
+  const db = new DatabaseSync(file);
+  db.exec(store.SCHEMA);
+  db.close();
+  try {
+    assert.equal(store.mode, 'json', '测试进程本身是 json 模式，正好复现 NAS SSH 会话的处境');
+    const status = store.schemaStatus(file);
+    assert.equal(status.hasDb, true, '库文件存在时必须报告 hasDb');
+    assert.equal(status.currentVersion, 0, '新建库版本号为 0，等待认领');
+    assert.equal(status.targetVersion, store.SCHEMA_VERSION);
+    assert.equal(status.pending.length, 0, '没有跨版本的迁移项要执行');
+    assert.deepEqual(status.drift.missingColumns, [], '全新库不应有缺列');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('状态查询：库文件不存在时 hasDb 为 false', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gp-schema-nodb-'));
+  try {
+    const status = store.schemaStatus(join(dir, 'nope.sqlite'));
+    assert.equal(status.hasDb, false);
+    assert.equal(status.currentVersion, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

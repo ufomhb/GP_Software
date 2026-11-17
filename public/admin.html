@@ -8,8 +8,8 @@
   <meta name="robots" content="noindex,nofollow">
   <title>寰球智投 · 后台管理</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.1.6">
-  <link rel="stylesheet" href="/css/admin.css?v=2.1.6">
+  <link rel="stylesheet" href="/css/app.css?v=2.1.8">
+  <link rel="stylesheet" href="/css/admin.css?v=2.1.8">
 </head>
 <body class="admin-body">
   <!-- 登录 -->
@@ -206,7 +206,7 @@
             <p class="admin-note" id="depNote">—</p>
             <p class="admin-note muted">
               只推送代码（server.js / src / lib / public / scripts / package.json + 更新履历），不动 NAS 上的 data 运行时数据；
-              推送前会备份线上代码<b>与数据库快照</b>，推送后会核对数据库结构是否与新代码一致（不一致会明确报错，不会静默 500），通常 10–30 秒。
+              推送会先备份线上代码<b>与数据库快照</b>，再<b>自动执行数据库结构迁移</b>（失败则自动回滚代码、数据库不动），最后核对结构与健康检查，通常 10–30 秒。
             </p>
           </article>
           <article class="admin-card">
@@ -296,6 +296,6 @@
     </main>
   </div>
 
-  <script src="/js/admin.js?v=2.1.6"></script>
+  <script src="/js/admin.js?v=2.1.8"></script>
 </body>
 </html>

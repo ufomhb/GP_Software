@@ -19,10 +19,13 @@ const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const store = require(join(ROOT, 'lib', 'store.js'));
 const statusOnly = process.argv.includes('--status');
+// --db=<路径>：对指定库文件操作（默认线上库）。演练/排查时用。
+const dbArg = process.argv.find((a) => a.startsWith('--db='));
+const DB_FILE = dbArg ? dbArg.slice('--db='.length) : store.DB_FILE;
 
 function describe(status) {
   if (!status.hasDb) {
-    console.log(`没有 SQLite 库（模式 ${status.mode}，${status.dbFile}），无需迁移`);
+    console.log(`没有 SQLite 库（${status.dbFile}），无需迁移`);
     return;
   }
   console.log(`库：${status.dbFile}`);
@@ -45,7 +48,7 @@ function describe(status) {
 
 let status;
 try {
-  status = store.schemaStatus();
+  status = store.schemaStatus(DB_FILE);
 } catch (err) {
   console.error(`无法检查数据库：${err && err.message ? err.message : err}`);
   process.exit(2);
@@ -54,7 +57,8 @@ try {
 describe(status);
 
 if (statusOnly) {
-  process.exit(status.currentVersion < status.targetVersion || status.drift.missingColumns.length || status.drift.missingTables.length ? 1 : 0);
+  // 只是查询，不构成失败；需要迁移时输出里会写明
+  process.exit(0);
 }
 
 if (!status.hasDb) process.exit(0);
@@ -65,8 +69,8 @@ if (!status.pending.length && status.currentVersion >= status.targetVersion) {
 
 try {
   // openDb 内部会跑 migrateOnOpen：认领版本 + 按版本号依次执行迁移
-  store.openDb();
-  const after = store.schemaStatus();
+  store.openDb(DB_FILE);
+  const after = store.schemaStatus(DB_FILE);
   console.log(`迁移完成：现在 v${after.currentVersion}（期望 v${after.targetVersion}）`);
   const { missingTables, missingColumns } = after.drift;
   if (missingTables.length || missingColumns.length) {
