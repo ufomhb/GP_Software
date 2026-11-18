@@ -8,6 +8,9 @@
     "cutRise": 0.8,
     "cutDip": 1.2,
     "weakScore": 35,
+    "baseRatio": 10,
+    "strongRatio": 20,
+    "marketWeight": 1,
     "concentrationPct": 40,
     "concentrationTargetPct": 30
   },
@@ -498,7 +501,7 @@
     "minSamples": 5,
     "minHitRate": 0.5,
     "step": 5,
-    "lastTuneDate": "2026-11-18"
+    "lastTuneDate": "2026-11-19"
   },
-  "updatedAt": 1795003810122
+  "updatedAt": 1795017622039
 }
