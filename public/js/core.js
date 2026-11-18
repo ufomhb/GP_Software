@@ -2,7 +2,7 @@
    版本号、本地存储键、账号命名空间、按账号读写的 localStorage、全局 state。
    视图模块可以 import { state } 与这些读写函数，不再依赖 app.js。 */
 
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.6.0';
 
 const WATCH_KEY = 'gp.watchlist.v1';
 const ALERTS_KEY = 'gp.alerts.v1';
@@ -198,6 +198,9 @@ const state = {
   screenerLoading: false,
   hk: null,
   hkDetail: null,
+  // 阶段 2.4 / 3.3：云端预警与模拟交易
+  cloudAlerts: null,
+  paper: null,
   tl: { events: [], playing: false, speed: 120, pos: 565, raf: null, last: 0, lastChart: 0 },
 };
 

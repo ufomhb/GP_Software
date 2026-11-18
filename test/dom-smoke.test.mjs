@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 前端 DOM smoke 测试
  *
  * 用 jsdom 载入真实的 index.html，把 app.js 当模块加载（关掉自动 init），
@@ -884,4 +884,64 @@ test('DOM：选股结果表渲染指标，命中数为 0 时给出提示', () =>
   app.renderScreener();
   table = document.querySelector('#screenerTable');
   assert.match(table.textContent, /没有符合条件的股票/, '空结果要有明确提示');
+});
+
+/* ---------------------------------------------------------
+   v2.6.0：云端预警开关 + 模拟交易面板
+   --------------------------------------------------------- */
+test('DOM：预警面板带「云端预警」开关与同步按钮，并显示同步状态', () => {
+  app.state.alerts = app.normalizeAlerts([
+    { id: 'c1', secid: '1.600519', code: '600519', name: '贵州茅台', kind: 'price', op: 'above', value: 1600, active: true },
+  ]);
+  app.state.cloudAlerts = { enabled: true, items: [{ id: 'c1', active: true }], lastPush: { ok: true, at: Date.now() } };
+  app.renderAlerts();
+  const box = document.querySelector('#alertsPanel');
+  assert.ok(box.querySelector('#cloudAlertToggle'), '应有云端预警开关');
+  assert.equal(box.querySelector('#cloudAlertToggle').checked, true, '云端已开启时应勾选');
+  assert.ok(box.querySelector('#cloudAlertSync'), '应有同步按钮');
+  assert.match(box.textContent, /已同步 1 条/, '应显示同步条数');
+  assert.match(box.textContent, /上次已推送/, '应显示上次推送结果');
+
+  // 关闭状态：提示关掉页面就不再监控
+  app.state.cloudAlerts = { enabled: false, items: [] };
+  app.renderAlerts();
+  assert.match(document.querySelector('#alertsPanel').textContent, /未开启/);
+  assert.equal(document.querySelector('#cloudAlertToggle').checked, false);
+  app.state.cloudAlerts = null;
+});
+
+test('DOM：模拟交易面板渲染账户/持仓/成交，没有数据时给引导', () => {
+  app.state.paper = {
+    initial: 1000000, cash: 800000, marketValue: 210000, total: 1010000,
+    profit: 10000, profitPct: 1, positions: [], trades: [], updatedAt: Date.now(),
+  };
+  app.renderPaper();
+  let box = document.querySelector('#paperPanel');
+  assert.match(box.textContent, /模拟交易/, '标题');
+  assert.match(box.textContent, /总资产/);
+  assert.match(box.textContent, /1,000,000/, '总资产按千分位显示');
+  assert.match(box.textContent, /还没有模拟持仓/, '空仓引导');
+  assert.match(box.textContent, /还没有成交记录/, '无成交引导');
+  assert.ok(box.querySelector('#paperBuyBtn'), '应有模拟买入按钮');
+
+  app.state.paper = {
+    initial: 1000000, cash: 700000, marketValue: 320000, total: 1020000,
+    profit: 20000, profitPct: 2,
+    positions: [
+      { secid: '1.600519', code: '600519', name: '<b>贵州茅台</b>', shares: 100, cost: 1500, price: 1600, pct: 1.2, marketValue: 160000, profit: 10000, profitPct: 6.25 },
+    ],
+    trades: [
+      { id: 't1', ts: Date.now(), secid: '1.600519', code: '600519', name: '贵州茅台', side: 'buy', price: 1500, shares: 100, amount: 150000, fee: 37.5, note: '', signal: { score: 62, rating: '偏强' } },
+    ],
+    updatedAt: Date.now(),
+  };
+  app.renderPaper();
+  box = document.querySelector('#paperPanel');
+  assert.equal(box.querySelectorAll('.paper-pos-table tbody tr').length, 1, '一条持仓');
+  assert.equal(box.querySelectorAll('.paper-trade-table tbody tr').length, 1, '一条成交');
+  assert.equal(box.querySelectorAll('.paper-pos-table b').length, 0, '股票名里的 <b> 必须被转义');
+  assert.match(box.textContent, /评分 62/, '成交记录应带当日评分（信号留痕）');
+  assert.ok(box.querySelector('[data-paper-sell]'), '持仓行应有卖出入口');
+
+  app.state.paper = null;
 });

@@ -65,7 +65,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.5.0';
+const VERSION = '2.6.0';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -7632,6 +7632,428 @@ async function getScreener(params = {}) {
   };
 }
 
+/* =========================================================
+   服务端预警（阶段 2.4，schema v3）
+   ---------------------------------------------------------
+   与前端同一套 v2 规则（price / pct / volume / ma / macd），区别是：
+     - 规则存在服务端（user_extras.alerts），关掉页面也继续盯；
+     - 命中后走已有推送通道（Server酱 / PushPlus / 企业微信 / webhook）；
+     - 每条规则命中一次就置 active=false，不会重复轰炸。
+   评估频率跟着主进程的 60 秒 tick 走；量比与趋势类才拉 K 线，且每轮最多 8 条，
+   避免一个用户挂几十条均线预警把上游打爆。
+   ========================================================= */
+const ALERT_KINDS = ['price', 'pct', 'volume', 'ma', 'macd'];
+const ALERT_KIND_LABEL = { price: '价格', pct: '涨跌幅', volume: '量比', ma: '均线穿越', macd: 'MACD 交叉' };
+const ALERT_OP_LABEL = { above: '突破', below: '跌破', golden: '金叉', dead: '死叉' };
+const ALERT_KLINE_BUDGET = 8;
+
+function isTrendAlert(kind) {
+  return kind === 'ma' || kind === 'macd';
+}
+
+/** 服务端侧的预警归一化（与 public/js/core.js 的 normalizeAlerts 同口径） */
+function normalizeServerAlerts(list) {
+  const out = [];
+  const seen = new Set();
+  (Array.isArray(list) ? list : []).forEach((raw, i) => {
+    if (!raw || !raw.secid) return;
+    const kindRaw = raw.kind;
+    let kind = ALERT_KINDS.includes(kindRaw) ? kindRaw : 'price';
+    let op = raw.op;
+    let value = raw.value;
+    if (!ALERT_KINDS.includes(kindRaw)) {
+      op = raw.type === 'below' ? 'below' : 'above';
+      value = Number(raw.price);
+    }
+    if (isTrendAlert(kind)) {
+      op = op === 'dead' || op === 'below' ? 'dead' : 'golden';
+      value = null;
+    } else {
+      op = op === 'below' ? 'below' : 'above';
+      value = Number(value);
+      if (!Number.isFinite(value)) return;
+    }
+    const secid = String(raw.secid);
+    let id = raw.id ? String(raw.id) : `alert-${Date.now()}-${i}`;
+    if (seen.has(id)) id = `${id}-${i}`;
+    seen.add(id);
+    out.push({
+      id,
+      secid,
+      code: raw.code ? String(raw.code) : '',
+      name: raw.name ? String(raw.name) : '',
+      kind,
+      op,
+      value,
+      active: raw.active !== false,
+      createdAt: Number(raw.createdAt) || Date.now(),
+      triggeredAt: Number(raw.triggeredAt) || null,
+      triggerNote: raw.triggerNote ? String(raw.triggerNote).slice(0, 120) : '',
+    });
+  });
+  return out;
+}
+
+function alertConditionText(a) {
+  const op = ALERT_OP_LABEL[a.op] || a.op;
+  if (isTrendAlert(a.kind)) return `${ALERT_KIND_LABEL[a.kind]} ${op}`;
+  const unit = a.kind === 'pct' ? '%' : a.kind === 'volume' ? ' 倍' : '';
+  return `${ALERT_KIND_LABEL[a.kind]} ${op} ${Number(a.value).toFixed(2)}${unit}`;
+}
+
+/** 读某个用户的预警盒（默认关闭：云端预警要显式打开） */
+function getAlertBox(user) {
+  if (!user) return { enabled: false, items: [], updatedAt: null };
+  const raw = dataStore.loadUserExtra(user.id, 'alerts', null);
+  if (!raw || typeof raw !== 'object') return { enabled: false, items: [], updatedAt: null };
+  return {
+    enabled: raw.enabled === true,
+    items: normalizeServerAlerts(raw.items),
+    updatedAt: Number(raw.updatedAt) || null,
+    lastPush: raw.lastPush || null,
+  };
+}
+
+function saveAlertBox(user, box) {
+  if (!user) return;
+  const payload = {
+    enabled: box.enabled === true,
+    items: normalizeServerAlerts(box.items).slice(0, 100),
+    updatedAt: Date.now(),
+    lastPush: box.lastPush || null,
+  };
+  dataStore.saveUserExtra(user.id, 'alerts', payload);
+  return payload;
+}
+
+/** 单条规则判定：与前端 evalAlertRule 同口径（服务端要独立一份，不能 import 前端模块） */
+function evalAlertRule(alert, quote, kline) {
+  if (!alert) return { hit: false };
+  const price = quote ? Number(quote.price) : NaN;
+  const series = (kline && kline.series) || {};
+  const candles = (kline && kline.candles) || [];
+  if (alert.kind === 'price') {
+    if (!Number.isFinite(price)) return { hit: false };
+    const hit = alert.op === 'below' ? price <= alert.value : price >= alert.value;
+    return { hit, price, note: `最新价 ${nf(price, 2)}` };
+  }
+  if (alert.kind === 'pct') {
+    const pct = quote ? Number(quote.pct) : NaN;
+    if (!Number.isFinite(pct)) return { hit: false };
+    const hit = alert.op === 'below' ? pct <= alert.value : pct >= alert.value;
+    return { hit, price, note: `涨跌幅 ${nf(pct, 2)}%` };
+  }
+  if (alert.kind === 'volume') {
+    if (candles.length < 6) return { hit: false };
+    const last = candles[candles.length - 1];
+    const prev5 = candles.slice(-6, -1).map((c) => Number(c.v) || 0);
+    const avg = prev5.reduce((s, v) => s + v, 0) / prev5.length;
+    if (!avg) return { hit: false };
+    const ratio = (Number(last.v) || 0) / avg;
+    const hit = alert.op === 'below' ? ratio <= alert.value : ratio >= alert.value;
+    return { hit, price, note: `量比 ${nf(ratio, 2)} 倍` };
+  }
+  if (alert.kind === 'ma') {
+    const ma = series.ma20;
+    if (!Array.isArray(ma) || candles.length < 2) return { hit: false };
+    const n = candles.length;
+    const c0 = Number(candles[n - 2].c);
+    const c1 = Number(candles[n - 1].c);
+    const m0 = Number(ma[n - 2]);
+    const m1 = Number(ma[n - 1]);
+    if (![c0, c1, m0, m1].every((v) => Number.isFinite(v))) return { hit: false };
+    const hit = alert.op === 'dead' ? (c0 >= m0 && c1 < m1) : (c0 <= m0 && c1 > m1);
+    return { hit, price, note: `收盘 ${nf(c1, 2)} / MA20 ${nf(m1, 2)}` };
+  }
+  if (alert.kind === 'macd') {
+    const dif = series.dif;
+    const dea = series.dea;
+    if (!Array.isArray(dif) || !Array.isArray(dea) || dif.length < 2) return { hit: false };
+    const n = dif.length;
+    const d0 = Number(dif[n - 2]);
+    const d1 = Number(dif[n - 1]);
+    const e0 = Number(dea[n - 2]);
+    const e1 = Number(dea[n - 1]);
+    if (![d0, d1, e0, e1].every((v) => Number.isFinite(v))) return { hit: false };
+    const hit = alert.op === 'dead' ? (d0 >= e0 && d1 < e1) : (d0 <= e0 && d1 > e1);
+    return { hit, price, note: `DIF ${nf(d1, 2)} / DEA ${nf(e1, 2)}` };
+  }
+  return { hit: false };
+}
+
+/**
+ * 评估一个用户的云端预警。返回本次触发的条数。
+ * 只在「有启用规则」时被调用，避免给没开预警的用户发无谓请求。
+ */
+async function evaluateUserAlerts(user, opts = {}) {
+  const box = getAlertBox(user);
+  if (!box.enabled) return 0;
+  const active = box.items.filter((a) => a.active);
+  if (!active.length) return 0;
+
+  const secids = [...new Set(active.map((a) => a.secid))].slice(0, 60);
+  let quotes = [];
+  try {
+    quotes = await fetchQuoteList(secids, 'stock');
+  } catch {
+    return 0; // 行情取不到就等下一轮，不做误判
+  }
+  const qmap = new Map((quotes || []).map((q) => [q.secid, q]));
+
+  let klineUsed = 0;
+  let triggered = 0;
+  for (const alert of active) {
+    const q = qmap.get(alert.secid) || null;
+    let kline = null;
+    if (alert.kind === 'volume' || isTrendAlert(alert.kind)) {
+      if (klineUsed >= ALERT_KLINE_BUDGET) continue; // 预算用尽，下一轮再说
+      klineUsed += 1;
+      try {
+        kline = await getKline(alert.secid, 101, 120);
+      } catch {
+        kline = null;
+      }
+    }
+    const res = evalAlertRule(alert, q, kline);
+    if (!res.hit) continue;
+    alert.active = false;
+    alert.triggeredAt = Date.now();
+    alert.triggerNote = res.note || '';
+    triggered += 1;
+
+    if (opts.push !== false) {
+      const msg = `${alert.name || alert.code} ${alertConditionText(alert)}${res.note ? ` · ${res.note}` : ''}`;
+      try {
+        await pushService.sendPushMessage({
+          title: `预警触发 · ${alert.name || alert.code}`,
+          content: [`### 条件预警触发`, `- 标的：${alert.name || ''} ${alert.code || ''}`, `- 条件：${alertConditionText(alert)}`, `- ${res.note || ''}`, `- 触发时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`, `- 账号：${user.username || ''}`].join('\n'),
+        });
+        box.lastPush = { at: Date.now(), ok: true, message: msg };
+      } catch (err) {
+        box.lastPush = { at: Date.now(), ok: false, message: `${msg}（推送失败：${err.message}）` };
+      }
+    }
+  }
+
+  if (triggered) {
+    box.items = normalizeServerAlerts(box.items);
+    saveAlertBox(user, box);
+  }
+  return triggered;
+}
+
+/** 主进程 60 秒 tick 调它：遍历所有开了云端预警的用户 */
+let alertsTicking = false;
+async function alertsTick() {
+  if (alertsTicking) return;
+  alertsTicking = true;
+  try {
+    const owners = dataStore.listUserExtraOwners('alerts').slice(0, 50);
+    if (!owners.length) return;
+    const users = (dataStore.loadUsers() || {}).users || [];
+    const byId = new Map(users.map((u) => [String(u.id), u]));
+    for (const id of owners) {
+      const user = byId.get(String(id));
+      if (!user) continue;
+      const box = getAlertBox(user);
+      if (!box.enabled || !box.items.some((a) => a.active)) continue;
+      try {
+        await evaluateUserAlerts(user);
+      } catch {
+        // 单个用户失败不影响其它用户
+      }
+    }
+  } finally {
+    alertsTicking = false;
+  }
+}
+
+/* =========================================================
+   模拟交易（阶段 3.3，schema v3）
+   ---------------------------------------------------------
+   单账户、A 股规则口径：买入按最新价成交，卖出扣印花税；
+   成交时把当日大盘评分一起记进 trades，便于回看「什么信号下做的这笔」。
+   这里不是实盘，费用按常见档位估算，仅用于复盘。
+   ========================================================= */
+const PAPER_INITIAL = 1000000;
+const PAPER_FEE_RATE = 0.00025; // 佣金万 2.5
+const PAPER_FEE_MIN = 5;        // 最低 5 元
+const PAPER_TAX_RATE = 0.0005;  // 卖出印花税万 5
+
+function getPaperAccount(user) {
+  const empty = {
+    initial: PAPER_INITIAL,
+    cash: PAPER_INITIAL,
+    positions: {},
+    trades: [],
+    updatedAt: null,
+  };
+  if (!user) return empty;
+  const raw = dataStore.loadUserExtra(user.id, 'paper', null);
+  if (!raw || typeof raw !== 'object') return empty;
+  return {
+    initial: Number(raw.initial) || PAPER_INITIAL,
+    cash: Number.isFinite(Number(raw.cash)) ? Number(raw.cash) : PAPER_INITIAL,
+    positions: raw.positions && typeof raw.positions === 'object' ? raw.positions : {},
+    trades: Array.isArray(raw.trades) ? raw.trades.slice(-200) : [],
+    updatedAt: Number(raw.updatedAt) || null,
+  };
+}
+
+function savePaperAccount(user, account) {
+  if (!user) return null;
+  const payload = {
+    initial: Number(account.initial) || PAPER_INITIAL,
+    cash: Math.round(Number(account.cash) * 100) / 100,
+    positions: account.positions || {},
+    trades: (account.trades || []).slice(-200),
+    updatedAt: Date.now(),
+  };
+  dataStore.saveUserExtra(user.id, 'paper', payload);
+  return payload;
+}
+
+/** 模拟交易看板：账户 + 持仓（带现价/浮盈）+ 最近成交 */
+async function getPaper(user) {
+  const account = getPaperAccount(user);
+  const secids = Object.keys(account.positions);
+  let quotes = [];
+  if (secids.length) {
+    try {
+      quotes = await fetchQuoteList(secids, 'stock');
+    } catch {
+      quotes = [];
+    }
+  }
+  const qmap = new Map((quotes || []).map((q) => [q.secid, q]));
+  let marketValue = 0;
+  let costValue = 0;
+  const positions = Object.entries(account.positions).map(([secid, p]) => {
+    const q = qmap.get(secid) || null;
+    const price = q && Number.isFinite(Number(q.price)) ? Number(q.price) : Number(p.cost);
+    const mv = price * Number(p.shares || 0);
+    const cv = Number(p.cost || 0) * Number(p.shares || 0);
+    marketValue += mv;
+    costValue += cv;
+    return {
+      secid,
+      code: p.code || '',
+      name: p.name || '',
+      shares: Number(p.shares) || 0,
+      cost: Number(p.cost) || 0,
+      price,
+      pct: q ? Number(q.pct) : null,
+      marketValue: Math.round(mv * 100) / 100,
+      profit: Math.round((mv - cv) * 100) / 100,
+      profitPct: cv ? Math.round(((mv - cv) / cv) * 10000) / 100 : null,
+    };
+  });
+  const total = account.cash + marketValue;
+  return {
+    initial: account.initial,
+    cash: Math.round(account.cash * 100) / 100,
+    marketValue: Math.round(marketValue * 100) / 100,
+    total: Math.round(total * 100) / 100,
+    profit: Math.round((total - account.initial) * 100) / 100,
+    profitPct: account.initial ? Math.round(((total - account.initial) / account.initial) * 10000) / 100 : 0,
+    positions: positions.sort((a, b) => b.marketValue - a.marketValue),
+    trades: account.trades.slice(-50).reverse(),
+    updatedAt: account.updatedAt,
+    rules: { feeRate: PAPER_FEE_RATE, feeMin: PAPER_FEE_MIN, taxRate: PAPER_TAX_RATE },
+  };
+}
+
+/** 下单：buy / sell，按最新价成交 */
+async function paperTrade(user, payload = {}) {
+  const bad = (m) => Object.assign(new Error(m), { status: 400 });
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  const secid = String(payload.secid || '');
+  if (!/^\d+\.[0-9A-Za-z]+$/.test(secid)) throw bad('标的不合法');
+  const side = payload.side === 'sell' ? 'sell' : 'buy';
+  const shares = Math.floor(Number(payload.shares));
+  if (!Number.isFinite(shares) || shares <= 0) throw bad('股数必须是正整数');
+  if (shares > 1000000) throw bad('单笔股数过大');
+  // A 股（0./1. 前缀的 6 位代码）要求 100 股整数倍
+  if (/^[01]\.\d{6}$/.test(secid) && shares % 100 !== 0) throw bad('A 股买入必须是 100 股的整数倍');
+
+  const quotes = await fetchQuoteList([secid], 'stock');
+  const quote = (quotes || [])[0];
+  if (!quote || !Number.isFinite(Number(quote.price)) || Number(quote.price) <= 0) {
+    throw bad('取不到最新价，稍后再试');
+  }
+  const price = Number(quote.price);
+  const amount = price * shares;
+  const fee = Math.max(PAPER_FEE_MIN, amount * PAPER_FEE_RATE);
+
+  const account = getPaperAccount(user);
+  const positions = { ...account.positions };
+  const pos = positions[secid] ? { ...positions[secid] } : null;
+
+  // 当日大盘评分留痕：成交时的评分/评级一起存进记录
+  let signal = null;
+  try {
+    const adv = await getAdvice('balanced');
+    signal = { score: adv && adv.score, rating: adv && adv.rating ? adv.rating.label : null, asOf: adv && adv.asOf };
+  } catch {
+    signal = null;
+  }
+
+  let cash = account.cash;
+  if (side === 'buy') {
+    const cost = amount + fee;
+    if (cost > cash + 0.005) throw bad(`可用资金不足（需要 ${nf(cost, 2)} 元，现有 ${nf(cash, 2)} 元）`);
+    cash -= cost;
+    if (pos) {
+      const newShares = Number(pos.shares) + shares;
+      const newCost = (Number(pos.cost) * Number(pos.shares) + amount + fee) / newShares;
+      positions[secid] = { ...pos, shares: newShares, cost: Math.round(newCost * 10000) / 10000 };
+    } else {
+      positions[secid] = {
+        code: String(quote.code || secid.split('.')[1] || ''),
+        name: String(quote.name || ''),
+        shares,
+        cost: Math.round(((amount + fee) / shares) * 10000) / 10000,
+      };
+    }
+  } else {
+    if (!pos || Number(pos.shares) < shares) throw bad('持仓不足，无法卖出');
+    const tax = amount * PAPER_TAX_RATE;
+    cash += amount - fee - tax;
+    const remain = Number(pos.shares) - shares;
+    if (remain <= 0) delete positions[secid];
+    else positions[secid] = { ...pos, shares: remain };
+  }
+
+  const trade = {
+    id: `t-${Date.now()}-${Math.floor(Math.random() * 9999)}`,
+    ts: Date.now(),
+    secid,
+    code: String(quote.code || secid.split('.')[1] || ''),
+    name: String(quote.name || ''),
+    side,
+    price,
+    shares,
+    amount: Math.round(amount * 100) / 100,
+    fee: Math.round((fee + (side === 'sell' ? amount * PAPER_TAX_RATE : 0)) * 100) / 100,
+    note: String(payload.note || '').slice(0, 80),
+    signal,
+  };
+
+  savePaperAccount(user, {
+    initial: account.initial,
+    cash,
+    positions,
+    trades: [...account.trades, trade],
+  });
+  return { trade, account: await getPaper(user) };
+}
+
+function resetPaper(user) {
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  savePaperAccount(user, { initial: PAPER_INITIAL, cash: PAPER_INITIAL, positions: {}, trades: [] });
+  return { ok: true, initial: PAPER_INITIAL };
+}
+
 const deployToNas = createDeployToNas({ rootDir: __dirname, version: VERSION });
 
 const httpRoutes = createHttpRoutes({
@@ -7661,6 +8083,11 @@ const httpRoutes = createHttpRoutes({
   dropSession,
   estimateFundDayPctBatch,
   fetchFundMNFInfo,
+  getAlertBox,
+  saveAlertBox,
+  getPaper,
+  paperTrade,
+  resetPaper,
   fetchQuoteList,
   flushStats,
   fs,
@@ -8019,6 +8446,8 @@ server.listen(PORT, HOST, () => {
     runPushTick().catch(() => {});
     // 持仓策略：补齐昨日评价 + 14:35 后自动记录当天建议（内部做幂等与交易日判断）
     strategyLog.tick().catch(() => {});
+    // 服务端预警（阶段 2.4）：关掉页面也继续盯，命中走推送
+    alertsTick().catch(() => {});
   }, 60000);
   const pushCfg = loadPushConfig();
   if (pushCfg.enabled) {

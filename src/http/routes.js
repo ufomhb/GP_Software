@@ -36,6 +36,11 @@ function createHttpRoutes(deps) {
     dropSession,
     estimateFundDayPctBatch,
     fetchFundMNFInfo,
+    getAlertBox,
+    saveAlertBox,
+    getPaper,
+    paperTrade,
+    resetPaper,
     fetchQuoteList,
     flushStats,
     fs,
@@ -898,6 +903,44 @@ async function handleApi(req, res, url) {
     const code = q.get('code') || '';
     if (!code && !secid) throw new Error('缺少股票代码');
     return datacenter.f10(secid, code);
+  }
+  /* ---------------------------------------------------------
+     服务端预警（阶段 2.4）/ 模拟交易（3.3）/ 个股资讯（3.6）
+     --------------------------------------------------------- */
+  if (p === '/api/alerts') {
+    if (req.method === 'POST') {
+      const user = currentUser(req);
+      if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+      const body = req.body || {};
+      const current = getAlertBox(user);
+      const merged = saveAlertBox(user, {
+        enabled: body.enabled === undefined ? current.enabled : body.enabled === true,
+        items: body.items === undefined ? current.items : body.items,
+      });
+      return { ok: true, enabled: merged.enabled, items: merged.items, updatedAt: merged.updatedAt };
+    }
+    return getAlertBox(currentUser(req));
+  }
+  if (p === '/api/paper') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return getPaper(user);
+  }
+  if (p === '/api/paper/trade' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return paperTrade(user, req.body || {});
+  }
+  if (p === '/api/paper/reset' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return resetPaper(user);
+  }
+  if (p === '/api/stock/news') {
+    const code = q.get('code');
+    // 业务参数错误给 400，否则会被默认映射成 502（服务暂时不可用），前端看不出是参数问题
+    if (!code) throw Object.assign(new Error('缺少股票代码'), { status: 400 });
+    return datacenter.stockNews(code, { limit: Number(q.get('limit') || 10) });
   }
   if (p === '/api/search') return getSearch(q.get('q'));
   if (p === '/api/flow') {

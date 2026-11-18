@@ -2976,3 +2976,33 @@ button[hidden] { display: none !important; }
   .hk-row .hk-price { min-width: 56px; }
 }
 
+
+/* ============ v2.6.0：云端预警 / 模拟交易 / 个股资讯 ============ */
+.cloud-alert-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 9px;
+  background: rgba(56, 189, 248, 0.05);
+}
+.cloud-alert-row .auto-toggle { flex: none; }
+.cloud-alert-row .muted.small { margin-left: auto; }
+
+.paper-kpis { margin-top: 12px; }
+.paper-pos-table td,
+.paper-trade-table td { vertical-align: middle; }
+.paper-pos-table .tag,
+.paper-trade-table .tag { padding: 1px 6px; border-radius: 4px; font-size: 9px; }
+.paper-trade-table .tag.in { color: var(--up); border: 1px solid rgba(255, 77, 94, 0.35); }
+.paper-trade-table .tag.out { color: var(--down); border: 1px solid rgba(22, 199, 132, 0.35); }
+
+@media (max-width: 780px) {
+  .cloud-alert-row { gap: 8px; }
+  .cloud-alert-row .muted.small { margin-left: 0; width: 100%; }
+  .paper-pos-table,
+  .paper-trade-table { min-width: 640px; }
+}
+

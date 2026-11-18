@@ -20,7 +20,7 @@ import {
   sectorCompareBar,
   usSectorFlowBar,
   COLORS,
-} from './charts.js?v=2.5.0';
+} from './charts.js?v=2.6.0';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -38,11 +38,11 @@ import {
   esc,
   safeUrl,
   timeText,
-} from './util.js?v=2.5.0';
+} from './util.js?v=2.6.0';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.5.0';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.5.0';
+import { $, $$, toast, debounce } from './dom.js?v=2.6.0';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.6.0';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -51,7 +51,7 @@ import {
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.5.0';
+} from './core.js?v=2.6.0';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -66,7 +66,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.5.0';
+} from './views/funds.js?v=2.6.0';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -76,7 +76,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.5.0';
+} from './views/market.js?v=2.6.0';
 
 
 /* =========================================================
@@ -3480,6 +3480,12 @@ function renderAlerts() {
   const rows = state.alerts;
   const activeRows = rows.filter((a) => a.active);
   const hitRows = rows.filter((a) => !a.active).sort((a, b) => (b.triggeredAt || 0) - (a.triggeredAt || 0));
+  // 云端预警状态（阶段 2.4）：规则存服务端，关页面也继续盯
+  const cloud = state.cloudAlerts || { enabled: false, items: [] };
+  const cloudActive = (cloud.items || []).filter((a) => a.active).length;
+  const cloudText = cloud.enabled
+    ? `已同步 ${(cloud.items || []).length} 条（监控中 ${cloudActive}）· 命中后走推送${cloud.lastPush ? ` · 上次${cloud.lastPush.ok ? '已推送' : '推送失败'}` : ''}`
+    : '未开启：关掉页面后不再监控';
   el.innerHTML = `
     <div class="panel-head"><div><div class="eyebrow">CONDITION ALERTS</div><h2>条件预警</h2></div><span class="badge">${activeRows.length} 条监控中</span></div>
     ${rows.length ? `<div class="alert-list">${[...activeRows, ...hitRows].map((a) => `
@@ -3491,10 +3497,50 @@ function renderAlerts() {
         <span class="alert-state ${a.active ? 'on' : 'hit'}">${a.active ? '监控中' : '已触发'}</span>
         <button class="alert-del" title="删除" data-alert-id="${esc(a.id)}">×</button>
       </div>`).join('')}</div>` : '<div class="empty">还没有条件预警。打开任意股票详情，可选价格、涨跌幅、量比、均线穿越与 MACD 交叉。</div>'}
-    <div class="mt12 row-between">
+    <div class="cloud-alert-row mt12">
+      <label class="auto-toggle" title="开启后规则存到服务端，关掉页面也会继续盯，命中时走推送">
+        <input type="checkbox" id="cloudAlertToggle" ${cloud && cloud.enabled ? 'checked' : ''}>
+        <span class="switch-ui"></span>
+        <span>云端预警</span>
+      </label>
+      <button class="btn small" id="cloudAlertSync">同步规则到云端</button>
+      <span class="muted small" id="cloudAlertMeta">${esc(cloudText)}</span>
+    </div>
+    <div class="mt8 row-between">
       <button class="btn small" data-action="notify">${('Notification' in window) && Notification.permission === 'granted' ? '通知已开启' : '开启浏览器通知'}</button>
-      <span class="muted small">预警仅在页面打开时监控（云端推送见后台）</span>
+      <span class="muted small">本地预警仅在页面打开时监控</span>
     </div>`;
+
+  const cloudToggle = $('#cloudAlertToggle');
+  if (cloudToggle) {
+    cloudToggle.addEventListener('change', async () => {
+      const on = cloudToggle.checked;
+      try {
+        // 开启时顺手把当前本地规则一起推上去，避免"开了云端但一条规则都没有"
+        await saveCloudAlerts(on, on ? state.alerts : undefined);
+        toast(on ? '云端预警已开启，关闭页面后仍会监控' : '云端预警已关闭', on ? 'ok' : 'info', 3000);
+      } catch (err) {
+        cloudToggle.checked = !on;
+        toast(`云端预警设置失败：${err.message}`, 'err');
+      }
+    });
+  }
+  const syncBtn = $('#cloudAlertSync');
+  if (syncBtn) {
+    syncBtn.addEventListener('click', async () => {
+      syncBtn.disabled = true;
+      syncBtn.textContent = '同步中…';
+      try {
+        const res = await saveCloudAlerts(true, state.alerts);
+        toast(`已同步 ${(res.items || []).length} 条规则到云端`, 'ok');
+      } catch (err) {
+        toast(`同步失败：${err.message}`, 'err');
+      } finally {
+        syncBtn.disabled = false;
+        syncBtn.textContent = '同步规则到云端';
+      }
+    });
+  }
 }
 
 function renderWatchTips() {
@@ -3509,6 +3555,205 @@ function renderWatchTips() {
       <li>数据刷新频率默认 15 秒；可在右上角设置中调整，或关闭自动刷新。</li>
       <li>所有评分均为规则模型输出，不构成买卖指令。</li>
     </ul>`;
+}
+
+/* =========================================================
+   云端预警（阶段 2.4：规则存服务端，关掉页面也继续盯）
+   ========================================================= */
+
+async function loadCloudAlerts() {
+  try {
+    const data = await api('/api/alerts', 15000);
+    state.cloudAlerts = data && typeof data === 'object' ? data : { enabled: false, items: [] };
+  } catch {
+    // 未登录或接口不可用时保持「本地预警」模式，不影响页面
+    state.cloudAlerts = state.cloudAlerts || { enabled: false, items: [] };
+  }
+  renderAlerts();
+}
+
+async function saveCloudAlerts(enabled, items) {
+  const payload = { enabled };
+  if (items) payload.items = items;
+  const data = await apiPost('/api/alerts', payload);
+  state.cloudAlerts = { ...(state.cloudAlerts || {}), ...(data || {}) };
+  renderAlerts();
+  return data;
+}
+
+/* =========================================================
+   模拟交易（阶段 3.3）
+   ========================================================= */
+
+async function loadPaper(force = false) {
+  if (!force && state.paper) { renderPaper(); return; }
+  try {
+    state.paper = await api('/api/paper', 20000);
+  } catch (err) {
+    if ($('#paperPanel')) {
+      $('#paperPanel').innerHTML = `<div class="panel-head"><h3>模拟交易</h3></div><div class="empty">加载失败：${esc(err.message)}</div>`;
+    }
+    return;
+  }
+  renderPaper();
+}
+
+function renderPaper() {
+  const el = $('#paperPanel');
+  if (!el) return;
+  const d = state.paper;
+  if (!d) { el.innerHTML = '<div class="empty">加载模拟交易账户…</div>'; return; }
+  const tone = d.profit >= 0 ? 'tone-up' : 'tone-down';
+  const posRows = (d.positions || []).map((p) => `<tr>
+    <td><span class="t-name">${esc(cleanName(p.name))}</span><span class="t-sub">${esc(p.code)}</span></td>
+    <td>${nf(p.shares, 0)}</td>
+    <td>${nf(p.cost, 3)}</td>
+    <td>${nf(p.price, 3)}</td>
+    <td class="${toneClass(p.pct)}">${p.pct === null ? '--' : pctFmt(p.pct)}</td>
+    <td>${nf(p.marketValue, 0)}</td>
+    <td class="${toneClass(p.profit)}">${nf(p.profit, 0)}</td>
+    <td class="${toneClass(p.profitPct)}">${p.profitPct === null ? '--' : `${nf(p.profitPct, 2)}%`}</td>
+    <td><button class="text-link" data-paper-sell="${esc(p.secid)}" data-paper-name="${esc(p.name)}" data-paper-shares="${p.shares}">卖出</button></td>
+  </tr>`).join('') || '<tr><td colspan="9"><div class="empty">还没有模拟持仓。点「模拟买入」按最新价建仓。</div></td></tr>';
+
+  const tradeRows = (d.trades || []).slice(0, 20).map((t) => `<tr>
+    <td>${esc(timeText(t.ts))}</td>
+    <td><span class="tag ${t.side === 'buy' ? 'in' : 'out'}">${t.side === 'buy' ? '买' : '卖'}</span></td>
+    <td><span class="t-name">${esc(cleanName(t.name))}</span><span class="t-sub">${esc(t.code)}</span></td>
+    <td>${nf(t.price, 3)}</td>
+    <td>${nf(t.shares, 0)}</td>
+    <td>${nf(t.amount, 0)}</td>
+    <td>${nf(t.fee, 2)}</td>
+    <td class="t-sub">${t.signal && t.signal.score !== undefined ? `评分 ${t.signal.score}${t.signal.rating ? ` · ${esc(t.signal.rating)}` : ''}` : '--'}</td>
+  </tr>`).join('') || '<tr><td colspan="8"><div class="empty">还没有成交记录</div></td></tr>';
+
+  el.innerHTML = `
+    <div class="panel-head">
+      <div>
+        <div class="eyebrow">PAPER TRADING</div>
+        <h3>模拟交易 · 账户与信号留痕</h3>
+        <span class="muted small">按最新价成交，佣金万 2.5（最低 5 元）、卖出印花税万 5；仅用于复盘，不是实盘</span>
+      </div>
+      <div class="head-actions">
+        <button class="btn primary small" id="paperBuyBtn">模拟买入</button>
+        <button class="text-link" id="paperResetBtn">重置账户</button>
+      </div>
+    </div>
+    <div class="fund-summary-grid paper-kpis">
+      <div class="summary-card"><div class="sc-label">总资产</div><div class="sc-value">${nf(d.total, 0)}</div><div class="sc-sub">初始 ${nf(d.initial, 0)}</div></div>
+      <div class="summary-card"><div class="sc-label">可用资金</div><div class="sc-value">${nf(d.cash, 0)}</div><div class="sc-sub">现金</div></div>
+      <div class="summary-card"><div class="sc-label">持仓市值</div><div class="sc-value">${nf(d.marketValue, 0)}</div><div class="sc-sub">${(d.positions || []).length} 只</div></div>
+      <div class="summary-card"><div class="sc-label">累计盈亏</div><div class="sc-value ${tone}">${nf(d.profit, 0)}</div><div class="sc-sub">${nf(d.profitPct, 2)}%</div></div>
+    </div>
+    <div class="table-scroll mt12"><table class="table paper-pos-table">
+      <thead><tr><th>持仓</th><th>股数</th><th>成本</th><th>现价</th><th>当日</th><th>市值</th><th>浮盈</th><th>收益率</th><th></th></tr></thead>
+      <tbody>${posRows}</tbody>
+    </table></div>
+    <div class="modal-section-title">最近成交（含成交时的大盘评分）</div>
+    <div class="table-scroll tall-table"><table class="table paper-trade-table">
+      <thead><tr><th>时间</th><th>方向</th><th>标的</th><th>价</th><th>股数</th><th>金额</th><th>费用</th><th>信号</th></tr></thead>
+      <tbody>${tradeRows}</tbody>
+    </table></div>`;
+
+  const buyBtn = $('#paperBuyBtn');
+  if (buyBtn) buyBtn.addEventListener('click', () => openPaperTrade('buy'));
+  const resetBtn = $('#paperResetBtn');
+  if (resetBtn) resetBtn.addEventListener('click', async () => {
+    if (!confirm('确定把模拟账户重置为 100 万、清空持仓与成交记录？')) return;
+    try {
+      await apiPost('/api/paper/reset', {});
+      await loadPaper(true);
+      toast('模拟账户已重置', 'ok');
+    } catch (err) {
+      toast(`重置失败：${err.message}`, 'err');
+    }
+  });
+  $$('[data-paper-sell]', el).forEach((b) => b.addEventListener('click', () => {
+    openPaperTrade('sell', { secid: b.dataset.paperSell, name: b.dataset.paperName, shares: Number(b.dataset.paperShares) });
+  }));
+}
+
+/** 买入/卖出弹窗 */
+function openPaperTrade(side = 'buy', preset = {}) {
+  const d = state.paper || {};
+  const watch = state.watchlist || [];
+  const options = watch.map((w) => `<option value="${esc(w.secid)}" data-name="${esc(w.name)}">${esc(cleanName(w.name))} ${esc(w.code)}</option>`).join('');
+  mountOverlay(`
+    <div class="modal modal-sm">
+      <div class="modal-head">
+        <div class="modal-title"><h2>${side === 'buy' ? '模拟买入' : '模拟卖出'}</h2></div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      ${preset.secid ? `<div class="muted small mb8">标的：${esc(cleanName(preset.name || ''))} · 持仓 ${nf(preset.shares, 0)} 股</div>` : ''}
+      <form id="paperForm" class="pw-form" autocomplete="off">
+        ${preset.secid ? '' : `<label class="input-wrap"><span>标的</span><select id="paperSecid">${options || '<option value="">（自选为空，请先加自选）</option>'}</select></label>`}
+        <label class="input-wrap"><span>股数</span><input id="paperShares" type="number" min="100" step="100" value="${preset.shares && side === 'sell' ? preset.shares : 100}" placeholder="100 的整数倍"></label>
+        <label class="input-wrap"><span>备注</span><input id="paperNote" maxlength="40" placeholder="可选，如：回踩 MA20 买入"></label>
+        <p class="muted small">按提交时的最新价成交；A 股需 100 股整数倍。可用资金 ${nf(d.cash, 0)} 元。</p>
+        <div class="modal-actions"><button class="btn primary" type="submit" id="paperSubmit">确认${side === 'buy' ? '买入' : '卖出'}</button></div>
+      </form>
+    </div>`);
+  const form = $('#paperForm');
+  if (!form) return;
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const secid = preset.secid || ($('#paperSecid') ? $('#paperSecid').value : '');
+    const shares = Number($('#paperShares').value);
+    const note = $('#paperNote') ? $('#paperNote').value : '';
+    if (!secid) { toast('请选择标的', 'warn'); return; }
+    const btn = $('#paperSubmit');
+    btn.disabled = true;
+    btn.textContent = '提交中…';
+    try {
+      const res = await apiPost('/api/paper/trade', { secid, side, shares, note });
+      state.paper = res.account;
+      closeOverlay();
+      renderPaper();
+      toast(`${side === 'buy' ? '买入' : '卖出'}成功：${shares} 股 @ ${nf(res.trade.price, 3)}`, 'ok');
+    } catch (err) {
+      toast(`下单失败：${err.message}`, 'err');
+      btn.disabled = false;
+      btn.textContent = `确认${side === 'buy' ? '买入' : '卖出'}`;
+    }
+  });
+}
+
+/* =========================================================
+   个股资讯（阶段 3.6）
+   ========================================================= */
+
+async function openStockNews(code, name) {
+  if (!code) return;
+  const overlay = mountOverlay(`
+    <div class="drawer">
+      <div class="drawer-head">
+        <div><div class="eyebrow">STOCK NEWS</div><h2>${esc(cleanName(name) || code)} · 资讯</h2><span class="code">${esc(code)}</span></div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="empty">正在检索相关资讯…</div>
+    </div>`, 'drawer-overlay');
+  try {
+    const data = await api(`/api/stock/news?code=${encodeURIComponent(code)}&limit=12`, 30000);
+    if (!document.body.contains(overlay)) return;
+    const drawer = $('.drawer');
+    if (!drawer) return;
+    const items = (data && data.items) || [];
+    drawer.innerHTML = `
+      <div class="drawer-head">
+        <div><div class="eyebrow">STOCK NEWS</div><h2>${esc(cleanName(name) || code)} · 资讯</h2><span class="code">${esc(code)}</span></div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      ${items.length ? `<div class="news-list">${items.map((x) => `
+        <a class="news-item news-neutral" href="${esc(safeUrl(x.url))}" target="_blank" rel="noopener noreferrer">
+          <div class="news-meta"><span>${esc((x.time || '').slice(5, 16))}</span>${x.source ? `<span class="sent">${esc(x.source)}</span>` : ''}</div>
+          <div class="news-title">${esc(x.title)}</div>
+          ${x.summary ? `<div class="news-summary">${esc(x.summary)}</div>` : ''}
+        </a>`).join('')}</div>` : '<div class="empty">没有检索到相关资讯</div>'}
+      <p class="muted small mt12">${esc((data && data.note) || '')}</p>`;
+  } catch (err) {
+    toast(`资讯加载失败：${err.message}`, 'err');
+    closeOverlay();
+  }
 }
 
 /* =========================================================
@@ -5243,6 +5488,7 @@ function renderStockModal(data) {
         <div class="modal-actions">
           <button class="btn primary" id="modalWatch" ${inWatch ? 'disabled' : ''}>${inWatch ? '已加入自选' : '加入自选'}</button>
           <button class="btn" data-f10-open data-f10-secid="${esc(q.secid)}" data-f10-code="${esc(q.code)}" data-f10-name="${esc(q.name)}">基本面 / 龙虎榜</button>
+          <button class="btn" data-news-open data-news-code="${esc(q.code)}" data-news-name="${esc(q.name)}">个股资讯</button>
           <button class="btn" data-goto="strategy" data-close>查看大盘策略</button>
         </div>
         <div class="modal-advice">
@@ -6454,6 +6700,8 @@ function loadView(view) {
     renderWatchFunds();
     loadWatchData();
     loadFundWatch();
+    loadCloudAlerts();
+    loadPaper();
   }
 }
 
@@ -6626,6 +6874,13 @@ function bindEvents() {
       e.preventDefault();
       const st = state.stockModal || {};
       openFundamental(f10Btn.dataset.f10Secid || st.secid, f10Btn.dataset.f10Code || st.code, f10Btn.dataset.f10Name || st.name);
+      return;
+    }
+    const newsBtn = e.target.closest('[data-news-open]');
+    if (newsBtn) {
+      e.preventDefault();
+      const st = state.stockModal || {};
+      openStockNews(newsBtn.dataset.newsCode || st.code, newsBtn.dataset.newsName || st.name);
       return;
     }
     const idx = e.target.closest('[data-index-secid]');
@@ -7441,6 +7696,8 @@ async function init() {
   syncKlineSegs();
   renderAlerts();
   renderWatchTips();
+  // 云端预警与模拟交易：登录后拉一次，切到自选页会再刷新
+  loadCloudAlerts();
   renderClock();
   setInterval(renderClock, 1000);
   startActivityPing();
@@ -7501,5 +7758,7 @@ export {
   renderStockModal, renderUsStockModal, usPointsFor, usHotItemOf, renderUS,
   // 数据中心（阶段 2）
   switchDataTab, renderLonghu, renderCalendar, renderConvertibles, renderScreener,
+  // 阶段 2.4 / 3.3：云端预警与模拟交易面板
+  renderPaper, loadCloudAlerts,
 };
 
