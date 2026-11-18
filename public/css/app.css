@@ -3010,17 +3010,22 @@ button[hidden] { display: none !important; }
 }
 
 
-/* 龙虎榜：手机上列太多，隐藏「换手 / 买入 / 卖出 / 成交占比」四列，
-   保留 股票 / 收盘 / 涨跌幅 / 上榜净额 / 上榜原因 —— 原因比明细金额更有信息量 */
+/* 龙虎榜：手机上列太多，改成「股票 / 涨跌幅 / 上榜净额 / 上榜原因」四列固定宽度，
+   原因列换行显示（原因比买入卖出明细更有信息量），不做横向溢出 */
 @media (max-width: 700px) {
-  .longhu-table th:nth-child(4),
-  .longhu-table td:nth-child(4),
-  .longhu-table th:nth-child(6),
-  .longhu-table td:nth-child(6),
-  .longhu-table th:nth-child(7),
-  .longhu-table td:nth-child(7),
-  .longhu-table th:nth-child(8),
-  .longhu-table td:nth-child(8) { display: none; }
-  .longhu-table td:last-child { max-width: 150px; white-space: normal; line-height: 1.5; }
+  .longhu-table { table-layout: fixed; width: 100%; }
+  .longhu-table th:nth-child(2), .longhu-table td:nth-child(2),
+  .longhu-table th:nth-child(4), .longhu-table td:nth-child(4),
+  .longhu-table th:nth-child(6), .longhu-table td:nth-child(6),
+  .longhu-table th:nth-child(7), .longhu-table td:nth-child(7),
+  .longhu-table th:nth-child(8), .longhu-table td:nth-child(8) { display: none; }
+  .longhu-table th:nth-child(1) { width: 24%; }
+  .longhu-table th:nth-child(3) { width: 18%; }
+  .longhu-table th:nth-child(5) { width: 20%; }
+  .longhu-table th:nth-child(9) { width: 38%; }
+  .longhu-table th,
+  .longhu-table td { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
+  /* .table .t-sub 有自己的 white-space:nowrap，这里要压过它，否则原因会被截断成一行 */
+  .longhu-table .t-sub { white-space: normal; font-size: 9px; }
 }
 
