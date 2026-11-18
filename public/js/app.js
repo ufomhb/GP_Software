@@ -3550,10 +3550,11 @@ function renderWatchTips() {
     <div class="panel-head"><div><div class="eyebrow">HOW TO USE</div><h2>使用提示</h2></div></div>
     <ul class="tips-list">
       <li>自选股会同时拉取技术评分：≥60 偏多，45–60 中性，&lt;45 偏空</li>
-      <li>价格预警保存在本机浏览器，关闭页面后不会后台运行；重新打开后继续监控。</li>
-      <li>点击 K 查看线K、支撑压力与主力资金；点击“警”快速为该股设置突破/跌破提醒。</li>
-      <li>数据刷新频率默认 15 秒；可在右上角设置中调整，或关闭自动刷新。</li>
-      <li>所有评分均为规则模型输出，不构成买卖指令。</li>
+      <li>条件预警支持五类规则：价格、涨跌幅、量比、均线穿越 MA20、MACD 金叉死叉</li>
+      <li>打开「云端预警」后规则存到服务端，关掉页面也继续监控，命中走后台配置的推送通道；不开启则只在本页面运行</li>
+      <li>点击 K 看 K 线、支撑压力与主力资金；打开个股详情的「基本面 / 龙虎榜」「个股资讯」可看 F10 与相关新闻</li>
+      <li>数据刷新频率默认 15 秒；可在右上角设置中调整，或关闭自动刷新</li>
+      <li>模拟交易按最新价成交、含费用，仅用于复盘；所有评分均为规则模型输出，不构成买卖指令</li>
     </ul>`;
 }
 
@@ -3603,7 +3604,8 @@ function renderPaper() {
   if (!el) return;
   const d = state.paper;
   if (!d) { el.innerHTML = '<div class="empty">加载模拟交易账户…</div>'; return; }
-  const tone = d.profit >= 0 ? 'tone-up' : 'tone-down';
+  // 0 收益用中性色，避免"平盘也标红"
+  const tone = d.profit > 0 ? 'tone-up' : d.profit < 0 ? 'tone-down' : 'muted';
   const posRows = (d.positions || []).map((p) => `<tr>
     <td><span class="t-name">${esc(cleanName(p.name))}</span><span class="t-sub">${esc(p.code)}</span></td>
     <td>${nf(p.shares, 0)}</td>

@@ -2674,11 +2674,12 @@ strong { font-weight: 650; }
 }
 @media (max-width: 560px) {
   .ticker { display: none; }
-  .auto-toggle span:not(.switch-ui) { display: none; }
+  .top-actions .auto-toggle span:not(.switch-ui) { display: none; }
 }
 @media (max-width: 430px) {
-  /* 极窄屏：只留刷新 / 账号 / 退出 / 设置，自动刷新与数据源可在设置里看 */
-  .auto-toggle { display: none; }
+  /* 极窄屏：顶栏只留刷新 / 账号 / 退出 / 设置，自动刷新与数据源可在设置里看。
+     注意只作用于顶栏 —— 直接写 .auto-toggle 会把页面里的其它开关（如云端预警）一起藏掉。 */
+  .top-actions .auto-toggle { display: none; }
   .account-chip { max-width: 66px; padding: 4px 7px; }
   .account-chip #accountName { display: inline; }
 }
@@ -2898,6 +2899,8 @@ button[hidden] { display: none !important; }
   font-size: 10px;
   min-width: 0;
 }
+/* 文案单独包一层 span：手机上不允许在「涨跌幅 ≥」中间折行 */
+.screener-form label > span { flex: 0 0 auto; white-space: nowrap; }
 .screener-form label input,
 .screener-form label select {
   flex: 1 1 auto;
