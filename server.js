@@ -7602,10 +7602,17 @@ async function getScreener(params = {}) {
   };
   const hit = datacenter.screenStocks(stocks, conds);
   const limit = Math.min(200, Math.max(1, Number(params.limit) || 60));
+  // 新浪 symbol 前缀决定市场：sh→1（沪）、sz→0（深）、bj→2（北交所）
+  const marketOf = (symbol) => {
+    const s = String(symbol || '');
+    if (s.startsWith('sh')) return '1';
+    if (s.startsWith('bj')) return '2';
+    return '0';
+  };
   return {
     items: hit.slice(0, limit).map((x) => ({
       code: x.code,
-      secid: `${x.symbol.startsWith('sh') ? '1' : '0'}.${x.code}`,
+      secid: `${marketOf(x.symbol)}.${x.code}`,
       name: x.name,
       price: x.price,
       pct: x.pct,

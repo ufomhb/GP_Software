@@ -770,8 +770,9 @@ async function handleApi(req, res, url) {
     const limit = Math.max(30, Math.min(3000, Number(q.get('limit') || 160)));
     const allowed = new Set([1, 5, 15, 30, 60, 101, 102, 103]);
     if (!allowed.has(klt)) throw new Error('不支持的 K 线周期');
-    // 复权口径白名单：0 不复权 / 1 前复权 / 2 后复权；非法值按不复权处理。
-    const fqt = [0, 1, 2].includes(Number(q.get('fqt'))) ? Number(q.get('fqt')) : 0;
+    // 复权口径白名单：0 不复权 / 1 前复权 / 2 后复权；没传或非法按不复权处理。
+    const rawFqt = q.get('fqt');
+    const fqt = rawFqt === null || rawFqt === '' ? 0 : ([0, 1, 2].includes(Number(rawFqt)) ? Number(rawFqt) : 0);
     const kline = await getKline(secid, klt, limit, fqt);
     let analysis = null;
     try { analysis = analyze(kline.candles); } catch { /* 数据不足时仍返回 K 线 */ }
@@ -868,6 +869,11 @@ async function handleApi(req, res, url) {
     if (q.get('excludeSt') === '0') params.excludeSt = false;
     return getScreener(params);
   }
+  if (p === '/api/hk/quotes') {
+    const codes = (q.get('codes') || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (!codes.length) return { items: [], count: 0 };
+    return datacenter.hkQuotes(codes);
+  }
   if (p === '/api/hk/quote') {
     const code = q.get('code');
     if (!code) throw new Error('缺少港股代码');
@@ -876,10 +882,11 @@ async function handleApi(req, res, url) {
   if (p === '/api/hk/kline') {
     const code = q.get('code');
     if (!code) throw new Error('缺少港股代码');
-    return datacenter.hkKline(code, {
-      limit: Number(q.get('limit') || 160),
-      fqt: [0, 1, 2].includes(Number(q.get('fqt'))) ? Number(q.get('fqt')) : 1,
-    });
+    // 注意：q.get('fqt') 缺省是 null，Number(null) === 0 会被误判成「显式不复权」，
+    // 从而拼出 ...day,,,20, 这种空复权标记，腾讯会直接报错。这里显式区分「没传」。
+    const rawFqt = q.get('fqt');
+    const fqt = rawFqt === null || rawFqt === '' ? 1 : ([0, 1, 2].includes(Number(rawFqt)) ? Number(rawFqt) : 1);
+    return datacenter.hkKline(code, { limit: Number(q.get('limit') || 160), fqt });
   }
   if (p === '/api/hk/minute') {
     const code = q.get('code');

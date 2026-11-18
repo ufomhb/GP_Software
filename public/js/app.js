@@ -5242,6 +5242,7 @@ function renderStockModal(data) {
         </div>
         <div class="modal-actions">
           <button class="btn primary" id="modalWatch" ${inWatch ? 'disabled' : ''}>${inWatch ? '已加入自选' : '加入自选'}</button>
+          <button class="btn" data-f10-open data-f10-secid="${esc(q.secid)}" data-f10-code="${esc(q.code)}" data-f10-name="${esc(q.name)}">基本面 / 龙虎榜</button>
           <button class="btn" data-goto="strategy" data-close>查看大盘策略</button>
         </div>
         <div class="modal-advice">
@@ -6094,6 +6095,225 @@ function loadDataCenter() {
 }
 
 /* =========================================================
+   港股热门 + 港股个股详情（阶段 2）
+   ========================================================= */
+
+const HK_HOT = [
+  ['00700', '腾讯控股'], ['09988', '阿里巴巴'], ['03690', '美团'], ['01810', '小米集团'],
+  ['01211', '比亚迪股份'], ['00981', '中芯国际'], ['09618', '京东集团'], ['09999', '网易'],
+  ['01024', '快手'], ['02318', '中国平安'],
+];
+
+async function loadHk(force = false) {
+  if (!force && state.hk && Date.now() - state.hk.at < 30000) { renderHk(); return; }
+  try {
+    const codes = HK_HOT.map((x) => x[0]).join(',');
+    const data = await api(`/api/hk/quotes?codes=${codes}`, 30000);
+    state.hk = { ...data, at: Date.now() };
+    renderHk();
+  } catch (err) {
+    handleLoadError('港股热门', err);
+    if ($('#hkList')) $('#hkList').innerHTML = `<div class="empty">港股行情加载失败：${esc(err.message)}</div>`;
+  }
+}
+
+function renderHk() {
+  const el = $('#hkList');
+  if (!el) return;
+  const d = state.hk;
+  if ($('#hkMeta')) $('#hkMeta').textContent = d ? `${d.count} 只 · ${timeText(d.updatedAt)}` : '--';
+  if (!d || !(d.items || []).length) {
+    el.innerHTML = '<div class="empty">暂无港股行情</div>';
+    return;
+  }
+  el.innerHTML = d.items.map((x) => `
+    <div class="hk-row" data-hk-code="${esc(x.code)}" title="查看 ${esc(cleanName(x.name))} 分时与日K">
+      <div class="hk-name">${esc(cleanName(x.name))}<span class="hk-code">${esc(x.code)}</span></div>
+      <div class="hk-price ${toneClass(x.pct)}">${nf(x.price, 3)}</div>
+      <div class="hk-pct ${toneClass(x.pct)}">${pctFmt(x.pct)}</div>
+    </div>`).join('');
+}
+
+async function openHkStock(code) {
+  if (!code) return;
+  const meta = HK_HOT.find((x) => x[0] === code);
+  if (!routeOpening) pushDetailRoute('hk', code);
+  const overlay = mountOverlay(`
+    <div class="modal modal-stock">
+      <div class="modal-head">
+        <div class="modal-title"><h2>${esc(meta ? meta[1] : code)}</h2><span class="code">${esc(code)} · HK</span></div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="empty">正在加载港股行情…</div>
+    </div>`);
+  try {
+    const [q, m, k] = await Promise.all([
+      api(`/api/hk/quote?code=${encodeURIComponent(code)}`, 30000),
+      api(`/api/hk/minute?code=${encodeURIComponent(code)}`, 30000).catch(() => null),
+      api(`/api/hk/kline?code=${encodeURIComponent(code)}&limit=160&fqt=1`, 30000).catch(() => null),
+    ]);
+    if (!document.body.contains(overlay)) return;
+    renderHkStockModal(m, k, q);
+  } catch (err) {
+    toast(`港股详情加载失败：${err.message}`, 'err');
+    closeOverlay();
+  }
+}
+
+function renderHkStockModal(minute, kline, quote) {
+  const overlay = $('.overlay');
+  if (!overlay) return;
+  const q = quote || {};
+  const points = (minute && minute.points) || [];
+  const preClose = Number((minute && minute.prevClose) || q.prevClose);
+  let mode = 'minute';
+  overlay.innerHTML = `<div class="modal modal-stock">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title"><h2>${esc(cleanName(q.name) || q.code)}</h2><span class="code">${esc(q.code)} · HK</span><span class="badge">港股延时</span></div>
+        <div class="muted small mt8">交易时段 09:30–16:00（香港时间）</div>
+      </div>
+      <button class="modal-close" data-close>×</button>
+    </div>
+    <div class="modal-price-row">
+      <span class="modal-price ${toneClass(q.pct)}">${nf(q.price, 3)}</span>
+      <span class="modal-chg ${toneClass(q.pct)}">${pctFmt(q.pct)} ${nf(q.change, 3)}</span>
+      <span class="badge">昨收 ${nf(q.prevClose, 3)}</span>
+      <span class="badge">最高 ${nf(q.high, 3)}</span>
+      <span class="badge">最低 ${nf(q.low, 3)}</span>
+    </div>
+    <div class="modal-kline-tools">
+      <div class="seg seg-sm" id="hkModeSeg">
+        <button data-hk-mode="minute" class="is-active">分时</button>
+        <button data-hk-mode="kline">日 K</button>
+      </div>
+      <span class="muted small">${points.length ? `${points.length} 个分钟成交点` : '该时段暂无分时'}</span>
+    </div>
+    <div class="modal-body-grid">
+      <div><div id="hkChart" class="modal-chart"></div></div>
+      <div class="modal-side">
+        <div class="modal-advice">
+          <div class="ma-top"><span class="muted small">港股口径</span><span class="muted small">HKD</span></div>
+          <p class="mt8">港股为延时行情，日 K 为腾讯前复权序列；港股没有 A 股那套涨跌停与主力净流入口径，因此这里不展示相关指标。</p>
+        </div>
+        <div class="modal-actions"><button class="btn" data-goto="global" data-close>返回全球市场</button></div>
+      </div>
+    </div>
+  </div>`;
+
+  const draw = () => {
+    if (mode === 'kline' && kline && kline.candles && kline.candles.length > 1) {
+      candleChart($('#hkChart'), kline, { zoomStart: 30, indicator: currentIndicator() });
+    } else {
+      usIntradayChart($('#hkChart'), points, { preClose });
+    }
+  };
+  draw();
+  $$('#hkModeSeg button').forEach((b) => b.addEventListener('click', () => {
+    mode = b.dataset.hkMode;
+    $$('#hkModeSeg button').forEach((x) => x.classList.toggle('is-active', x === b));
+    draw();
+  }));
+}
+
+/* =========================================================
+   基本面（F10）+ 个股龙虎榜抽屉（阶段 3）
+   ========================================================= */
+
+const F10_TABS = [
+    ['survey', '公司概况'],
+    ['finance', '主要财务'],
+    ['holders', '股东研究'],
+    ['bonus', '分红融资'],
+    ['longhu', '个股龙虎榜'],
+];
+
+async function openFundamental(secid, code, name) {
+  if (!code && !secid) return;
+  const overlay = mountOverlay(`
+    <div class="drawer">
+      <div class="drawer-head">
+        <div><div class="eyebrow">FUNDAMENTALS</div><h2>${esc(cleanName(name) || code || secid)}</h2><span class="code">${esc(code || '')}</span></div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="empty">正在加载基本面数据…</div>
+    </div>`, 'drawer-overlay');
+  try {
+    const [f10, longhu] = await Promise.all([
+      api(`/api/f10?secid=${encodeURIComponent(secid || '')}&code=${encodeURIComponent(code || '')}`, 45000),
+      api(`/api/longhu/stock?code=${encodeURIComponent(code || (secid || '').split('.')[1] || '')}&limit=15`, 30000).catch(() => null),
+    ]);
+    if (!document.body.contains(overlay)) return;
+    renderFundamentalDrawer(f10 || {}, longhu || {});
+  } catch (err) {
+    toast(`基本面加载失败：${err.message}`, 'err');
+    closeOverlay();
+  }
+}
+
+function renderFundamentalDrawer(f10, longhu) {
+  const drawer = $('.drawer');
+  if (!drawer) return;
+  const survey = f10.survey || {};
+  const finance = f10.finance || {};
+  const holders = f10.shareholders || {};
+  const bonus = f10.bonus || {};
+  const tabs = F10_TABS.map(([k, label], i) => `<button data-f10-tab="${k}" class="${i === 0 ? 'is-active' : ''}">${label}</button>`).join('');
+
+  const panes = {
+    survey: `<div class="f10-section">
+      <div class="kv-grid">
+        <div class="kv"><span>公司全称</span><b>${esc(survey.fullName || '--')}</b></div>
+        <div class="kv"><span>所属行业</span><b>${esc(survey.industry || '--')}</b></div>
+        <div class="kv"><span>地区</span><b>${esc(survey.area || '--')}</b></div>
+        <div class="kv"><span>上市日期</span><b>${esc(survey.listDate || '--')}</b></div>
+        <div class="kv"><span>董事长</span><b>${esc(survey.chairman || '--')}</b></div>
+        <div class="kv"><span>官网</span><b>${esc(survey.website || '--')}</b></div>
+      </div>
+      <div class="modal-section-title">主营业务</div>
+      <p class="muted small">${esc(survey.business || '--')}</p>
+      <div class="modal-section-title">公司简介</div>
+      <p class="muted small">${esc(survey.profile || '暂无简介')}</p>
+    </div>`,
+    finance: `<table class="table"><thead><tr><th>报告期</th><th>营收</th><th>营收同比</th><th>净利</th><th>净利同比</th><th>EPS</th><th>ROE</th><th>毛利率</th><th>负债率</th></tr></thead>
+      <tbody>${(finance.items || []).map((x) => `<tr>
+        <td>${esc(x.reportName || x.period)}</td>
+        <td>${x.revenueYi === null ? '--' : `${nf(x.revenueYi, 2)} 亿`}</td>
+        <td class="${toneClass(x.revenueYoy)}">${x.revenueYoy === null ? '--' : `${nf(x.revenueYoy, 2)}%`}</td>
+        <td>${x.profitYi === null ? '--' : `${nf(x.profitYi, 2)} 亿`}</td>
+        <td class="${toneClass(x.profitYoy)}">${x.profitYoy === null ? '--' : `${nf(x.profitYoy, 2)}%`}</td>
+        <td>${x.eps === null ? '--' : nf(x.eps, 2)}</td>
+        <td>${x.roe === null ? '--' : `${nf(x.roe, 2)}%`}</td>
+        <td>${x.grossMargin === null ? '--' : `${nf(x.grossMargin, 2)}%`}</td>
+        <td>${x.debtRatio === null ? '--' : `${nf(x.debtRatio, 2)}%`}</td>
+      </tr>`).join('') || '<tr><td colspan="9"><div class="empty">暂无财务数据</div></td></tr>'}</tbody></table>`,
+    holders: `<div class="muted small">股东户数</div>
+      <div class="kv-grid mt8">${(holders.holderCount || []).map((x) => `<div class="kv"><span>${esc(x.date || '--')}</span><b>${nf(x.count, 0)} 户</b></div>`).join('') || '<div class="kv"><span>暂无</span><b>--</b></div>'}</div>
+      <div class="modal-section-title">十大股东</div>
+      <table class="table"><thead><tr><th>股东</th><th>持股(万股)</th><th>占比</th><th>变动</th></tr></thead>
+      <tbody>${(holders.top10 || []).map((x) => `<tr><td>${esc(x.name)}</td><td>${nf(x.sharesWan, 2)}</td><td>${nf(x.ratio, 2)}%</td><td class="t-sub">${esc(x.change || '')}</td></tr>`).join('') || '<tr><td colspan="4"><div class="empty">暂无股东数据</div></td></tr>'}</tbody></table>`,
+    bonus: `<table class="table"><thead><tr><th>日期</th><th>方案</th><th>每10股派息</th><th>送转</th><th>进度</th></tr></thead>
+      <tbody>${(bonus.items || []).map((x) => `<tr><td>${esc(x.date || '--')}</td><td class="t-sub">${esc(x.profile || '--')}</td><td>${x.cashPer10 === null ? '--' : `${nf(x.cashPer10, 2)} 元`}</td><td>${x.bonusPer10 === null ? '--' : `${nf(x.bonusPer10, 2)} 股`}</td><td class="t-sub">${esc(x.progress || '')}</td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">暂无分红记录</div></td></tr>'}</tbody></table>`,
+    longhu: `<table class="table"><thead><tr><th>日期</th><th>收盘</th><th>涨跌幅</th><th>上榜净额</th><th>上榜原因</th></tr></thead>
+      <tbody>${((longhu && longhu.items) || []).map((x) => `<tr><td>${esc(x.date)}</td><td>${nf(x.close, 2)}</td><td class="${toneClass(x.pct)}">${pctFmt(x.pct)}</td><td class="${toneClass(x.netYi)}">${x.netYi === null ? '--' : `${nf(x.netYi, 2)} 亿`}</td><td class="t-sub">${esc(x.reason || '')}</td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">该股近期没有上榜记录</div></td></tr>'}</tbody></table>`,
+  };
+
+  drawer.innerHTML = `
+    <div class="drawer-head">
+      <div><div class="eyebrow">FUNDAMENTALS</div><h2>${esc(cleanName(survey.name || '') || f10.code || '')}</h2><span class="code">${esc(f10.code || '')}</span></div>
+      <button class="modal-close" data-close>×</button>
+    </div>
+    <nav class="f10-tabs" id="f10Tabs">${tabs}</nav>
+    ${F10_TABS.map(([k], i) => `<div class="f10-pane" data-f10-pane="${k}" ${i === 0 ? '' : 'hidden'}>${panes[k]}</div>`).join('')}
+    <p class="muted small mt12">F10 数据来自东财公开接口，财务指标为报告期口径；十大股东存在披露滞后，不代表当前持股。</p>`;
+
+  $$('#f10Tabs button').forEach((b) => b.addEventListener('click', () => {
+    $$('#f10Tabs button').forEach((x) => x.classList.toggle('is-active', x === b));
+    $$('[data-f10-pane]').forEach((p) => { p.hidden = p.dataset.f10Pane !== b.dataset.f10Tab; });
+  }));
+}
+
+/* =========================================================
    详情路由
    ---------------------------------------------------------
    视图级仍是 #dashboard 这种单段 hash；个股 / 板块 / 基金 / 美股详情
@@ -6101,8 +6321,8 @@ function loadDataCenter() {
    这样地址栏可以直接复制、收藏、新标签打开，后退键也能正常关闭弹窗。
    ========================================================= */
 const VIEWS = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'data', 'strategy', 'watchlist'];
-const DETAIL_KINDS = ['stock', 'sector', 'fund', 'us'];
-const DETAIL_BASE_VIEW = { stock: 'watchlist', sector: 'sectors', fund: 'funds', us: 'us' };
+const DETAIL_KINDS = ['stock', 'sector', 'fund', 'us', 'hk'];
+const DETAIL_BASE_VIEW = { stock: 'watchlist', sector: 'sectors', fund: 'funds', us: 'us', hk: 'global' };
 // 由 popstate / 直接打开详情路由时为 true，避免「打开详情」再压一条新历史
 let routeOpening = false;
 
@@ -6141,6 +6361,7 @@ async function openDetailRoute(detail) {
     if (detail.kind === 'stock') await openStock(detail.key);
     else if (detail.kind === 'sector') await openSector(detail.key);
     else if (detail.kind === 'us') await openUsStock(detail.key);
+    else if (detail.kind === 'hk') await openHkStock(detail.key);
     else if (detail.kind === 'fund') {
       try {
         await openFund(detail.key);
@@ -6179,6 +6400,7 @@ function loadView(view) {
     renderGlobalSessions();
     renderGlobalTemp();
     loadGlobalChart();
+    loadHk();
   }
   if (view === 'us') {
     renderUS();
@@ -6391,6 +6613,19 @@ function bindEvents() {
     if (usStock) {
       e.preventDefault();
       openUsStock(usStock.dataset.usStock);
+      return;
+    }
+    const hkStock = e.target.closest('[data-hk-code]');
+    if (hkStock) {
+      e.preventDefault();
+      openHkStock(hkStock.dataset.hkCode);
+      return;
+    }
+    const f10Btn = e.target.closest('[data-f10-open]');
+    if (f10Btn) {
+      e.preventDefault();
+      const st = state.stockModal || {};
+      openFundamental(f10Btn.dataset.f10Secid || st.secid, f10Btn.dataset.f10Code || st.code, f10Btn.dataset.f10Name || st.name);
       return;
     }
     const idx = e.target.closest('[data-index-secid]');
