@@ -8,8 +8,8 @@
   <meta name="robots" content="noindex,nofollow">
   <title>寰球智投 · 后台管理</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.3.0">
-  <link rel="stylesheet" href="/css/admin.css?v=2.3.0">
+  <link rel="stylesheet" href="/css/app.css?v=2.3.1">
+  <link rel="stylesheet" href="/css/admin.css?v=2.3.1">
 </head>
 <body class="admin-body">
   <!-- 登录 -->
@@ -424,7 +424,7 @@
           <button type="button" class="admin-btn danger" id="stTuneRollback">回滚上一次</button>
         </div>
         <p class="admin-note">
-          规则：每天最多自动调一次；只动「加仓评分门槛 / 减仓评分门槛」，命中率达标时**不会自动放宽**（避免越调越松）。
+          规则：每天最多自动调一次；只动「加仓评分门槛 / 减仓评分门槛」，命中率达标时<b>不会自动放宽</b>（避免越调越松）。
           调参按严格口径（对/(对+错)，不含中性）计算；每次调参都记录前后值与样本，可一键回滚。
         </p>
         <ul id="stTuneHistory" class="st-suggestions"><li class="admin-empty">还没有自动调参记录</li></ul>
@@ -432,6 +432,6 @@
     </div>
   </div>
 
-  <script src="/js/admin.js?v=2.3.0"></script>
+  <script src="/js/admin.js?v=2.3.1"></script>
 </body>
 </html>

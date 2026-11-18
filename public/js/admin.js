@@ -1276,7 +1276,7 @@ function stHistoryTipHtml(rec) {
   const basis = stBasisLabel(rec);
   const source = rec.source === 'auto' ? '自动' : '手动';
   const parts = [];
-  parts.push(`<b>${esc(rec.date)}</b> <span class="muted">${esc(source)}${rec.late ? ' · 收盘后补记' : ''}${basis ? ` · ${esc(basis)}` : ''}</span>`);
+  parts.push(`<b>${esc(rec.date)}</b> <span class="muted">${esc(source)}${rec.late ? ' · 收盘后补记' : ''} · ${esc(basis || '口径未标注')}</span>`);
   parts.push(stTipLine(`建议分布：加 ${n(c.add)} · 减 ${n(c.cut)} · 不变 ${n(c.hold)}${c.pending ? ` · 未更新 ${n(c.pending)}` : ''}`));
   if (sum) {
     parts.push(stTipLine(`含中性命中率：<b>${stCoverRate(s.right, s.total)}</b>（对 ${s.right}/${s.total}）`));
@@ -1296,7 +1296,7 @@ function stHistoryTipHtml(rec) {
   const items = (ev && ev.items) || rec.items || [];
   const limit = 12;
   items.slice(0, limit).forEach((it) => parts.push(stHistoryTipItemLine(it)));
-  if (items.length > limit) parts.push(stTipLine(`…共 ${items.length} 条，仅显示前 ${limit} 条`));
+  if (items.length > limit) parts.push(stTipLine(`…共 ${items.length} 条`));
   return parts.join('');
 }
 
@@ -1547,7 +1547,7 @@ function renderStrategyHistory(data) {
     let hitText = '次日待评价';
     if (sum) {
       const s = stTotals(sum);
-      hitText = `严格 ${s.right}/${s.decided} · 中性 ${s.flat} · 含中性 ${s.right}/${s.total}(${stCoverRate(s.right, s.total)})${s.skipped ? ` · 未评 ${s.skipped}` : ''}`;
+      hitText = `含中性 ${s.right}/${s.total}(${stCoverRate(s.right, s.total)})${s.flat ? ` · 中性 ${s.flat}` : ''}${s.skipped ? ` · 未评 ${s.skipped}` : ''}`;
     }
     const items = (ev && ev.items) || rec.items || [];
     const detail = items.map((it) => {
