@@ -6978,7 +6978,7 @@ const pushService = createPushService({
   requireAdmin,
   currentUser,
   sanitizePortfolio,
-  market: { getFundWatch, shanghaiToday },
+  market: { getFundWatch, shanghaiToday, getOverview, getKline },
   getStrategyRules: () => (strategyLogRef ? strategyLogRef.getRules() : null),
 });
 const { loadPushConfig, pushChannelLabel, runPushTick, handlePushApi } = pushService;

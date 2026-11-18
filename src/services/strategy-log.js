@@ -11,14 +11,17 @@
  *   本模块只依赖注入进来的 strategyStore，不关心底层是库还是文件。
  *
  * 口径（避免事后自欺）：
- * 1) 记录：只记当期有明确信号的持仓（未持有、当日涨跌还没出的不进建议组），
+ * 0) 决策（2026-11-18 用户要求）：自动/手动/覆盖重记都只用持仓基金 **15:00 当日估值**
+ *    做分析，绝不用收盘后公布的真实净值；没有估值就记 pending，宁可不判也不用净值冒充。
+ * 1) 记录：只记当期有明确信号的持仓（未持有、当日 15:00 估值还没出的不进建议组），
  *    分组逻辑直接复用 push 服务的 classifyPortfolio，与推送口径完全一致。
  * 2) 评价：只认「次日已公布的净值涨跌」（pctKind === 'nav'），盘中估算一律不算。
  *    次日 = 决策日之后的第一个工作日；遇节假日顺延，但最多 evalWindow 个工作日，
  *    超窗仍拿不到就记 skipped（不参与命中率），绝不用几天后的累计涨跌冒充次日。
  * 3) 判定：加仓→次日涨过 addBand 算对、跌过算错；减仓反之；
  *    不变→次日波动在 holdBand 内算对，波动大记 flat（不动没亏钱，不好判错）。
- * 4) 命中率 = 对 / (对 + 错)，flat 与 skipped 不进分母。
+ * 4) 严格命中率 = 对 / (对 + 错)，flat 与 skipped 不进分母；
+ *    页面另给「含中性口径 = 对 / 全部条数」并把四类计数都列出来，避免 4/4=100% 造成误读。
  *
  * 自动调参（全自动，可关、可回滚）：
  * - 每天最多一次；样本数 ≥ minSamples 且命中率 < minHitRate 时：
@@ -647,7 +650,10 @@ function createStrategyLog(deps) {
         slotTime: r.slotTime,
         source: r.source,
         late: Boolean(r.late),
-        decisionBasis: r.decisionBasis || (r.late ? 'nav' : 'estimate'),
+        // 旧记录没有 decisionBasis：只要有一个标的用了真实净值，就标「旧净值口径」；
+        // 全部是估值/穿透估算的（如 11/18 17:04 补记）则应标 15:00 估值，不能冤枉成净值口径。
+        decisionBasis: r.decisionBasis || ((r.eval && Array.isArray(r.eval.items) ? r.eval.items : (r.items || []))
+          .some((it) => it && String(it.pctKind) === 'nav') ? 'nav' : 'estimate'),
         createdAt: r.createdAt,
         market: r.market || null,
         snapshot: r.snapshot,

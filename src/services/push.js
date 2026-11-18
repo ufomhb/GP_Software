@@ -71,7 +71,7 @@ function createPushService(deps) {
     market, // { getFundWatch, shanghaiToday }
     getStrategyRules, // 可选：() => 策略规则参数（由后台页面调的参数持久化而来）
   } = deps;
-  const { getFundWatch, shanghaiToday } = market || {};
+  const { getFundWatch, shanghaiToday, getOverview, getKline } = market || {};
 
   // 每次取当前参数而不是缓存：后台调参后无需重启即生效
   function currentStrategyRules() {

@@ -1238,7 +1238,7 @@ function renderStrategyStats(data) {
       <td class="bad">${s.wrong}</td>
       <td>${s.flat}</td>
       <td>${s.skipped}</td>
-      <td>${stHitRate(s.right, s.decided)} <span class="st-hit-frac">${s.right}/${s.decided}</span></td>
+      <td>${stHitRate(s.right, s.decided)} <span class="st-hit-frac">对 ${s.right} / 可判定 ${s.decided}</span></td>
     </tr>`;
   }).join('');
   $('#stActionTable').innerHTML = `<table class="admin-table st-table">
