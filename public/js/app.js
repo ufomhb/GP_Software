@@ -20,7 +20,7 @@ import {
   sectorCompareBar,
   usSectorFlowBar,
   COLORS,
-} from './charts.js?v=2.4.0';
+} from './charts.js?v=2.5.0';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -38,11 +38,11 @@ import {
   esc,
   safeUrl,
   timeText,
-} from './util.js?v=2.4.0';
+} from './util.js?v=2.5.0';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.4.0';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.4.0';
+import { $, $$, toast, debounce } from './dom.js?v=2.5.0';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.5.0';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -51,7 +51,7 @@ import {
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.4.0';
+} from './core.js?v=2.5.0';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -66,7 +66,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.4.0';
+} from './views/funds.js?v=2.5.0';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -76,7 +76,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.4.0';
+} from './views/market.js?v=2.5.0';
 
 
 /* =========================================================

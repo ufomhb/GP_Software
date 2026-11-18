@@ -65,7 +65,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.4.0';
+const VERSION = '2.5.0';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -7810,6 +7810,8 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
+  // PWA 清单：Chrome 要求 application/manifest+json 才会当成可安装应用
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.ico': 'image/x-icon',
@@ -7976,7 +7978,7 @@ const server = http.createServer(async (req, res) => {
   // 页面鉴权：css/js/图片/字体等静态资源放行，登录页 / 后台登录页放行，其余（含首页）要求登录。
   const assetPath =
     /^\/(css|js|vendor)\//.test(url.pathname) ||
-    /\.(css|js|png|jpe?g|gif|svg|ico|webp|woff2?|map)$/i.test(url.pathname);
+    /\.(css|js|png|jpe?g|gif|svg|ico|webp|woff2?|map|webmanifest)$/i.test(url.pathname);
   const publicPage = url.pathname === '/login.html';
   if (!publicPage && !assetPath && !req.gpUser) {
     res.writeHead(302, { Location: '/login.html', 'Cache-Control': 'no-store' });
