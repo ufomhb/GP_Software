@@ -3080,13 +3080,14 @@ button[hidden] { display: none !important; }
   .screener-table th:nth-child(7), .screener-table td:nth-child(7),
   .screener-table th:nth-child(9), .screener-table td:nth-child(9) { display: none; }
 
-  /* 新股申购（v2.7.0）：申购日 / 新股 / 发行价 / 申购上限（隐藏 申购代码、市盈率、行业PE、中签号日、上市日） */
-  .calendar-ipo th:nth-child(3), .calendar-ipo td:nth-child(3),
+  /* 新股申购（v2.7.0）：申购日 / 新股 / 申购代码 / 发行价 / 申购上限（隐藏 市盈率、行业PE、中签号日、上市日） */
   .calendar-ipo th:nth-child(6), .calendar-ipo td:nth-child(6),
   .calendar-ipo th:nth-child(7), .calendar-ipo td:nth-child(7),
   .calendar-ipo th:nth-child(8), .calendar-ipo td:nth-child(8),
   .calendar-ipo th:nth-child(9), .calendar-ipo td:nth-child(9) { display: none; }
-  .calendar-ipo th:nth-child(2) { width: 40%; }
+  .calendar-ipo th:nth-child(1) { width: 22%; }
+  .calendar-ipo th:nth-child(2) { width: 36%; }
+  .calendar-ipo th:nth-child(3) { width: 20%; }
   .calendar-ipo th:nth-child(4) { width: 22%; }
 
   /* 转债申购（v2.7.0）：申购日 / 转债 / 申购代码（隐藏 正股、评级、发行规模、转股价、上市日） */
@@ -3098,11 +3099,10 @@ button[hidden] { display: none !important; }
   .calendar-cbapply th:nth-child(2) { width: 46%; }
 }
 
-/* 极窄屏再收一列：新股只留「申购日 / 新股」，转债只留「申购日 / 转债」 */
+/* 极窄屏再收一列：新股只留「申购日 / 新股 / 申购代码 / 发行价」，转债只留「申购日 / 转债 / 申购代码」
+   （申购代码在手机上是有用信息——打新就是照着这个代码下单，所以保留） */
 @media (max-width: 430px) {
-  .calendar-ipo th:nth-child(4), .calendar-ipo td:nth-child(4),
-  .calendar-ipo th:nth-child(5), .calendar-ipo td:nth-child(5),
-  .calendar-cbapply th:nth-child(3), .calendar-cbapply td:nth-child(3) { display: none; }
+  .calendar-ipo th:nth-child(5), .calendar-ipo td:nth-child(5) { display: none; }
 }
 
 /* ---------- 叠层（v2.7.0） ----------
