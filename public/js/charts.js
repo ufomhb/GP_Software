@@ -145,6 +145,28 @@ export function candleChart(el, kline, options = {}) {
     ? { startValue: options.zoomStartValue, endValue: options.zoomEndValue }
     : { start: options.zoomStart ?? 30, end: options.zoomEnd ?? 100 };
 
+  /*
+   * 副图指标：macd / kdj / boll / none（默认 macd）。
+   * boll 是主图叠加（通道线画在价格图上），macd 与 kdj 各占一个独立副图 grid。
+   * 数据不足或字段缺失时自动退回 none，不画空白副图。
+   */
+  const want = ['macd', 'kdj', 'boll', 'none'].includes(options.indicator) ? options.indicator : 'macd';
+  const hasBoll = want === 'boll' && Array.isArray(series.bollMid) && series.bollMid.some((v) => Number.isFinite(v));
+  const subKind = (want === 'macd' && Array.isArray(series.dif)) || (want === 'kdj' && Array.isArray(series.kdjK))
+    ? want
+    : (hasBoll ? 'boll' : 'none');
+  const showSub = subKind === 'macd' || subKind === 'kdj';
+  const gridCount = 1 + (showSub ? 1 : 0) + (hasVolume ? 1 : 0);
+  const subIndex = showSub ? 1 : null;
+  const volIndex = hasVolume ? (showSub ? 2 : 1) : null;
+  const xAxisIndexes = Array.from({ length: gridCount }, (_, i) => i);
+
+  let layout;
+  if (gridCount === 3) layout = { main: { top: 23, height: '44%' }, sub: { top: '66%', height: '11%' }, vol: { top: '81%', height: '12%' } };
+  else if (showSub) layout = { main: { top: 23, height: '60%' }, sub: { top: '74%', height: '18%' } };
+  else if (hasVolume) layout = { main: { top: 23, height: '63%' }, vol: { top: '76%', height: '15%' } };
+  else layout = { main: { top: 23, height: '76%' } };
+
   const maSeries = [
     ['MA5', series.ma5, '#f5c451'],
     ['MA10', series.ma10, '#38bdf8'],
@@ -162,6 +184,91 @@ export function candleChart(el, kline, options = {}) {
     emphasis: { disabled: true },
   }));
 
+  // BOLL(20,2) 通道：叠加在主图价格上
+  const bollSeries = hasBoll ? [
+    ['BOLL中轨', series.bollMid, C.muted, 1.2, 'dashed'],
+    ['BOLL上轨', series.bollUpper, '#c084fc', 1, 'solid'],
+    ['BOLL下轨', series.bollLower, '#c084fc', 1, 'solid'],
+  ].map(([name, data, color, width, type]) => ({
+    name,
+    type: 'line',
+    data,
+    smooth: true,
+    showSymbol: false,
+    connectNulls: false,
+    lineStyle: { width, color, opacity: 0.9, type },
+    itemStyle: { color },
+    emphasis: { disabled: true },
+  })) : [];
+
+  // 副图指标序列（共用副图 grid）
+  const subSeries = subKind === 'macd'
+    ? [
+        {
+          name: 'MACD',
+          type: 'bar',
+          xAxisIndex: subIndex,
+          yAxisIndex: subIndex,
+          data: series.macd,
+          barWidth: '55%',
+          itemStyle: {
+            color: (p) => (Number(p.value) >= 0 ? 'rgba(255,77,94,.75)' : 'rgba(22,199,132,.75)'),
+          },
+          emphasis: { disabled: true },
+        },
+        {
+          name: 'DIF',
+          type: 'line',
+          xAxisIndex: subIndex,
+          yAxisIndex: subIndex,
+          data: series.dif,
+          showSymbol: false,
+          smooth: true,
+          connectNulls: false,
+          lineStyle: { width: 1.1, color: C.accent },
+          itemStyle: { color: C.accent },
+          emphasis: { disabled: true },
+        },
+        {
+          name: 'DEA',
+          type: 'line',
+          xAxisIndex: subIndex,
+          yAxisIndex: subIndex,
+          data: series.dea,
+          showSymbol: false,
+          smooth: true,
+          connectNulls: false,
+          lineStyle: { width: 1.1, color: C.gold },
+          itemStyle: { color: C.gold },
+          emphasis: { disabled: true },
+        },
+      ]
+    : subKind === 'kdj'
+      ? [
+          ['K', series.kdjK, C.accent],
+          ['D', series.kdjD, C.gold],
+          ['J', series.kdjJ, '#c084fc'],
+        ].map(([name, data, color]) => ({
+          name,
+          type: 'line',
+          xAxisIndex: subIndex,
+          yAxisIndex: subIndex,
+          data,
+          showSymbol: false,
+          smooth: true,
+          connectNulls: false,
+          lineStyle: { width: 1.1, color },
+          itemStyle: { color },
+          emphasis: { disabled: true },
+        }))
+      : [];
+
+  const legendNames = [
+    ...maSeries.map((s) => s.name),
+    ...bollSeries.map((s) => s.name),
+    ...subSeries.map((s) => s.name),
+  ];
+
   return setOption(el, {
     animation: false,
     legend: {
@@ -171,7 +278,7 @@ export function candleChart(el, kline, options = {}) {
       itemHeight: 2,
       itemGap: 10,
       textStyle: { color: C.muted, fontSize: 9 },
-      data: maSeries.map((s) => s.name),
+      data: legendNames,
     },
     tooltip: {
       ...TOOLTIP,
@@ -195,79 +302,63 @@ export function candleChart(el, kline, options = {}) {
       },
     },
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
-    grid: hasVolume
+    grid: gridCount > 1
       ? [
-          { left: 48, right: 14, top: 23, height: '63%' },
-          { left: 48, right: 14, top: '76%', height: '15%' },
-        ]
-      : [{ left: 48, right: 14, top: 23, height: '76%' }],
-    xAxis: hasVolume
-      ? [
-          {
-            type: 'category',
-            data: dates,
-            boundaryGap: true,
-            axisLine: { lineStyle: { color: C.line } },
-            axisTick: { show: false },
-            axisLabel: { color: C.muted, fontSize: 9, formatter: xLabel, hideOverlap: true },
-            splitLine: { show: false },
+          { left: 48, right: 14, ...layout.main },
+          showSub ? { left: 48, right: 14, ...layout.sub } : null,
+          hasVolume ? { left: 48, right: 14, ...layout.vol } : null,
+        ].filter(Boolean)
+      : [{ left: 48, right: 14, ...layout.main }],
+    xAxis: xAxisIndexes.map((i) => ({
+      type: 'category',
+      data: dates,
+      gridIndex: i,
+      boundaryGap: true,
+      axisLine: { lineStyle: { color: C.line } },
+      axisTick: { show: false },
+      axisLabel: i === 0
+        ? { color: C.muted, fontSize: 9, formatter: xLabel, hideOverlap: true }
+        : { show: false },
+      splitLine: { show: false },
+    })),
+    yAxis: xAxisIndexes.map((i) => {
+      const axis = {
+        gridIndex: i,
+        scale: true,
+        position: 'left',
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { lineStyle: { color: C.split } },
+      };
+      if (i === volIndex) {
+        return {
+          ...axis,
+          axisLabel: {
+            color: C.muted,
+            fontSize: 8,
+            formatter: (v) => (v >= 1e8 ? `${(v / 1e8).toFixed(0)}亿` : `${(v / 1e4).toFixed(0)}万`),
           },
-          {
-            type: 'category',
-            data: dates,
-            gridIndex: 1,
-            boundaryGap: true,
-            axisLine: { lineStyle: { color: C.line } },
-            axisTick: { show: false },
-            axisLabel: { show: false },
-            splitLine: { show: false },
-          },
-        ]
-      : [{
-          type: 'category',
-          data: dates,
-          boundaryGap: true,
-          axisLine: { lineStyle: { color: C.line } },
-          axisTick: { show: false },
-          axisLabel: { color: C.muted, fontSize: 9, formatter: xLabel, hideOverlap: true },
           splitLine: { show: false },
-        }],
-    yAxis: hasVolume
-      ? [
-          {
-            scale: true,
-            position: 'left',
-            axisLine: { show: false },
-            axisTick: { show: false },
-            axisLabel: { color: C.muted, fontSize: 9, formatter: (v) => Number(v).toFixed(2) },
-            splitLine: { lineStyle: { color: C.split } },
+        };
+      }
+      if (i === subIndex) {
+        return {
+          ...axis,
+          axisLabel: {
+            color: C.muted,
+            fontSize: 8,
+            formatter: (v) => (subKind === 'kdj' ? Number(v).toFixed(0) : Number(v).toFixed(2)),
           },
-          {
-            gridIndex: 1,
-            scale: true,
-            axisLine: { show: false },
-            axisTick: { show: false },
-            axisLabel: {
-              color: C.muted,
-              fontSize: 8,
-              formatter: (v) => (v >= 1e8 ? `${(v / 1e8).toFixed(0)}亿` : `${(v / 1e4).toFixed(0)}万`),
-            },
-            splitLine: { show: false },
-          },
-        ]
-      : [{
-          scale: true,
-          position: 'left',
-          axisLine: { show: false },
-          axisTick: { show: false },
-          axisLabel: { color: C.muted, fontSize: 9, formatter: (v) => Number(v).toFixed(2) },
-          splitLine: { lineStyle: { color: C.split } },
-        }],
+          splitLine: { show: false },
+        };
+      }
+      return { ...axis, axisLabel: { color: C.muted, fontSize: 9, formatter: (v) => Number(v).toFixed(2) } };
+    }),
     dataZoom: [
-      { type: 'inside', xAxisIndex: hasVolume ? [0, 1] : [0], ...zoomState },
+      { type: 'inside', xAxisIndex: xAxisIndexes, ...zoomState },
       {
         type: 'slider',
-        xAxisIndex: hasVolume ? [0, 1] : [0],
+        xAxisIndex: xAxisIndexes,
         bottom: 0,
         height: 13,
         ...zoomState,
@@ -293,11 +384,13 @@ export function candleChart(el, kline, options = {}) {
         emphasis: { itemStyle: { borderWidth: 1.5 } },
       },
       ...maSeries,
+      ...bollSeries,
+      ...subSeries,
       ...(hasVolume ? [{
         name: '成交量',
         type: 'bar',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
+        xAxisIndex: volIndex,
+        yAxisIndex: volIndex,
         data: volumes,
         barWidth: '62%',
         itemStyle: {

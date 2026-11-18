@@ -111,6 +111,10 @@ const state = {
     sound: true,
     notify: false,
     risk: 'balanced',
+    // K 线副图指标：macd / kdj / boll / none
+    indicator: 'macd',
+    // K 线复权口径：0 不复权 / 1 前复权 / 2 后复权
+    fqt: 1,
   },
   watchData: null,
   quotes: new Map(),
@@ -186,7 +190,7 @@ function loadScopedState() {
   const rawAlerts = loadJSON(ALERTS_KEY, []);
   const rawFunds = loadJSON(FUND_WATCH_KEY, DEFAULT_FUNDS);
   state.watchlist = (Array.isArray(rawWatch) ? rawWatch : [...DEFAULT_WATCH]).filter((w) => w && w.secid);
-  state.alerts = (Array.isArray(rawAlerts) ? rawAlerts : []).filter((a) => a && a.secid);
+  state.alerts = normalizeAlerts(Array.isArray(rawAlerts) ? rawAlerts : []);
   state.fundWatchlist = (Array.isArray(rawFunds) ? rawFunds : [...DEFAULT_FUNDS]).filter((f) => f && f.code);
   state.fundHoldings = loadJSON(FUND_HOLD_KEY, {});
   if (!state.fundHoldings || typeof state.fundHoldings !== 'object' || Array.isArray(state.fundHoldings)) {
@@ -200,8 +204,85 @@ function loadScopedState() {
     sound: true,
     notify: false,
     risk: 'balanced',
+    indicator: 'macd',
+    fqt: 1,
     ...loadJSON(SETTINGS_KEY, {}),
   };
+}
+
+/* =========================================================
+   预警规则（v2）
+   ---------------------------------------------------------------
+   v1 只有 { type:'above'|'below', price } 一种价格预警。
+   v2 扩展为按 kind 分发的多条件规则，加载时自动迁移旧数据：
+     price  价格突破 / 跌破             value = 价格
+     pct    涨跌幅高于 / 低于            value = 百分比（可为负）
+     volume 量比放大 / 缩量              value = 当日成交额 ÷ 近5日均额
+     ma     均线上穿 / 下穿 MA20         无 value（趋势类）
+     macd   MACD 金叉 / 死叉            无 value（趋势类）
+   ========================================================= */
+const ALERT_KINDS = ['price', 'pct', 'volume', 'ma', 'macd'];
+const ALERT_KIND_LABEL = {
+  price: '价格',
+  pct: '涨跌幅',
+  volume: '量比',
+  ma: '均线穿越',
+  macd: 'MACD 交叉',
+};
+const ALERT_OP_LABEL = {
+  above: '↗ 突破',
+  below: '↘ 跌破',
+  golden: '金叉',
+  dead: '死叉',
+};
+
+function isTrendAlert(kind) {
+  return kind === 'ma' || kind === 'macd';
+}
+
+/** 把任意版本（v1 price 结构 / v2 kind 结构）的预警规范成 v2，坏数据直接丢弃 */
+function normalizeAlerts(list, seq = 0) {
+  const out = [];
+  const seen = new Set();
+  (Array.isArray(list) ? list : []).forEach((raw, i) => {
+    if (!raw || !raw.secid) return;
+    const kindRaw = raw.kind;
+    let kind = ALERT_KINDS.includes(kindRaw) ? kindRaw : 'price';
+    // v1 → v2：type 映射成 op，price 映射成 value
+    let op = raw.op;
+    let value = raw.value;
+    if (!ALERT_KINDS.includes(kindRaw)) {
+      op = raw.type === 'below' ? 'below' : 'above';
+      value = Number(raw.price);
+    }
+    if (isTrendAlert(kind)) {
+      op = op === 'dead' || op === 'below' ? 'dead' : 'golden';
+      value = null;
+    } else {
+      op = op === 'below' ? 'below' : 'above';
+      value = Number(value);
+      if (!Number.isFinite(value)) return;
+    }
+    const secid = String(raw.secid);
+    let id = raw.id ? String(raw.id) : `alert-${Date.now()}-${seq + i}`;
+    if (seen.has(id)) id = `${id}-${i}`;
+    seen.add(id);
+    out.push({
+      id,
+      secid,
+      code: raw.code ? String(raw.code) : '',
+      name: raw.name ? String(raw.name) : '',
+      kind,
+      op,
+      value,
+      active: raw.active !== false,
+      createdAt: Number(raw.createdAt) || Date.now(),
+      triggeredAt: Number(raw.triggeredAt) || null,
+      triggeredPrice: Number.isFinite(Number(raw.triggeredPrice)) ? Number(raw.triggeredPrice) : null,
+      triggerNote: raw.triggerNote ? String(raw.triggerNote).slice(0, 120) : '',
+    });
+  });
+  return out;
 }
 
 export {
@@ -210,4 +291,5 @@ export {
   DEFAULT_WATCH, DEFAULT_FUNDS,
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
+  ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
 };

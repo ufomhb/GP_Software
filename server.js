@@ -1611,7 +1611,7 @@ async function fetchTencentAshareLong(symbol, limit = 2600) {
   return buildCandles(rows, { d: 0, o: 1, c: 2, h: 3, l: 4, v: 5 });
 }
 
-async function fetchAshareSina(secid, klt, limit) {
+async function fetchAshareSina(secid, klt, limit, allowAdjusted = true) {
   const symbol = sinaAshareSymbol(secid);
   if (!symbol) throw new Error('不支持的 A 股代码');
   if ([101, 102, 103].includes(klt)) {
@@ -1624,15 +1624,18 @@ async function fetchAshareSina(secid, klt, limit) {
     } catch {
       // 搜狐历史失败时继续尝试腾讯，再回退新浪
     }
-    try {
-      const daily = await fetchTencentAshareLong(symbol, Math.max(2600, limit));
-      if (daily.length >= 200) {
-        if (klt === 101) return daily.slice(-limit);
-        const aggregated = aggregateCandles(daily, klt === 102 ? 'week' : 'month');
-        return aggregated.slice(-limit);
+    // 腾讯长周期接口返回的是前复权价：用户选「不复权」时跳过它，避免口径被悄悄改掉。
+    if (allowAdjusted) {
+      try {
+        const daily = await fetchTencentAshareLong(symbol, Math.max(2600, limit));
+        if (daily.length >= 200) {
+          if (klt === 101) return daily.slice(-limit);
+          const aggregated = aggregateCandles(daily, klt === 102 ? 'week' : 'month');
+          return aggregated.slice(-limit);
+        }
+      } catch {
+        // 腾讯长周期失败时回退到新浪的短周期日线
       }
-    } catch {
-      // 腾讯长周期失败时回退到新浪的短周期日线
     }
   }
   const scale = klt === 101 ? 240 : [60, 30, 15, 5, 1].includes(klt) ? klt : 240;
@@ -1657,9 +1660,11 @@ async function fetchAshareSina(secid, klt, limit) {
 async function fetchTencentKline(secid, limit) {
   const conf = TENCENT_KLINE[secid];
   if (!conf) throw new Error('暂无该市场 K 线数据');
+  // 指数没有复权概念，这里固定 qfq；保留参数位是为了与个股链路口径一致。
+  const fqTag = 'qfq';
   const url =
     `https://proxy.finance.qq.com/ifzqgtimg/appstock/app/${conf.endpoint}/get` +
-    `?param=${conf.symbol},day,,,${Math.min(320, limit)},qfq`;
+    `?param=${conf.symbol},day,,,${Math.min(320, limit)},${fqTag}`;
   const res = await fetch(url, {
     headers: { 'User-Agent': EM_HEADERS['User-Agent'], Referer: 'https://gu.qq.com/', Accept: '*/*' },
     signal: AbortSignal.timeout(15000),
@@ -1672,11 +1677,13 @@ async function fetchTencentKline(secid, limit) {
   return buildCandles(rows, { d: 0, o: 1, c: 2, h: 3, l: 4, v: 5 }).slice(-limit);
 }
 
-async function fetchEastmoneyKline(secid, klt = 101, limit = 200) {
+async function fetchEastmoneyKline(secid, klt = 101, limit = 200, fqt = 1) {
   const kltMap = { 1: 1, 5: 5, 15: 15, 30: 30, 60: 60, 101: 101, 102: 102, 103: 103 };
+  // fqt：0 不复权 / 1 前复权 / 2 后复权（东财三种口径都支持，非法值按不复权处理）
+  const fq = [0, 1, 2].includes(Number(fqt)) ? Number(fqt) : 0;
   const url =
     'https://push2his.eastmoney.com/api/qt/stock/kline/get' +
-    `?secid=${encodeURIComponent(secid)}&klt=${kltMap[klt] || 101}&fqt=1` +
+    `?secid=${encodeURIComponent(secid)}&klt=${kltMap[klt] || 101}&fqt=${fq}` +
     '&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61' +
     `&lmt=${Math.max(1, limit)}`;
   const json = await fetchJSON(url, 20000);
@@ -2255,24 +2262,63 @@ async function getIndexPeriods() {
   });
 }
 
-async function getKline(secid, klt = 101, limit = 160) {
-  const key = `kline:${secid}:${klt}:${limit}`;
+/**
+ * A 股 K 线的复权调度：
+ *   fqt=1/2（前复权 / 后复权）→ 优先东方财富（唯一能同时给出三种口径的源），
+ *                              失败回退搜狐 / 新浪的未复权序列，并把 fqtApplied 置 false 让前端标注；
+ *   fqt=0（不复权）→ 优先搜狐 / 新浪（本身不复权），失败回退东财 fqt=0；
+ *   分钟级 K 线没有复权概念，直接走原链路。
+ */
+async function fetchAshareKline(secid, klt, limit, fqt) {
+  const minute = [1, 5, 15, 30, 60].includes(klt);
+  if (minute) {
+    const candles = await fetchAshareSina(secid, klt, limit, false);
+    return { candles, source: 'sina', fqtApplied: true };
+  }
+  if (fqt === 0) {
+    try {
+      const candles = await fetchAshareSina(secid, klt, limit, false);
+      if (candles && candles.length >= Math.min(limit, 30)) return { candles, source: 'sina', fqtApplied: true };
+    } catch {
+      // 未复权链路失败时回退东财 fqt=0
+    }
+    const candles = await fetchEastmoneyKline(secid, klt, limit, 0);
+    return { candles, source: 'eastmoney', fqtApplied: true };
+  }
+  try {
+    const candles = await fetchEastmoneyKline(secid, klt, limit, fqt);
+    if (candles && candles.length) return { candles, source: 'eastmoney', fqtApplied: true };
+  } catch {
+    // 东财失败时回退到未复权链路，由 fqtApplied=false 提示口径降级
+  }
+  const candles = await fetchAshareSina(secid, klt, limit, false);
+  return { candles, source: 'sina', fqtApplied: false };
+}
+
+async function getKline(secid, klt = 101, limit = 160, fqt = 0) {
+  const fq = [0, 1, 2].includes(Number(fqt)) ? Number(fqt) : 0;
+  // 复权口径必须进缓存 key，否则切换复权会命中另一口径的缓存。
+  const key = `kline:${secid}:${klt}:${limit}:fq${fq}`;
   // 当天分时是「实时」视图，缓存必须足够短，否则用户看到的是一分钟前的曲线。
   const ttl = klt === 1 ? 12000 : klt === 5 || klt === 15 || klt === 30 || klt === 60 ? 60000 : 180000;
   return cached(key, ttl, async () => {
     let candles;
     let source = 'sina';
+    let fqtApplied = true;
     if (SINA_FUTURES_KLINE[secid]) {
       candles = await fetchSinaFuturesKline(secid, limit);
       source = 'sina-futures';
+      fqtApplied = fq === 0;
     } else if (TENCENT_KLINE[secid]) {
       candles = await fetchTencentKline(secid, limit);
       source = 'tencent';
     } else if (/^\d+\.\d{6}$/.test(secid)) {
-      candles = await fetchAshareSina(secid, klt, limit);
-      source = 'sina';
+      const res = await fetchAshareKline(secid, klt, limit, fq);
+      candles = res.candles;
+      source = res.source;
+      fqtApplied = res.fqtApplied;
     } else {
-      candles = await fetchEastmoneyKline(secid, klt, limit);
+      candles = await fetchEastmoneyKline(secid, klt, limit, fq);
       source = 'eastmoney';
     }
     if (!candles || !candles.length) throw new Error('未获取到 K 线数据');
@@ -2301,6 +2347,8 @@ async function getKline(secid, klt = 101, limit = 160) {
       series: computeSeries(candles),
       updatedAt: Date.now(),
       source,
+      fqt: fq,
+      fqtApplied,
     };
   });
 }
