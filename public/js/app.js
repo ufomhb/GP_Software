@@ -6202,6 +6202,7 @@ function renderCalendar() {
     return;
   }
   if (d.type === 'bonus') {
+    table.className = 'table calendar-table calendar-bonus';
     table.innerHTML = `<thead><tr><th>股票</th><th>方案</th><th>每10股派息</th><th>送转</th><th>进度</th><th>公告日</th><th>股权登记日</th><th>除权除息日</th></tr></thead>
       <tbody>${d.items.map((x) => `<tr>
         <td><span class="t-name">${esc(cleanName(x.name))}</span><span class="t-sub">${esc(x.code)}</span></td>
@@ -6215,6 +6216,7 @@ function renderCalendar() {
       </tr>`).join('')}</tbody>`;
     return;
   }
+  table.className = 'table calendar-table calendar-lift';
   table.innerHTML = `<thead><tr><th>解禁日</th><th>股票</th><th>解禁市值</th><th>解禁份额</th><th>可解禁份额</th><th>占流通比</th><th>类型</th></tr></thead>
     <tbody>${d.items.map((x) => `<tr>
       <td>${esc(x.date)}</td>
@@ -6313,7 +6315,12 @@ function renderScreener() {
   const table = $('#screenerTable');
   const d = state.screener;
   if (!table) return;
-  if ($('#screenerBadge')) $('#screenerBadge').textContent = d ? `${d.matched} 只命中` : '--';
+  if ($('#screenerBadge')) {
+    // 没出结果时不显示一个孤零零的「--」徽标
+    const badge = $('#screenerBadge');
+    badge.textContent = d ? `${d.matched} 只命中` : '';
+    badge.hidden = !d;
+  }
   if ($('#screenerMeta')) {
     $('#screenerMeta').textContent = d
       ? `样本 ${d.poolSize} 只 · 扫描 ${d.scannedPages} 页 · 命中 ${d.matched} 只`

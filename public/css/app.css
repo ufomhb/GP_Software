@@ -3027,5 +3027,44 @@ button[hidden] { display: none !important; }
   .longhu-table td { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
   /* .table .t-sub 有自己的 white-space:nowrap，这里要压过它，否则原因会被截断成一行 */
   .longhu-table .t-sub { white-space: normal; font-size: 9px; }
+  /* 原因是说明性文字，左对齐更好读 */
+  .longhu-table th:last-child,
+  .longhu-table td:last-child { text-align: left; }
+}
+
+
+/* 数据中心其余两张表：手机上按「最有信息量」保留少量列，避免右侧被裁 */
+@media (max-width: 700px) {
+  .calendar-table, .cb-table, .screener-table { table-layout: fixed; width: 100%; }
+  .calendar-table th, .calendar-table td,
+  .cb-table th, .cb-table td,
+  .screener-table th, .screener-table td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.5;
+  }
+  .calendar-table .t-sub, .cb-table .t-sub { white-space: normal; }
+
+  /* 解禁：解禁日 / 股票 / 解禁市值 / 占流通比（隐藏 解禁份额、可解禁份额、类型） */
+  .calendar-lift th:nth-child(4), .calendar-lift td:nth-child(4),
+  .calendar-lift th:nth-child(5), .calendar-lift td:nth-child(5),
+  .calendar-lift th:nth-child(7), .calendar-lift td:nth-child(7) { display: none; }
+
+  /* 分红：股票 / 方案 / 每10股派息 / 除权除息日（隐藏 送转、进度、公告日、股权登记日） */
+  .calendar-bonus th:nth-child(4), .calendar-bonus td:nth-child(4),
+  .calendar-bonus th:nth-child(5), .calendar-bonus td:nth-child(5),
+  .calendar-bonus th:nth-child(6), .calendar-bonus td:nth-child(6),
+  .calendar-bonus th:nth-child(7), .calendar-bonus td:nth-child(7) { display: none; }
+
+  /* 可转债：转债 / 现价 / 涨跌 / 评级（隐藏 正股、发行规模、上市日、到期日） */
+  .cb-table th:nth-child(4), .cb-table td:nth-child(4),
+  .cb-table th:nth-child(6), .cb-table td:nth-child(6),
+  .cb-table th:nth-child(7), .cb-table td:nth-child(7),
+  .cb-table th:nth-child(8), .cb-table td:nth-child(8) { display: none; }
+
+  /* 选股结果：股票 / 现价 / 涨跌幅 / 换手 / 成交额（隐藏 PE / PB / 市值等） */
+  .screener-table th:nth-child(6), .screener-table td:nth-child(6),
+  .screener-table th:nth-child(7), .screener-table td:nth-child(7),
+  .screener-table th:nth-child(9), .screener-table td:nth-child(9) { display: none; }
 }
 
