@@ -401,6 +401,23 @@ test('统计口径：严格命中率与含中性口径同时给出（对/错/中
   assert.equal(stats.byMarket['未记录'].n, 7);
 });
 
+test('自动补记：当天自动记录为空但后续有估值时，tick 用估值补记', async () => {
+  portState = makePort([
+    row({ code: 'A001', name: '补记样本', pct: -2, pctKind: 'holdings', decisionPct: -2, decisionKind: 'holdings', advice: { score: 70 } }),
+  ]);
+  const harness = makeHarness({ today: '2026-11-16' });
+  harness.state.records.set('2026-11-16', {
+    date: '2026-11-16', slotTime: '14:30', source: 'manual', items: [],
+    pending: [{ code: 'A001', name: '补记样本', navDate: '2026-11-13', navPct: -1.2 }],
+    snapshot: { counts: { add: 0, cut: 0, hold: 0, pending: 1 } }, eval: null,
+  });
+  const res = await harness.log.tick();
+  assert.equal(res.recorded, true, '空自动记录应被补记');
+  const rec = harness.log.snapshot().records.find((r) => r.date === '2026-11-16');
+  assert.ok(rec.items.length > 0, '补记后应有建议');
+  assert.equal(rec.items[0].pct, -2);
+});
+
 test('补记口径修正：late + 旧净值口径的记录用冻结估值回填', () => {
   const harness = makeHarness({
     today: '2026-11-18',

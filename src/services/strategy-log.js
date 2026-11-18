@@ -709,13 +709,31 @@ function createStrategyLog(deps) {
     const tune = runAutoTune(store, buildStats(store), {});
 
     let recorded = false;
-    const exists = store.records.some((r) => r.date === today);
-    if (!exists && shanghaiClockMinutes() >= AUTO_RECORD_AFTER) {
+    const todayRecord = store.records.find((r) => r.date === today);
+    const clock = shanghaiClockMinutes();
+    if (!todayRecord && clock >= AUTO_RECORD_AFTER) {
       // 自动记录同样只用 15:00 估值；若 14:35 时估值还没填上，稍后的 tick 会再试一次。
       const market = await safeMarketContext();
-      const late = shanghaiClockMinutes() > 15 * 60 + 5;
+      const late = clock > 15 * 60 + 5;
       persistRecord(buildRecord(port, {
         slotTime: '14:30', source: 'auto', date: today, late, rules: store.rules, market,
+      }));
+      recorded = true;
+    } else if (todayRecord
+      && (todayRecord.items || []).length === 0
+      && port.rows.some((r) => r.held && Number.isFinite(Number(r.decisionPct)))) {
+      // 当天记录是空的（多半是 14:35 那一刻行情/估值暂时不可用），但现在已经有估值了：
+      // 用 15:00 估值补记一次，避免页面一直显示「今天已记录但 0 条建议」。
+      // 保留原记录的 source/slotTime，不篡改是自动还是手动。
+      const market = await safeMarketContext();
+      const late = clock > 15 * 60 + 5;
+      persistRecord(buildRecord(port, {
+        slotTime: todayRecord.slotTime || '14:30',
+        source: todayRecord.source || 'auto',
+        date: today,
+        late,
+        rules: store.rules,
+        market,
       }));
       recorded = true;
     }
