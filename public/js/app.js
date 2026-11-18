@@ -108,12 +108,20 @@ function currentFqt() {
   return [0, 1, 2].includes(v) ? v : 0;
 }
 
-/** 数据源不支持复权时，K 线副标题给出的口径提示 */
-function fqtHint(k) {
+/** 复权口径的提示文案（不含前缀分隔符）；空串表示不需要提示 */
+function fqtHintText(k) {
   const fq = currentFqt();
   if (fq === 0) return '';
-  if (k && k.fqtApplied === false) return ' · 该标的数据源暂无复权序列，仅为不复权价';
-  return ` · ${FQT_NAME[fq]}`;
+  // 指数 / 期货本身没有复权概念，别说成「数据源缺失」
+  if (k && k.fqtApplicable === false) return '该标的无复权概念';
+  if (k && k.fqtApplied === false) return '数据源暂无复权序列，仅为不复权价';
+  return FQT_NAME[fq];
+}
+
+/** 附加到 K 线副标题：· 前复权 / · 该标的无复权概念 … */
+function fqtHint(k) {
+  const text = fqtHintText(k);
+  return text ? ` · ${text}` : '';
 }
 
 /** 让所有指标 / 复权分段控件与已保存的设置保持一致（页面加载与切换后都调用） */
@@ -710,7 +718,7 @@ function renderChinaChart() {
     }
     return;
   }
-  if (sub) sub.textContent = `${k.code || state.cnIndex} · ${kltLabel(state.cnKlt)}`;
+  if (sub) sub.textContent = `${k.code || state.cnIndex} · ${kltLabel(state.cnKlt)}${fqtHint(k)}`;
   const intraday = [5, 15, 30, 60].includes(state.cnKlt);
   const saved = state.cnZoom && state.cnZoom.secid === state.cnIndex && state.cnZoom.klt === state.cnKlt ? state.cnZoom : null;
   const defaultStart = intraday ? 0 : k.candles.length > 1500 ? 80 : k.candles.length > 500 ? 70 : 30;
@@ -1112,7 +1120,7 @@ async function loadGlobalChart(force = false) {
     const q = getBySecid(state.globalIndex) || {};
     if ($('#globalQuote')) $('#globalQuote').innerHTML = `${priceFmt(q.price)} <small class="${toneClass(q.pct)}">${pctFmt(q.pct)}</small>`;
     if ($('#globalChartTitle')) $('#globalChartTitle').textContent = cleanName(k.name) || cleanName(q.name);
-    if ($('#globalChartSub')) $('#globalChartSub').textContent = state.globalIndex;
+    if ($('#globalChartSub')) $('#globalChartSub').textContent = `${state.globalIndex}${fqtHint(k)}`;
     resetChart();
     candleChart(chartEl, k, { zoomStart: 20, indicator: currentIndicator() });
   } catch (err) {
@@ -1222,7 +1230,7 @@ function renderUSChart() {
   const title = $('#usChartTitle');
   if (title) title.textContent = cleanName(k.name) || '纳斯达克指数';
   const sub = $('#usChartSub');
-  if (sub) sub.textContent = `${k.code || 'NDX'} · 日K`;
+  if (sub) sub.textContent = `${k.code || 'NDX'} · 日K${fqtHint(k)}`;
   const q = (state.usData?.indices || []).find((x) => x.secid === state.usIndex);
   const pill = $('#usQuote');
   if (pill && q) pill.innerHTML = `${nf(q.price, 2)} <small class="${toneClass(q.pct)}">${pctFmt(q.pct)}</small>`;
@@ -1539,7 +1547,7 @@ function renderCommodityChart() {
     const n = (k.candles || []).length;
     const first = k.candles && k.candles.length ? String(k.candles[0].d).slice(0, 10) : '--';
     const last = k.candles && k.candles.length ? String(k.candles[k.candles.length - 1].d).slice(0, 10) : '--';
-    $('#comChartSub').textContent = `${state.comSecid} · 日K · ${n} 根 · ${first} ~ ${last}`;
+    $('#comChartSub').textContent = `${state.comSecid} · 日K · ${n} 根 · ${first} ~ ${last}${fqtHint(k)}`;
   }
   if ($('#comQuote')) $('#comQuote').innerHTML = `${priceFmt(q.price)} <small class="${toneClass(q.pct)}">${pctFmt(q.pct)}</small>`;
   candleChart($('#comChart'), k, { zoomStart: 0, indicator: currentIndicator() });
@@ -3634,6 +3642,8 @@ async function checkAlerts() {
       notify('条件预警触发', msg);
       beep();
     }
+  } catch {
+    // 预警判定失败（接口抖动 / 通知权限异常）不应打断行情刷新，也不该产生未处理 rejection
   } finally {
     alertsChecking = false;
   }
@@ -5044,7 +5054,7 @@ function renderStockModal(data) {
       <div class="seg seg-sm modal-fqt-seg" title="复权口径">
         ${FQT_OPTIONS.map((o) => `<button data-fqt="${o.v}" class="${currentFqt() === o.v ? 'is-active' : ''}">${o.label}</button>`).join('')}
       </div>
-      <span class="muted small">${esc(FQT_NAME[currentFqt()])}${kline && kline.fqtApplied === false && currentFqt() !== 0 ? ' · 该源暂无复权序列' : ''}</span>
+      <span class="muted small">${esc(fqtHintText(kline))}</span>
     </div>
     <div class="modal-body-grid">
       <div>

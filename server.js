@@ -2263,9 +2263,38 @@ async function getIndexPeriods() {
 }
 
 /**
+ * 腾讯复权 K 线（前复权 qfq / 后复权 hfq）。
+ * 东财 push2his 在部分网络会返回 rc:102 / data:null（本项目即如此），
+ * 这时用腾讯 web.ifzq.gtimg.cn 的 fqkline 兜底，仍然能拿到真正的复权序列。
+ */
+async function fetchAshareTencentAdjusted(secid, klt, limit, fqt) {
+  const symbol = sinaAshareSymbol(secid);
+  if (!symbol) throw new Error('不支持的 A 股代码');
+  const tag = fqt === 2 ? 'hfq' : 'qfq';
+  const key = tag === 'hfq' ? 'hfqday' : 'qfqday';
+  const need = klt === 102 ? Math.max(limit * 5, 600) : klt === 103 ? Math.max(limit * 22, 900) : Math.max(limit, 320);
+  const param = `${symbol},day,,,${Math.min(need, 640)},${tag}`;
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${encodeURIComponent(param)}`;
+  const res = await fetch(url, {
+    headers: { 'User-Agent': EM_HEADERS['User-Agent'], Referer: 'https://gu.qq.com/', Accept: '*/*' },
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) throw new Error(`腾讯复权 K 线 HTTP ${res.status}`);
+  const json = await res.json();
+  const node = json && json.data ? json.data[symbol] : null;
+  const rows = node ? node[key] : null;
+  if (!Array.isArray(rows) || !rows.length) throw new Error('暂无该股复权 K 线数据');
+  let candles = buildCandles(rows, { d: 0, o: 1, c: 2, h: 3, l: 4, v: 5 });
+  if (klt === 102) candles = aggregateCandles(candles, 'week');
+  if (klt === 103) candles = aggregateCandles(candles, 'month');
+  return candles.slice(-limit);
+}
+
+/**
  * A 股 K 线的复权调度：
- *   fqt=1/2（前复权 / 后复权）→ 优先东方财富（唯一能同时给出三种口径的源），
- *                              失败回退搜狐 / 新浪的未复权序列，并把 fqtApplied 置 false 让前端标注；
+ *   fqt=1/2（前复权 / 后复权）→ 先试东方财富（三种口径齐全），
+ *                              再用腾讯 qfq/hfq 兜底（东财在部分网络不可用时仍能拿到真复权价），
+ *                              两者都失败才回退未复权，并把 fqtApplied 置 false 让前端标注；
  *   fqt=0（不复权）→ 优先搜狐 / 新浪（本身不复权），失败回退东财 fqt=0；
  *   分钟级 K 线没有复权概念，直接走原链路。
  */
@@ -2289,10 +2318,30 @@ async function fetchAshareKline(secid, klt, limit, fqt) {
     const candles = await fetchEastmoneyKline(secid, klt, limit, fqt);
     if (candles && candles.length) return { candles, source: 'eastmoney', fqtApplied: true };
   } catch {
-    // 东财失败时回退到未复权链路，由 fqtApplied=false 提示口径降级
+    // 东财不可用时继续走腾讯复权
+  }
+  try {
+    const candles = await fetchAshareTencentAdjusted(secid, klt, limit, fqt);
+    if (candles && candles.length) return { candles, source: 'tencent-fq', fqtApplied: true };
+  } catch {
+    // 腾讯复权也失败时回退未复权，由 fqtApplied=false 提示口径降级
   }
   const candles = await fetchAshareSina(secid, klt, limit, false);
   return { candles, source: 'sina', fqtApplied: false };
+}
+
+/**
+ * A 股指数 secid 判定：市场前缀 1 + 000xxx（上证 / 沪深300 / 科创50），
+ * 或市场前缀 0 + 399xxx / 899xxx（深证 / 创业板 / 北证50）。
+ * 指数没有复权概念，前端要据此显示「该标的无复权概念」而不是「暂无复权序列」。
+ */
+function isAshareIndexSecid(secid) {
+  const m = /^([01])\.(\d{6})$/.exec(String(secid));
+  if (!m) return false;
+  const market = m[1];
+  const code = m[2];
+  if (market === '1') return /^000\d{3}$/.test(code);
+  return /^(399|899)\d{3}$/.test(code);
 }
 
 async function getKline(secid, klt = 101, limit = 160, fqt = 0) {
@@ -2305,18 +2354,22 @@ async function getKline(secid, klt = 101, limit = 160, fqt = 0) {
     let candles;
     let source = 'sina';
     let fqtApplied = true;
+    let fqtApplicable = true;
     if (SINA_FUTURES_KLINE[secid]) {
       candles = await fetchSinaFuturesKline(secid, limit);
       source = 'sina-futures';
       fqtApplied = fq === 0;
+      fqtApplicable = false; // 期货没有复权概念
     } else if (TENCENT_KLINE[secid]) {
       candles = await fetchTencentKline(secid, limit);
       source = 'tencent';
+      fqtApplicable = false; // 海外指数没有复权概念
     } else if (/^\d+\.\d{6}$/.test(secid)) {
       const res = await fetchAshareKline(secid, klt, limit, fq);
       candles = res.candles;
       source = res.source;
       fqtApplied = res.fqtApplied;
+      fqtApplicable = !isAshareIndexSecid(secid);
     } else {
       candles = await fetchEastmoneyKline(secid, klt, limit, fq);
       source = 'eastmoney';
@@ -2349,6 +2402,7 @@ async function getKline(secid, klt = 101, limit = 160, fqt = 0) {
       source,
       fqt: fq,
       fqtApplied,
+      fqtApplicable,
     };
   });
 }

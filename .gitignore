@@ -12,6 +12,8 @@ tools/
 gp-terminal.tar.gz
 cleanup-*.sh
 recover-index-*.html
+# 一次性迁移/验证脚本（跑完即删，不要进仓库历史）
+scripts/_tmp-*
 
 # ===== 日志（运行时产生，只留目录占位）=====
 logs/*
