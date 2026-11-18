@@ -263,9 +263,10 @@ test('DOM：自选股 5 个操作按钮图标与动作一一对应', () => {
   app.renderWatchTable();
   const btns = [...document.querySelectorAll('#watchTable .watch-actions button')];
   assert.equal(btns.length, 5, '每行应有 5 个操作按钮');
-  // 曾经出现「两个 K、两个 ×」的图标错乱，这里锁死图标顺序
-  assert.deepEqual(btns.map((b) => b.textContent.trim()), ['↑', '↓', 'K', '警', '×']);
-  assert.deepEqual(btns.map((b) => b.getAttribute('data-watch-action')), ['up', 'down', 'chart', 'alert', 'remove']);
+  // 曾经出现「两个 K、两个 ×」的图标错乱，这里锁死图标顺序；
+  // v2.7.0 起顺序与「我的自选基金」对齐：K 在最前，↑↓ 居中，× 最后
+  assert.deepEqual(btns.map((b) => b.textContent.trim()), ['K', '↑', '↓', '警', '×']);
+  assert.deepEqual(btns.map((b) => b.getAttribute('data-watch-action')), ['chart', 'up', 'down', 'alert', 'remove']);
   // 「移出自选」按钮的 title 曾因缺一个引号被吃掉，导致按钮点击无效
   assert.equal(btns[4].getAttribute('title'), '移出自选');
 });
@@ -991,9 +992,9 @@ test('DOM：我的自选是表格式列表，与自选基金同一套结构', ()
   assert.match(row.textContent, /白酒/, '行业列');
   assert.match(row.textContent, /偏强/, '评级徽标');
   assert.equal(table.querySelectorAll('img').length, 0, '行业等上游文本必须被转义，不能注入标签');
-  // 5 个操作按钮顺序与基金表一致（大小写图标不能错乱，历史上出过重复图标）
+  // 5 个操作按钮顺序与基金表一致（K 在前、× 在最后；历史上出过重复图标）
   const btns = [...row.querySelectorAll('.fund-watch-actions button')];
-  assert.deepEqual(btns.map((b) => b.dataset.watchAction), ['up', 'down', 'chart', 'alert', 'remove']);
+  assert.deepEqual(btns.map((b) => b.dataset.watchAction), ['chart', 'up', 'down', 'alert', 'remove']);
 });
 
 test('DOM：新股申购日历（ipo）与转债申购日历（cbapply）能渲染', () => {

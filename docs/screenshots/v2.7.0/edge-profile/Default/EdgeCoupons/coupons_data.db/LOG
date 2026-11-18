@@ -1,5 +1,5 @@
-2026/11/19-05:19:32.500 64c0 Creating DB E:\DeepSeekHarness\20261031_GP_Software\docs\screenshots\v2.7.0\edge-profile\Default\EdgeCoupons/coupons_data.db since it was missing.
-2026/11/19-05:19:32.518 64c0 Reusing MANIFEST E:\DeepSeekHarness\20261031_GP_Software\docs\screenshots\v2.7.0\edge-profile\Default\EdgeCoupons/coupons_data.db/MANIFEST-000001
-2026/11/19-05:19:32.770 bdc8 Level-0 table #5: started
-2026/11/19-05:19:32.774 bdc8 Level-0 table #5: 683273 bytes OK
-2026/11/19-05:19:32.778 bdc8 Delete type=0 #3
+2026/11/19-05:24:47.344 40f8 Creating DB E:\DeepSeekHarness\20261031_GP_Software\docs\screenshots\v2.7.0\edge-profile\Default\EdgeCoupons/coupons_data.db since it was missing.
+2026/11/19-05:24:47.359 40f8 Reusing MANIFEST E:\DeepSeekHarness\20261031_GP_Software\docs\screenshots\v2.7.0\edge-profile\Default\EdgeCoupons/coupons_data.db/MANIFEST-000001
+2026/11/19-05:24:47.611 dec8 Level-0 table #5: started
+2026/11/19-05:24:47.616 dec8 Level-0 table #5: 683273 bytes OK
+2026/11/19-05:24:47.624 dec8 Delete type=0 #3

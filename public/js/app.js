@@ -3479,23 +3479,23 @@ function renderWatchTable() {
   // 复用 .fund-watch-table 的样式与响应式规则，只额外标一个 watch-stock-table 便于单独微调。
   el.innerHTML = `<div class="table-scroll"><table class="table fund-watch-table watch-stock-table">
     <thead><tr>
-      <th>股票</th><th data-col="nav">最新</th><th>涨跌幅</th><th data-col="flow">主力净流入</th>
+      <th>股票</th><th data-col="last">最新</th><th>涨跌幅</th><th data-col="flow">主力净流入</th>
       <th data-col="score">技术评分</th><th data-col="rating">评级 / 仓位</th><th data-col="industry">行业</th><th>操作</th>
     </tr></thead>
     <tbody>${sorted.map(({ quote, advice: av }) => {
       const q = quote || {};
       return `<tr draggable="true" data-drag-secid="${esc(q.secid)}" data-stock-secid="${esc(q.secid)}" title="拖动行排序，点击查看详情">
         <td><span class="fund-drag-grip">⋮⋮</span><span class="t-name">${esc(cleanName(q.name))}</span><span class="t-code">${esc(q.code)}</span></td>
-        <td data-col="nav" class="t-price">${stockFmt(q.price)}</td>
+        <td data-col="last" class="t-price">${stockFmt(q.price)}</td>
         <td class="t-chg ${toneClass(q.pct)}">${pctFmt(q.pct)}</td>
         <td data-col="flow" class="t-chg ${toneClass(q.mainYi)}">${yiFmt(q.mainYi)}</td>
         <td data-col="score" class="t-price ${av && av.score >= 60 ? 'tone-up' : av && av.score < 45 ? 'tone-down' : ''}">${av ? av.score : '--'}</td>
         <td data-col="rating">${av ? `<span class="badge tone-${av.rating.tone}">${esc(av.rating.label)}</span><div class="t-sub">${esc(av.position.text)}</div>` : '--'}</td>
         <td data-col="industry" class="t-dim">${esc(q.industry || '--')}</td>
         <td><div class="fund-watch-actions watch-actions">
+          <button title="查看 K 线详情" data-watch-action="chart" data-secid="${esc(q.secid)}">K</button>
           <button class="move" title="上移" data-watch-action="up" data-secid="${esc(q.secid)}">↑</button>
           <button class="move" title="下移" data-watch-action="down" data-secid="${esc(q.secid)}">↓</button>
-          <button title="查看 K 线详情" data-watch-action="chart" data-secid="${esc(q.secid)}">K</button>
           <button title="添加价格预警" data-watch-action="alert" data-secid="${esc(q.secid)}">警</button>
           <button class="del" title="移出自选" data-watch-action="remove" data-secid="${esc(q.secid)}">×</button>
         </div></td>
@@ -6706,7 +6706,7 @@ function renderFundamentalDrawer(f10, longhu, overlay, seats) {
       <tbody>${(holders.top10 || []).map((x) => `<tr><td>${esc(x.name)}</td><td>${nf(x.sharesWan, 2)}</td><td>${nf(x.ratio, 2)}%</td><td class="t-sub">${esc(x.change || '')}</td></tr>`).join('') || '<tr><td colspan="4"><div class="empty">暂无股东数据</div></td></tr>'}</tbody></table>`,
     bonus: `<table class="table"><thead><tr><th>日期</th><th>方案</th><th>每10股派息</th><th>送转</th><th>进度</th></tr></thead>
       <tbody>${(bonus.items || []).map((x) => `<tr><td>${esc(x.date || '--')}</td><td class="t-sub">${esc(x.profile || '--')}</td><td>${x.cashPer10 === null ? '--' : `${nf(x.cashPer10, 2)} 元`}</td><td>${x.bonusPer10 === null ? '--' : `${nf(x.bonusPer10, 2)} 股`}</td><td class="t-sub">${esc(x.progress || '')}</td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">暂无分红记录</div></td></tr>'}</tbody></table>`,
-    longhu: `<table class="table"><thead><tr><th>日期</th><th>收盘</th><th>涨跌幅</th><th>上榜净额</th><th>上榜原因</th></tr></thead>
+    longhu: `<table class="table f10-longhu-table"><thead><tr><th>日期</th><th>收盘</th><th>涨跌幅</th><th>上榜净额</th><th>上榜原因</th></tr></thead>
       <tbody>${((longhu && longhu.items) || []).map((x) => `<tr><td>${esc(x.date)}</td><td>${nf(x.close, 2)}</td><td class="${toneClass(x.pct)}">${pctFmt(x.pct)}</td><td class="${toneClass(x.netYi)}">${x.netYi === null ? '--' : `${nf(x.netYi, 2)} 亿`}</td><td class="t-sub">${esc(x.reason || '')}</td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">该股近期没有上榜记录</div></td></tr>'}</tbody></table>
       ${renderSeatsBlock(seats)}`,
   };

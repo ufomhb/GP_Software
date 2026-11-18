@@ -185,8 +185,13 @@ try {
   check('关闭资讯后回到个股详情', st.layers === 0 && st.base, JSON.stringify(st));
 
   // 3) 查看大盘策略（新标签页，本页个股详情不动）
+  // 注意：window.open 需要真实用户手势，programmatic click() 不算，
+  // 所以这里用 CDP 发真实鼠标事件（否则会走「弹窗被拦截」的兜底分支）。
   const before = (await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()).length;
-  await evalJs("document.querySelector('[data-strategy-new]').click()");
+  const pt = await evalJs("(() => { const b = document.querySelector('[data-strategy-new]'); b.scrollIntoView({block:'center'}); const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()");
+  await wait(400);
+  await client.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pt.x, y: pt.y, button: 'left', clickCount: 1 });
+  await client.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pt.x, y: pt.y, button: 'left', clickCount: 1 });
   await wait(3500);
   const after = (await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json());
   st = await evalJs(`(() => ({
@@ -219,11 +224,25 @@ try {
   check('自选页：模拟交易面板排在「我的自选」之前', watchInfo.paperFirst, JSON.stringify(watchInfo.order));
   check('自选股是表格式列表（与自选基金同款类名）', watchInfo.rows > 0 && watchInfo.sameClass, JSON.stringify(watchInfo));
   await shot('07-watchlist-table');
+  // 只截「我的自选 / 我的自选基金」两块面板（整页太长，单独给证据）
+  const clipOf = async (selector, name) => {
+    const box = await evalJs(`(() => {
+      const el = ${selector};
+      const r = el.getBoundingClientRect();
+      return { x: Math.max(0, r.x + window.scrollX), y: Math.max(0, r.y + window.scrollY), width: r.width, height: Math.min(r.height, 1600) };
+    })()`);
+    if (box.width < 10 || box.height < 10) return;
+    const s = await client.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { ...box, scale: 1 } });
+    fs.writeFileSync(path.join(OUT, `${name}.png`), Buffer.from(s.data, 'base64'));
+    console.log('saved', name);
+  };
+  await clipOf("document.querySelector('#watchTable').closest('article.panel')", '07b-watch-panel');
+  await clipOf("document.querySelector('#watchFundList').closest('article.panel')", '07c-fund-watch-panel');
 
   /* ---------- 手机 390 下的自选表 ---------- */
   await viewport(390, 844, true);
-  await wait(1200);
-  await shot('08-watchlist-mobile');
+  await wait(800);
+  await clipOf("document.querySelector('#watchTable').closest('article.panel')", '08-watchlist-mobile');
   const mobileInfo = await evalJs(`(() => {
     const t = document.querySelector('#watchTable table');
     const visible = Array.from(t.querySelectorAll('thead th')).filter((th) => th.offsetParent !== null).map((th) => th.textContent.trim());
