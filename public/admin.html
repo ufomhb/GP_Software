@@ -229,6 +229,10 @@
 
       <!-- 持仓策略：按天记录建议 + 次日净值评价 + 调参改进 -->
       <section class="admin-section" id="sec-strategy">
+        <div class="st-toolbar">
+          <button type="button" class="admin-btn" id="stOpenParams">策略参数</button>
+          <button type="button" class="admin-btn" id="stOpenTune">自动调参</button>
+        </div>
         <div class="st-grid">
           <article class="admin-card">
             <div class="admin-card-head"><h2>今日建议</h2><span class="muted small" id="stDate">—</span></div>
@@ -246,17 +250,22 @@
             <div id="stStats" class="admin-kv-list"><div class="admin-empty">加载中…</div></div>
             <div id="stActionTable" class="admin-table-wrap"></div>
             <p class="admin-note" id="stHitNote">—</p>
-            <div class="st-block">
-              <div class="st-block-head">评分区间（仅统计加仓/减仓建议）</div>
-              <div id="stScoreTable" class="admin-table-wrap"></div>
-              <p class="admin-note">
-                「条数」= 该区间加仓/减仓建议的条数（例如「&lt;35 条数 1」表示该区间只有 1 条加仓/减仓建议）；不变建议不参与评分区间统计。
-                可判定样本不足 3 条时，命中率显示「样本不足」而不是百分比。
-              </p>
-            </div>
-            <div class="st-block" id="stMarketBlock" hidden>
-              <div class="st-block-head">按市场氛围（按记录时的市场氛围分组）</div>
-              <div id="stMarketTable" class="admin-table-wrap"></div>
+            <div class="st-more">
+              <button type="button" class="admin-link" id="stMoreToggle" aria-expanded="false">展开评分区间 / 按市场氛围明细</button>
+              <div id="stMoreBody" hidden>
+                <div class="st-block">
+                  <div class="st-block-head">评分区间（仅统计加仓/减仓建议）</div>
+                  <div id="stScoreTable" class="admin-table-wrap"></div>
+                  <p class="admin-note">
+                    「条数」= 该区间加仓/减仓建议的条数（例如「&lt;35 条数 1」表示该区间只有 1 条加仓/减仓建议）；不变建议不参与评分区间统计。
+                    可判定样本不足 3 条时，命中率显示「样本不足」而不是百分比。鼠标停在任意一行可看具体是哪几条。
+                  </p>
+                </div>
+                <div class="st-block" id="stMarketBlock" hidden>
+                  <div class="st-block-head">按市场氛围（按记录时的市场氛围分组）</div>
+                  <div id="stMarketTable" class="admin-table-wrap"></div>
+                </div>
+              </div>
             </div>
           </article>
         </div>
@@ -264,64 +273,6 @@
         <article class="admin-card">
           <div class="admin-card-head"><h2>改进建议</h2><span class="muted small">按命中率给出，改不改由你决定</span></div>
           <ul id="stSuggestions" class="st-suggestions"><li class="admin-empty">加载中…</li></ul>
-        </article>
-
-        <article class="admin-card">
-          <div class="admin-card-head"><h2>策略参数</h2><span class="muted small">保存后推送与记录立即使用新参数</span></div>
-          <div class="st-params">
-            <label><span>加仓评分门槛</span><input type="number" id="ruleAddScore" min="40" max="100" step="1"></label>
-            <label><span>加仓需要的跌幅 %</span><input type="number" id="ruleAddDip" min="0.2" max="10" step="0.1"></label>
-            <label><span>强信号评分</span><input type="number" id="ruleStrongScore" min="60" max="100" step="1"></label>
-            <label><span>强信号跌幅 %</span><input type="number" id="ruleStrongDip" min="0.5" max="15" step="0.1"></label>
-            <label><span>减仓评分门槛</span><input type="number" id="ruleCutScore" min="5" max="70" step="1"></label>
-            <label><span>减仓反弹触发 %</span><input type="number" id="ruleCutRise" min="0.1" max="10" step="0.1"></label>
-            <label><span>减仓下跌触发 %</span><input type="number" id="ruleCutDip" min="0.2" max="10" step="0.1"></label>
-            <label><span>弱势评分</span><input type="number" id="ruleWeakScore" min="5" max="60" step="1"></label>
-            <label><span>单只占比上限 %</span><input type="number" id="ruleConcPct" min="20" max="90" step="1"></label>
-            <label><span>集中度目标 %</span><input type="number" id="ruleConcTarget" min="10" max="80" step="1"></label>
-            <label><span>常规加减比例 %（10=1成）</span><input type="number" id="ruleBaseRatio" min="10" max="50" step="1"></label>
-            <label><span>强信号加减比例 %（20=2成）</span><input type="number" id="ruleStrongRatio" min="10" max="80" step="1"></label>
-            <label><span>市场氛围权重 0~2</span><input type="number" id="ruleMarketWeight" min="0" max="2" step="0.1"></label>
-            <label><span>加仓判对阈值 %</span><input type="number" id="bandAdd" min="0.1" max="20" step="0.1"></label>
-            <label><span>减仓判对阈值 %</span><input type="number" id="bandCut" min="0.1" max="20" step="0.1"></label>
-            <label><span>不变的合理波动 %</span><input type="number" id="bandHold" min="0.1" max="20" step="0.1"></label>
-            <label><span>评价窗口（工作日）</span><input type="number" id="bandWindow" min="1" max="10" step="1"></label>
-          </div>
-          <div class="admin-actions">
-            <button type="button" class="admin-btn primary" id="stSave">保存参数</button>
-            <button type="button" class="admin-btn" id="stReset">恢复默认</button>
-          </div>
-          <p class="admin-note">
-            决策口径：记录与推送只用持仓基金的 <b>15:00 当日估值</b>，不用收盘后公布的真实净值；覆盖重记也会重新取各基金估值。
-            评价口径：次日只认<b>已公布净值</b>（盘中估算不算）。
-            加仓命中 = 次日涨过阈值；减仓命中 = 次日跌过阈值；不变命中 = 次日波动在合理区间内。
-            加减仓固定比例最少 1 成，避免加建仓后对次日涨跌无感。
-          </p>
-        </article>
-
-        <article class="admin-card">
-          <div class="admin-card-head"><h2>自动调参</h2><span class="muted small" id="stTuneMeta">—</span></div>
-          <div class="st-params">
-            <label><span>开关</span>
-              <select id="stTuneEnabled">
-                <option value="1">开启（按命中率自动改参数）</option>
-                <option value="0">关闭（只给文字建议）</option>
-              </select>
-            </label>
-            <label><span>最少可判定样本</span><input type="number" id="stTuneMinSamples" min="2" max="50" step="1"></label>
-            <label><span>触发命中率（低于就调）</span><input type="number" id="stTuneMinHit" min="0.05" max="0.95" step="0.05"></label>
-            <label><span>每次调整幅度</span><input type="number" id="stTuneStep" min="1" max="20" step="1"></label>
-          </div>
-          <div class="admin-actions">
-            <button type="button" class="admin-btn primary" id="stTuneSave">保存设置</button>
-            <button type="button" class="admin-btn" id="stTuneRun">立即运行一次</button>
-            <button type="button" class="admin-btn danger" id="stTuneRollback">回滚上一次</button>
-          </div>
-          <p class="admin-note">
-            规则：每天最多自动调一次；只动「加仓评分门槛 / 减仓评分门槛」，命中率达标时**不会自动放宽**（避免越调越松）。
-            每次调参都记录前后值与样本，可一键回滚。
-          </p>
-          <ul id="stTuneHistory" class="st-suggestions"><li class="admin-empty">还没有自动调参记录</li></ul>
         </article>
 
         <article class="admin-card">
@@ -400,6 +351,85 @@
         <article class="admin-card"><div id="changelogList" class="admin-changelog"><div class="admin-empty">加载中…</div></div></article>
       </section>
     </main>
+  </div>
+
+  <!-- 持仓策略 · 悬停明细 tooltip（跟随鼠标，高于弹窗） -->
+  <div id="stTip" class="st-tip" hidden></div>
+
+  <!-- 持仓策略 · 策略参数弹窗（原「策略参数」卡片，元素 id 不变） -->
+  <div class="admin-modal" id="stParamsModal" hidden>
+    <div class="admin-modal-mask" data-st-close></div>
+    <div class="admin-modal-card" role="dialog" aria-modal="true" aria-labelledby="stParamsTitle">
+      <div class="admin-modal-head">
+        <h2 id="stParamsTitle">策略参数 <span class="muted small">保存后推送与记录立即使用新参数</span></h2>
+        <button type="button" class="admin-modal-close" data-st-close aria-label="关闭">×</button>
+      </div>
+      <div class="admin-modal-body">
+        <div class="st-params">
+          <label><span>加仓评分门槛</span><input type="number" id="ruleAddScore" min="40" max="100" step="1"></label>
+          <label><span>加仓需要的跌幅 %</span><input type="number" id="ruleAddDip" min="0.2" max="10" step="0.1"></label>
+          <label><span>强信号评分</span><input type="number" id="ruleStrongScore" min="60" max="100" step="1"></label>
+          <label><span>强信号跌幅 %</span><input type="number" id="ruleStrongDip" min="0.5" max="15" step="0.1"></label>
+          <label><span>减仓评分门槛</span><input type="number" id="ruleCutScore" min="5" max="70" step="1"></label>
+          <label><span>减仓反弹触发 %</span><input type="number" id="ruleCutRise" min="0.1" max="10" step="0.1"></label>
+          <label><span>减仓下跌触发 %</span><input type="number" id="ruleCutDip" min="0.2" max="10" step="0.1"></label>
+          <label><span>弱势评分</span><input type="number" id="ruleWeakScore" min="5" max="60" step="1"></label>
+          <label><span>单只占比上限 %</span><input type="number" id="ruleConcPct" min="20" max="90" step="1"></label>
+          <label><span>集中度目标 %</span><input type="number" id="ruleConcTarget" min="10" max="80" step="1"></label>
+          <label><span>常规加减比例 %（10=1成）</span><input type="number" id="ruleBaseRatio" min="10" max="50" step="1"></label>
+          <label><span>强信号加减比例 %（20=2成）</span><input type="number" id="ruleStrongRatio" min="10" max="80" step="1"></label>
+          <label><span>市场氛围权重 0~2</span><input type="number" id="ruleMarketWeight" min="0" max="2" step="0.1"></label>
+          <label><span>加仓判对阈值 %</span><input type="number" id="bandAdd" min="0.1" max="20" step="0.1"></label>
+          <label><span>减仓判对阈值 %</span><input type="number" id="bandCut" min="0.1" max="20" step="0.1"></label>
+          <label><span>不变的合理波动 %</span><input type="number" id="bandHold" min="0.1" max="20" step="0.1"></label>
+          <label><span>评价窗口（工作日）</span><input type="number" id="bandWindow" min="1" max="10" step="1"></label>
+        </div>
+        <div class="admin-actions">
+          <button type="button" class="admin-btn primary" id="stSave">保存参数</button>
+          <button type="button" class="admin-btn" id="stReset">恢复默认</button>
+        </div>
+        <p class="admin-note">
+          决策口径：记录与推送只用持仓基金的 <b>15:00 当日估值</b>，不用收盘后公布的真实净值；覆盖重记也会重新取各基金估值。
+          评价口径：次日只认<b>已公布净值</b>（盘中估算不算）。
+          加仓命中 = 次日涨过阈值；减仓命中 = 次日跌过阈值；不变命中 = 次日波动在合理区间内。
+          加减仓固定比例最少 1 成，避免加建仓后对次日涨跌无感。
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 持仓策略 · 自动调参弹窗（原「自动调参」卡片，元素 id 不变） -->
+  <div class="admin-modal" id="stTuneModal" hidden>
+    <div class="admin-modal-mask" data-st-close></div>
+    <div class="admin-modal-card" role="dialog" aria-modal="true" aria-labelledby="stTuneTitle">
+      <div class="admin-modal-head">
+        <h2 id="stTuneTitle">自动调参 <span class="muted small" id="stTuneMeta">—</span></h2>
+        <button type="button" class="admin-modal-close" data-st-close aria-label="关闭">×</button>
+      </div>
+      <div class="admin-modal-body">
+        <div class="st-params">
+          <label><span>开关</span>
+            <select id="stTuneEnabled">
+              <option value="1">开启（按命中率自动改参数）</option>
+              <option value="0">关闭（只给文字建议）</option>
+            </select>
+          </label>
+          <label><span>最少可判定样本</span><input type="number" id="stTuneMinSamples" min="2" max="50" step="1"></label>
+          <label><span>触发命中率（低于就调）</span><input type="number" id="stTuneMinHit" min="0.05" max="0.95" step="0.05"></label>
+          <label><span>每次调整幅度</span><input type="number" id="stTuneStep" min="1" max="20" step="1"></label>
+        </div>
+        <div class="admin-actions">
+          <button type="button" class="admin-btn primary" id="stTuneSave">保存设置</button>
+          <button type="button" class="admin-btn" id="stTuneRun">立即运行一次</button>
+          <button type="button" class="admin-btn danger" id="stTuneRollback">回滚上一次</button>
+        </div>
+        <p class="admin-note">
+          规则：每天最多自动调一次；只动「加仓评分门槛 / 减仓评分门槛」，命中率达标时**不会自动放宽**（避免越调越松）。
+          调参按严格口径（对/(对+错)，不含中性）计算；每次调参都记录前后值与样本，可一键回滚。
+        </p>
+        <ul id="stTuneHistory" class="st-suggestions"><li class="admin-empty">还没有自动调参记录</li></ul>
+      </div>
+    </div>
   </div>
 
   <script src="/js/admin.js?v=2.3.0"></script>

@@ -28,6 +28,7 @@ const state = {
   deploy: null,
   deployTimer: null,
   strategy: null,
+  strategyTips: new Map(), // tooltip key -> HTML，每次渲染 strategy 时重建
 };
 
 function esc(value) {
@@ -1118,16 +1119,31 @@ function stTotals(entry) {
   return { right, wrong, flat, skipped, total, decided };
 }
 
-/** 严格命中率 = 对/(对+错)；minSamples>0 且可判定样本不足时明确写「样本不足」 */
-function stHitRate(right, decided, minSamples = 0) {
-  if (!decided) return '—';
-  if (minSamples && decided < minSamples) return '样本不足';
-  return `${Math.round((right / decided) * 100)}%`;
-}
-
-/** 含中性口径 = 对/总条数（中性计入分母、不算对） */
+/** 含中性命中率 = 对/总条数（中性、未评都算进分母，不算对） */
 function stCoverRate(right, total) {
   return total ? `${Math.round((right / total) * 100)}%` : '—';
+}
+
+/** 分组表用：可判定样本不足时给「样本不足」，避免小样本 100% 误导 */
+function stCoverRateValue(right, total, decided, minSamples = 0) {
+  if (minSamples && decided < minSamples) return '样本不足';
+  return stCoverRate(right, total);
+}
+
+/** 评分区间：与后端 bucketOfScore 保持一致（只用于把明细映射回区间表） */
+function stBucketOfScore(score) {
+  const s = stNum(score);
+  if (s === null) return '无评分';
+  if (s < 35) return '<35';
+  if (s < 45) return '35-45';
+  if (s < 65) return '45-65';
+  if (s < 80) return '65-80';
+  return '>=80';
+}
+
+function stVerdictText(it) {
+  const v = ST_VERDICT[it && it.verdict];
+  return v ? v.label : '待评价';
 }
 
 /** 评价阈值：优先用接口给的 data.bands，缺字段时退回默认口径 */
@@ -1136,8 +1152,8 @@ function stBandVal(bands, key) {
   return v === null ? ST_DEFAULT_BANDS[key] : v;
 }
 
-/** 历史记录口径徽标（决策日用什么涨跌口径） */
-function stBasisBadge(rec) {
+/** 历史记录口径文字（决策日用什么涨跌口径）；没有可识别口径时返回空串 */
+function stBasisLabel(rec) {
   if (!rec) return '';
   let basis = rec.decisionBasis;
   if (!basis && Array.isArray(rec.items)) {
@@ -1146,6 +1162,12 @@ function stBasisBadge(rec) {
   }
   let label = ST_BASIS_LABEL[basis] || '';
   if (!label && (basis === 'nav' || basis === undefined) && rec.late) label = '真实净值（旧口径）';
+  return label;
+}
+
+/** 历史记录口径徽标 */
+function stBasisBadge(rec) {
+  const label = stBasisLabel(rec);
   return label ? ` <span class="st-basis">${esc(label)}</span>` : '';
 }
 
@@ -1189,6 +1211,205 @@ function stMarketRowHtml(data, rec) {
   </div>`;
 }
 
+/* ---------------- 悬停明细 tooltip ---------------- */
+
+function stTipLine(html) { return `<div class="st-tip-line">${html}</div>`; }
+
+/** 注册一条 tooltip，返回可直接拼进标签的 data-st-tip 属性 */
+function stTipRegister(key, html) {
+  if (!state.strategyTips) state.strategyTips = new Map();
+  state.strategyTips.set(String(key), html || '');
+  return ` data-st-tip="${esc(key)}"`;
+}
+
+/** 所有已评价的条目（records 的 eval.items） */
+function stTipEvalRows(data) {
+  const rows = [];
+  for (const rec of (data.records || [])) {
+    const ev = rec && rec.eval;
+    for (const it of ((ev && ev.items) || [])) rows.push({ rec, it });
+  }
+  return rows;
+}
+
+/** 列表行 tooltip：日期 名称（代码） 评分 · 建议 → 判定（次日%） */
+function stTipItemLine(rec, it) {
+  const score = stNum(it.score);
+  const scoreText = score === null ? '评分 —' : `评分 ${score}`;
+  const next = stNum(it.evalPct) === null ? '次日 —' : `次日 ${stPctHtml(it.evalPct)}`;
+  return stTipLine(`${esc(rec.date)} ${esc(it.name)}（${esc(it.code)}） ${esc(scoreText)} · ${ST_ACTION_LABEL[it.action] || esc(it.action)} → ${esc(stVerdictText(it))}（${next}）`);
+}
+
+function stTipGroupHtml(title, rows, limit = 20) {
+  const parts = [`<b>${esc(title)}（共 ${rows.length} 条）</b>`];
+  rows.slice(0, limit).forEach(({ rec, it }) => parts.push(stTipItemLine(rec, it)));
+  if (rows.length > limit) parts.push(stTipLine(`…共 ${rows.length} 条`));
+  return parts.join('');
+}
+
+/** 按动作表某一行：展示这一行的全部建议明细 */
+function stActionTipHtml(data, action) {
+  const rows = stTipEvalRows(data).filter(({ it }) => it.action === action);
+  return stTipGroupHtml(`${ST_ACTION_LABEL[action]}建议明细`, rows);
+}
+
+/** 评分区间某一行：展示该区间里的加仓/减仓建议 */
+function stScoreTipHtml(data, bucket) {
+  const rows = stTipEvalRows(data)
+    .filter(({ it }) => (it.action === 'add' || it.action === 'cut') && stBucketOfScore(it.score) === bucket);
+  return stTipGroupHtml(`评分区间 ${bucket} 的加仓/减仓建议`, rows);
+}
+
+/** 按市场氛围某一行：展示该氛围下记录的建议 */
+function stMarketTipHtml(data, verdict) {
+  const rows = stTipEvalRows(data)
+    .filter(({ rec }) => rec && rec.market && String(rec.market.verdict) === String(verdict));
+  return stTipGroupHtml(`市场氛围「${verdict}」下的建议`, rows);
+}
+
+/** 历史记录头部 tooltip：日期/来源/口径/分布/命中率/市场氛围/每条明细 */
+function stHistoryTipHtml(rec) {
+  const c = (rec.snapshot && rec.snapshot.counts) || {};
+  const ev = rec.eval;
+  const sum = ev && ev.summary;
+  const s = stTotals(sum);
+  const basis = stBasisLabel(rec);
+  const source = rec.source === 'auto' ? '自动' : '手动';
+  const parts = [];
+  parts.push(`<b>${esc(rec.date)}</b> <span class="muted">${esc(source)}${rec.late ? ' · 收盘后补记' : ''}${basis ? ` · ${esc(basis)}` : ''}</span>`);
+  parts.push(stTipLine(`建议分布：加 ${n(c.add)} · 减 ${n(c.cut)} · 不变 ${n(c.hold)}${c.pending ? ` · 未更新 ${n(c.pending)}` : ''}`));
+  if (sum) {
+    parts.push(stTipLine(`含中性命中率：<b>${stCoverRate(s.right, s.total)}</b>（对 ${s.right}/${s.total}）`));
+    parts.push(stTipLine(`对 ${s.right} · 错 ${s.wrong} · 中性 ${s.flat} · 未评 ${s.skipped} · 共 ${s.total}`));
+  } else {
+    parts.push(stTipLine('含中性命中率：次日待评价'));
+  }
+  const mkt = rec.market;
+  if (mkt) {
+    const score = stNum(mkt.score);
+    parts.push(stTipLine(`市场氛围：${stMarketBadge(mkt)}${score === null ? '' : ` 分值 ${score}`}`));
+    if (mkt.summary) parts.push(stTipLine(`A股：${esc(mkt.summary)}`));
+    if (mkt.ext) parts.push(stTipLine(`外围：${esc(mkt.ext)}`));
+  } else {
+    parts.push(stTipLine('市场氛围：无（旧记录未采集）'));
+  }
+  const items = (ev && ev.items) || rec.items || [];
+  const limit = 12;
+  items.slice(0, limit).forEach((it) => parts.push(stHistoryTipItemLine(it)));
+  if (items.length > limit) parts.push(stTipLine(`…共 ${items.length} 条，仅显示前 ${limit} 条`));
+  return parts.join('');
+}
+
+function stHistoryTipItemLine(it) {
+  const shares = n(it.shares).toLocaleString('zh-CN');
+  const target = n(it.targetShares).toLocaleString('zh-CN');
+  const next = stNum(it.evalPct) === null ? '次日 —' : `次日 ${stPctHtml(it.evalPct)}`;
+  return stTipLine(`${esc(it.name)}（${esc(it.code)}） ${ST_ACTION_LABEL[it.action] || esc(it.action)} ${shares}→${target} ｜ ${esc(stVerdictText(it))} ｜ ${next}`);
+}
+
+function stTipMove(ev) {
+  const tip = $('#stTip');
+  if (!tip || tip.hidden) return;
+  const pad = 14;
+  const vw = typeof window !== 'undefined' && window.innerWidth ? window.innerWidth : 0;
+  const vh = typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 0;
+  tip.style.left = `${ev.clientX + pad}px`;
+  tip.style.top = `${ev.clientY + pad}px`;
+  const rect = tip.getBoundingClientRect ? tip.getBoundingClientRect() : { width: 0, height: 0 };
+  if (vw && ev.clientX + pad + rect.width > vw - 8) {
+    tip.style.left = `${Math.max(8, ev.clientX - rect.width - pad)}px`;
+  }
+  if (vh && ev.clientY + pad + rect.height > vh - 8) {
+    tip.style.top = `${Math.max(8, ev.clientY - rect.height - pad)}px`;
+  }
+}
+
+function stTipShow(html, ev) {
+  const tip = $('#stTip');
+  if (!tip) return;
+  tip.innerHTML = html == null ? '' : String(html);
+  tip.hidden = false;
+  stTipMove(ev || { clientX: 0, clientY: 0 });
+}
+
+function stTipHide() {
+  const tip = $('#stTip');
+  if (!tip) return;
+  tip.hidden = true;
+  tip.innerHTML = '';
+}
+
+/** 全局只绑一次：mouseover 找最近的 [data-st-tip]，mousemove 跟随，mouseout 收起 */
+function stTipBind() {
+  const hostOf = (ev) => (ev && ev.target && ev.target.closest ? ev.target.closest('[data-st-tip]') : null);
+  document.addEventListener('mouseover', (ev) => {
+    const host = hostOf(ev);
+    if (!host) return;
+    const key = host.getAttribute('data-st-tip');
+    const html = state.strategyTips && state.strategyTips.get(key);
+    if (html) stTipShow(html, ev);
+  });
+  document.addEventListener('mousemove', (ev) => {
+    const tip = $('#stTip');
+    if (tip && !tip.hidden) stTipMove(ev);
+  });
+  document.addEventListener('mouseout', (ev) => {
+    const host = hostOf(ev);
+    if (!host) return;
+    const to = ev.relatedTarget;
+    if (to && host.contains && host.contains(to)) return;
+    stTipHide();
+  });
+}
+
+/* ---------------- 策略参数 / 自动调参弹窗 ---------------- */
+
+function stModalOpen(modal) {
+  const el = typeof modal === 'string' ? $(modal) : modal;
+  if (!el) return;
+  el.hidden = false;
+  if (document.body) document.body.classList.add('admin-modal-open');
+}
+
+function stModalClose(modal) {
+  const el = typeof modal === 'string' ? $(modal) : modal;
+  if (!el) return;
+  el.hidden = true;
+  if (document.body) document.body.classList.remove('admin-modal-open');
+  // 兜底：还有别的弹窗开着就保持滚动锁
+  const stillOpen = $$('.admin-modal').some((m) => m && !m.hidden);
+  if (stillOpen && document.body) document.body.classList.add('admin-modal-open');
+}
+
+/** 全局只绑一次：两个入口按钮 + 遮罩/× + Esc */
+function stModalBind() {
+  const openParams = $('#stOpenParams');
+  if (openParams) openParams.addEventListener('click', () => stModalOpen('#stParamsModal'));
+  const openTune = $('#stOpenTune');
+  if (openTune) openTune.addEventListener('click', () => stModalOpen('#stTuneModal'));
+  document.addEventListener('click', (ev) => {
+    const closer = ev && ev.target && ev.target.closest ? ev.target.closest('[data-st-close]') : null;
+    if (!closer) return;
+    stModalClose(closer.closest('.admin-modal'));
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    const open = $$('.admin-modal').find((m) => m && !m.hidden);
+    if (open) stModalClose(open);
+  });
+}
+
+/** 展开/收起「评分区间 / 按市场氛围」明细 */
+function stToggleMore() {
+  const body = $('#stMoreBody');
+  const btn = $('#stMoreToggle');
+  if (!body || !btn) return;
+  const expand = body.hidden;
+  body.hidden = !expand;
+  btn.textContent = expand ? '收起评分区间 / 按市场氛围明细' : '展开评分区间 / 按市场氛围明细';
+  btn.setAttribute('aria-expanded', expand ? 'true' : 'false');
+}
+
 function renderStrategyToday(data) {
   const rec = data.todayRecord;
   const rows = [];
@@ -1220,58 +1441,59 @@ function renderStrategyStats(data) {
     ? `${n(stats.days)} 个交易日 · ${n(stats.items)} 条建议`
     : '还没有可评价的记录';
 
-  // 顶部两行：严格口径（对/(对+错)）与含中性口径（对/总条数），都列全 对/错/中性/未评/共
-  const kv = (label, value) => `<div class="admin-kv"><span>${label}</span><b>${value}</b></div>`;
-  const plain = `对 ${ov.right} / 错 ${ov.wrong} / 中性 ${ov.flat} / 未评 ${ov.skipped} / 共 ${ov.total}`;
-  $('#stStats').innerHTML = kv('严格命中率',
-    `${stHitRate(ov.right, ov.decided)} <span class="muted small">对/(对+错) · ${plain}</span>`)
-    + kv('含中性口径',
-      `${stCoverRate(ov.right, ov.total)} <span class="muted small">对/总条数 · ${plain}（中性计入分母、不算对）</span>`);
+  // 主 KPI：只显示含中性口径（对 / 全部条数）；严格口径只留给自动调参，不再出现百分比
+  const kpiTip = stTipRegister('kpi',
+    '<b>口径说明</b>：主指标为含中性命中率（对/全部条数，中性、未评都算分母、不算对）。'
+    + '<br>系统自动调参仍按严格口径（对/(对+错)）计算，不在本卡显示。');
+  $('#stStats').innerHTML = `<div class="st-kpi"${kpiTip}>
+      <span class="st-kpi-label">含中性命中率</span>
+      <b class="st-kpi-value">${stCoverRate(ov.right, ov.total)}</b>
+    </div>
+    <div class="st-kpi-sub">对 ${ov.right} · 错 ${ov.wrong} · 中性 ${ov.flat} · 未评 ${ov.skipped} · 共 ${ov.total} · 可判定 ${ov.decided} 条</div>`;
 
-  // 按动作表：严格命中率旁标出「对/可判定」
+  // 按动作表：最后一列 = 对/条数（含中性口径）
   const actionRows = ST_ACTION_ORDER.map((action) => {
     const s = stTotals(byAction[action]);
-    return `<tr>
+    return `<tr${stTipRegister(`row:${action}`, stActionTipHtml(data, action))}>
       <td><span class="st-tag ${action}">${ST_ACTION_LABEL[action]}</span></td>
       <td>${s.total}</td>
       <td class="ok">${s.right}</td>
       <td class="bad">${s.wrong}</td>
       <td>${s.flat}</td>
       <td>${s.skipped}</td>
-      <td>${stHitRate(s.right, s.decided)} <span class="st-hit-frac">对 ${s.right} / 可判定 ${s.decided}</span></td>
+      <td>${stCoverRate(s.right, s.total)} <span class="st-hit-frac">${s.right}/${s.total}</span></td>
     </tr>`;
   }).join('');
   $('#stActionTable').innerHTML = `<table class="admin-table st-table">
-    <thead><tr><th>动作</th><th>条数</th><th>对</th><th>错</th><th>中性</th><th>未评</th><th>严格命中率</th></tr></thead>
+    <thead><tr><th>动作</th><th>条数</th><th>对</th><th>错</th><th>中性</th><th>未评</th><th>含中性命中率</th></tr></thead>
     <tbody>${actionRows}</tbody></table>`;
 
-  // 公式说明：阈值跟着 data.bands 走，规则调整后说明同步变化
+  // 公式说明：以含中性口径为主，阈值跟着 data.bands 走
   const addBand = stBandVal(data.bands, 'addBand');
   const cutBand = stBandVal(data.bands, 'cutBand');
   const holdBand = stBandVal(data.bands, 'holdBand');
-  $('#stHitNote').innerHTML = '口径：'
-    + `<b>加仓</b> → 次日估值/净值涨过 <b>+${addBand}%</b> 算对、跌过 <b>-${addBand}%</b> 算错；`
-    + `<b>减仓</b> 反之 → 次日跌过 <b>-${cutBand}%</b> 算对、涨过 <b>+${cutBand}%</b> 算错；`
-    + `<b>不变</b> → 次日 |涨跌| ≤ <b>${holdBand}%</b> 算对，超出记中性（不判对也不判错）。`
-    + `严格命中率 = 对/(对+错)，中性/未评不进分母；「条数」= 该组建议总条数（含中性/未评）；`
-    + `可判定样本不足 ${ST_MIN_SAMPLES} 条时命中率显示「样本不足」。`;
+  $('#stHitNote').innerHTML = '含中性命中率 = <b>对 / 全部条数</b>（中性、未评都算进分母，不算对）。<br>'
+    + `判定：加仓 次日涨过 <b>+${addBand}%</b> 算对、跌过 <b>-${addBand}%</b> 算错；`
+    + `减仓反之（次日跌过 <b>-${cutBand}%</b> 算对）；`
+    + `不变 次日 |涨跌| ≤ <b>${holdBand}%</b> 算对，超出记中性。<br>`
+    + `可判定样本不足 ${ST_MIN_SAMPLES} 条的评分区间 / 市场氛围行显示「样本不足」；鼠标停在任意一行可看具体明细。`;
 
-  // 按评分区间：看「评分门槛」是否定得合理（只统计加仓/减仓建议）
+  // 按评分区间（折叠区，仅统计加仓/减仓建议）
   const byScore = stats.byScore || {};
   const scoreKeys = ST_SCORE_ORDER.filter((k) => byScore[k])
     .concat(Object.keys(byScore).filter((k) => !ST_SCORE_ORDER.includes(k)));
   const scoreRows = scoreKeys.map((k) => {
     const s = stTotals(byScore[k]);
-    return `<tr><td>${esc(k)}</td><td>${s.total}</td><td class="ok">${s.right}</td><td class="bad">${s.wrong}</td><td>${s.flat}</td><td>${s.skipped}</td><td>${stHitRate(s.right, s.decided, ST_MIN_SAMPLES)} <span class="st-hit-frac">${s.right}/${s.decided}</span></td></tr>`;
+    return `<tr${stTipRegister(`score:${k}`, stScoreTipHtml(data, k))}><td>${esc(k)}</td><td>${s.total}</td><td class="ok">${s.right}</td><td class="bad">${s.wrong}</td><td>${s.flat}</td><td>${s.skipped}</td><td>${stCoverRateValue(s.right, s.total, s.decided, ST_MIN_SAMPLES)} <span class="st-hit-frac">${s.right}/${s.total}</span></td></tr>`;
   }).join('');
   const scoreHasData = scoreKeys.some((k) => stTotals(byScore[k]).total > 0);
   $('#stScoreTable').innerHTML = scoreHasData
     ? `<table class="admin-table st-table">
-      <thead><tr><th>评分区间</th><th>条数</th><th>对</th><th>错</th><th>中性</th><th>未评</th><th>严格命中率</th></tr></thead>
+      <thead><tr><th>评分区间</th><th>条数</th><th>对</th><th>错</th><th>中性</th><th>未评</th><th>含中性命中率</th></tr></thead>
       <tbody>${scoreRows}</tbody></table>`
     : '<div class="admin-empty">还没有加仓/减仓建议的评价数据</div>';
 
-  // 按市场氛围：没有数据就整块不渲染
+  // 按市场氛围（折叠区，没有数据就整块不渲染）
   const byMarket = stats.byMarket || {};
   const marketBlock = $('#stMarketBlock');
   if (marketBlock) {
@@ -1282,10 +1504,10 @@ function renderStrategyStats(data) {
     if (marketKeysWithData.length) {
       const marketRows = marketKeysWithData.map((k) => {
         const s = stTotals(byMarket[k]);
-        return `<tr><td>${stMarketBadge({ verdict: k })}</td><td>${s.total}</td><td class="ok">${s.right}</td><td class="bad">${s.wrong}</td><td>${s.flat}</td><td>${s.skipped}</td><td>${stHitRate(s.right, s.decided, ST_MIN_SAMPLES)} <span class="st-hit-frac">${s.right}/${s.decided}</span></td></tr>`;
+        return `<tr${stTipRegister(`market:${k}`, stMarketTipHtml(data, k))}><td>${stMarketBadge({ verdict: k })}</td><td>${s.total}</td><td class="ok">${s.right}</td><td class="bad">${s.wrong}</td><td>${s.flat}</td><td>${s.skipped}</td><td>${stCoverRateValue(s.right, s.total, s.decided, ST_MIN_SAMPLES)} <span class="st-hit-frac">${s.right}/${s.total}</span></td></tr>`;
       }).join('');
       $('#stMarketTable').innerHTML = `<table class="admin-table st-table">
-        <thead><tr><th>市场氛围</th><th>条数</th><th>对</th><th>错</th><th>中性</th><th>未评</th><th>严格命中率</th></tr></thead>
+        <thead><tr><th>市场氛围</th><th>条数</th><th>对</th><th>错</th><th>中性</th><th>未评</th><th>含中性命中率</th></tr></thead>
         <tbody>${marketRows}</tbody></table>`;
     }
   }
@@ -1350,8 +1572,9 @@ function renderStrategyHistory(data) {
       </tr>`;
     }).join('');
 
+    const tipAttr = stTipRegister(`hist:${rec.date}`, stHistoryTipHtml(rec));
     return `<article class="st-day">
-      <header class="st-day-head">
+      <header class="st-day-head"${tipAttr}>
         <b>${esc(rec.date)}</b>${stBasisBadge(rec)}
         <span class="st-tag add">加 ${n(c.add)}</span>
         <span class="st-tag cut">减 ${n(c.cut)}</span>
@@ -1397,6 +1620,7 @@ function renderStrategyTune(data) {
 
 function renderStrategy(data) {
   state.strategy = data;
+  state.strategyTips = new Map(); // 每次重渲染都重建 tooltip 索引，避免旧 key 残留
   renderStrategyToday(data);
   renderStrategyStats(data);
   renderStrategySuggestions(data);
@@ -1556,6 +1780,8 @@ function bindStrategy() {
   $('#stTuneSave').addEventListener('click', stTuneSave);
   $('#stTuneRun').addEventListener('click', stTuneRun);
   $('#stTuneRollback').addEventListener('click', stTuneRollback);
+  const moreToggle = $('#stMoreToggle');
+  if (moreToggle) moreToggle.addEventListener('click', stToggleMore);
   // 明细展开/收起（列表是动态渲染的，用事件委托）
   $('#stHistory').addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-st-toggle]');
@@ -1580,6 +1806,8 @@ function bindChrome() {
   bindLogs();
   bindDeploy();
   bindStrategy();
+  stTipBind();
+  stModalBind();
   setInterval(() => {
     if (state.section === 'logins') loadLogins();
     else if (state.section === 'stats') loadStats();

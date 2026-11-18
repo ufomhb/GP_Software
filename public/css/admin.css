@@ -559,3 +559,67 @@
 .st-block { margin-top: 12px; }
 .st-block-head { margin-bottom: 6px; color: var(--text-2); font-size: 12px; font-weight: 600; }
 .st-hit-frac { margin-left: 4px; color: var(--muted); font-size: 11px; }
+
+/* =========================================================
+   持仓策略 2026-11-18（v2.3.0 体验反馈）：工具条 / KPI /
+   折叠明细 / 悬停 tooltip / 参数与调参弹窗
+   ========================================================= */
+.st-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+
+/* 主 KPI：含中性命中率大号数字 */
+.st-kpi { display: flex; align-items: baseline; gap: 10px; padding: 4px 0 2px; }
+.st-kpi-label { color: var(--muted); font-size: 11.5px; }
+.st-kpi-value { color: var(--accent); font-family: var(--num); font-size: 30px; line-height: 1.15; font-weight: 700; }
+.st-kpi-sub { margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.65; }
+
+/* 评分区间 / 按市场氛围：默认收起 */
+.st-more { margin-top: 10px; }
+.st-more .admin-link { font-size: 11.5px; }
+
+/* 悬停明细：深色浮层，跟随鼠标，高于弹窗，不拦鼠标事件 */
+[data-st-tip] { cursor: help; }
+.st-tip {
+  position: fixed; z-index: 1300; max-width: 420px; max-height: 50vh; overflow: auto;
+  padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 9px;
+  background: rgba(7, 12, 21, 0.96); color: var(--text-2);
+  font-size: 11.5px; line-height: 1.65; pointer-events: none;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+}
+.st-tip[hidden] { display: none !important; }
+.st-tip b { color: var(--text); }
+.st-tip .muted { color: var(--muted); }
+.st-tip-line { display: block; }
+.st-tip-line + .st-tip-line { margin-top: 3px; }
+
+/* 参数 / 自动调参弹窗 */
+body.admin-modal-open { overflow: hidden; }
+.admin-modal {
+  position: fixed; inset: 0; z-index: 1200;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.admin-modal[hidden] { display: none !important; }
+.admin-modal-mask { position: absolute; inset: 0; background: rgba(3, 7, 14, 0.72); }
+.admin-modal-card {
+  position: relative; z-index: 1; display: flex; flex-direction: column;
+  width: min(780px, 100%); max-height: min(86vh, 840px);
+  border: 1px solid var(--line-strong); border-radius: 14px; background: #0b1320;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55); overflow: hidden;
+}
+.admin-modal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 13px 16px; border-bottom: 1px solid var(--line);
+}
+.admin-modal-head h2 { margin: 0; color: var(--text); font-size: 14px; font-weight: 700; }
+.admin-modal-head h2 .muted { font-weight: 400; }
+.admin-modal-close {
+  flex: none; width: 30px; height: 30px; display: grid; place-items: center;
+  border: 1px solid var(--line); border-radius: 8px; background: transparent;
+  color: var(--text-2); font-size: 16px; line-height: 1; cursor: pointer;
+}
+.admin-modal-close:hover { border-color: var(--line-strong); color: var(--accent); }
+.admin-modal-body { padding: 14px 16px 18px; overflow: auto; }
+.admin-modal-body .st-params { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+@media (max-width: 560px) {
+  .admin-modal-card { max-height: 92vh; }
+  .admin-modal-body .st-params { grid-template-columns: 1fr; }
+}
