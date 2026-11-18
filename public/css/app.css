@@ -3009,3 +3009,18 @@ button[hidden] { display: none !important; }
   .paper-trade-table { min-width: 640px; }
 }
 
+
+/* 龙虎榜：手机上列太多，隐藏「换手 / 买入 / 卖出 / 成交占比」四列，
+   保留 股票 / 收盘 / 涨跌幅 / 上榜净额 / 上榜原因 —— 原因比明细金额更有信息量 */
+@media (max-width: 700px) {
+  .longhu-table th:nth-child(4),
+  .longhu-table td:nth-child(4),
+  .longhu-table th:nth-child(6),
+  .longhu-table td:nth-child(6),
+  .longhu-table th:nth-child(7),
+  .longhu-table td:nth-child(7),
+  .longhu-table th:nth-child(8),
+  .longhu-table td:nth-child(8) { display: none; }
+  .longhu-table td:last-child { max-width: 150px; white-space: normal; line-height: 1.5; }
+}
+
