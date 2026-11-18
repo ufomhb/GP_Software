@@ -8,8 +8,8 @@
   <meta name="robots" content="noindex,nofollow">
   <title>寰球智投 · 后台管理</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.2.0">
-  <link rel="stylesheet" href="/css/admin.css?v=2.2.0">
+  <link rel="stylesheet" href="/css/app.css?v=2.3.0">
+  <link rel="stylesheet" href="/css/admin.css?v=2.3.0">
 </head>
 <body class="admin-body">
   <!-- 登录 -->
@@ -244,7 +244,20 @@
           <article class="admin-card">
             <div class="admin-card-head"><h2>次日命中率</h2><span class="muted small" id="stHitMeta">—</span></div>
             <div id="stStats" class="admin-kv-list"><div class="admin-empty">加载中…</div></div>
-            <div id="stScoreTable" class="admin-table-wrap"></div>
+            <div id="stActionTable" class="admin-table-wrap"></div>
+            <p class="admin-note" id="stHitNote">—</p>
+            <div class="st-block">
+              <div class="st-block-head">评分区间（仅统计加仓/减仓建议）</div>
+              <div id="stScoreTable" class="admin-table-wrap"></div>
+              <p class="admin-note">
+                「条数」= 该区间加仓/减仓建议的条数（例如「&lt;35 条数 1」表示该区间只有 1 条加仓/减仓建议）；不变建议不参与评分区间统计。
+                可判定样本不足 3 条时，命中率显示「样本不足」而不是百分比。
+              </p>
+            </div>
+            <div class="st-block" id="stMarketBlock" hidden>
+              <div class="st-block-head">按市场氛围（按记录时的市场氛围分组）</div>
+              <div id="stMarketTable" class="admin-table-wrap"></div>
+            </div>
           </article>
         </div>
 
@@ -266,6 +279,9 @@
             <label><span>弱势评分</span><input type="number" id="ruleWeakScore" min="5" max="60" step="1"></label>
             <label><span>单只占比上限 %</span><input type="number" id="ruleConcPct" min="20" max="90" step="1"></label>
             <label><span>集中度目标 %</span><input type="number" id="ruleConcTarget" min="10" max="80" step="1"></label>
+            <label><span>常规加减比例 %（10=1成）</span><input type="number" id="ruleBaseRatio" min="10" max="50" step="1"></label>
+            <label><span>强信号加减比例 %（20=2成）</span><input type="number" id="ruleStrongRatio" min="10" max="80" step="1"></label>
+            <label><span>市场氛围权重 0~2</span><input type="number" id="ruleMarketWeight" min="0" max="2" step="0.1"></label>
             <label><span>加仓判对阈值 %</span><input type="number" id="bandAdd" min="0.1" max="20" step="0.1"></label>
             <label><span>减仓判对阈值 %</span><input type="number" id="bandCut" min="0.1" max="20" step="0.1"></label>
             <label><span>不变的合理波动 %</span><input type="number" id="bandHold" min="0.1" max="20" step="0.1"></label>
@@ -278,6 +294,7 @@
           <p class="admin-note">
             口径：记录与推送共用同一套规则；次日评价只认**已公布净值**（盘中估算不算）。
             加仓命中 = 次日涨过阈值；减仓命中 = 次日跌过阈值；不变命中 = 次日波动在合理区间内。
+            加减仓固定比例最少 1 成，避免加建仓后对次日涨跌无感。
           </p>
         </article>
 
@@ -384,6 +401,6 @@
     </main>
   </div>
 
-  <script src="/js/admin.js?v=2.2.0"></script>
+  <script src="/js/admin.js?v=2.3.0"></script>
 </body>
 </html>

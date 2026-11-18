@@ -1048,6 +1048,7 @@ const ST_RULE_FIELDS = [
   ['ruleCutScore', 'cutScore'], ['ruleCutRise', 'cutRise'], ['ruleCutDip', 'cutDip'],
   ['ruleWeakScore', 'weakScore'],
   ['ruleConcPct', 'concentrationPct'], ['ruleConcTarget', 'concentrationTargetPct'],
+  ['ruleBaseRatio', 'baseRatio'], ['ruleStrongRatio', 'strongRatio'], ['ruleMarketWeight', 'marketWeight'],
 ];
 const ST_BAND_FIELDS = [
   ['bandAdd', 'addBand'], ['bandCut', 'cutBand'], ['bandHold', 'holdBand'], ['bandWindow', 'evalWindow'],
@@ -1056,10 +1057,17 @@ const ST_DEFAULT_RULES = {
   addScore: 65, addDip: 1.2, strongScore: 80, strongDip: 2,
   cutScore: 45, cutRise: 0.8, cutDip: 1.2, weakScore: 35,
   concentrationPct: 40, concentrationTargetPct: 30,
+  baseRatio: 10, strongRatio: 20, marketWeight: 1,
 };
 const ST_DEFAULT_BANDS = { addBand: 0.3, cutBand: 0.3, holdBand: 0.8, evalWindow: 3 };
 
 const ST_ACTION_LABEL = { add: '加仓', cut: '减仓', hold: '不变' };
+const ST_ACTION_ORDER = ['add', 'cut', 'hold'];
+const ST_SCORE_ORDER = ['<35', '35-45', '45-65', '65-80', '>=80', '无评分'];
+const ST_MARKET_ORDER = ['偏多', '震荡', '偏空', '未知'];
+const ST_MARKET_CLS = { '偏多': 'st-up', '偏空': 'st-down', '震荡': 'st-flat', '未知': 'st-flat' };
+const ST_BASIS_LABEL = { estimate: '15:00 估值', 'estimate-repaired': '估值（已修正）' };
+const ST_MIN_SAMPLES = 3; // 可判定样本少于 3 条时不给百分比，避免小样本误导
 const ST_VERDICT = {
   right: { icon: '✓', label: '合理', cls: 'ok' },
   wrong: { icon: '✗', label: '不合理', cls: 'bad' },
@@ -1067,8 +1075,118 @@ const ST_VERDICT = {
   skipped: { icon: '?', label: '未评价', cls: 'skip' },
 };
 
-function stRate(v) {
-  return v === null || v === undefined ? '—' : `${(Number(v) * 100).toFixed(0)}%`;
+/** 数字或 null：区分「字段缺失」和「值就是 0」 */
+function stNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const x = Number(v);
+  return Number.isFinite(x) ? x : null;
+}
+
+/** A 股习惯：>0 红（--up）、<0 绿（--down）、0 灰（--flat） */
+function stPctCls(v) {
+  const p = stNum(v);
+  if (p === null) return '';
+  return p > 0 ? 'st-up' : p < 0 ? 'st-down' : 'st-flat';
+}
+
+function stPctText(v) {
+  const p = stNum(v);
+  return p === null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(2)}%`;
+}
+
+function stPctHtml(v) {
+  return stNum(v) === null
+    ? '<span class="muted">—</span>'
+    : `<span class="${stPctCls(v)}">${stPctText(v)}</span>`;
+}
+
+/** 把统计对象统一成 { right, wrong, flat, skipped, total, decided }，缺字段时自算 */
+function stTotals(entry) {
+  const e = entry || {};
+  const right = n(e.right);
+  const wrong = n(e.wrong);
+  const flat = n(e.flat);
+  const skipped = n(e.skipped);
+  let decided = stNum(e.decided);
+  if (decided === null) decided = right + wrong;
+  let total = stNum(e.total);
+  if (total === null) {
+    const coverage = stNum(e.coverageRate);
+    if (coverage !== null && coverage > 0 && decided > 0) total = Math.round(decided / coverage);
+    else total = Math.max(n(e.n), right + wrong + flat + skipped);
+  }
+  return { right, wrong, flat, skipped, total, decided };
+}
+
+/** 严格命中率 = 对/(对+错)；minSamples>0 且可判定样本不足时明确写「样本不足」 */
+function stHitRate(right, decided, minSamples = 0) {
+  if (!decided) return '—';
+  if (minSamples && decided < minSamples) return '样本不足';
+  return `${Math.round((right / decided) * 100)}%`;
+}
+
+/** 含中性口径 = 对/总条数（中性计入分母、不算对） */
+function stCoverRate(right, total) {
+  return total ? `${Math.round((right / total) * 100)}%` : '—';
+}
+
+/** 评价阈值：优先用接口给的 data.bands，缺字段时退回默认口径 */
+function stBandVal(bands, key) {
+  const v = stNum(bands && bands[key]);
+  return v === null ? ST_DEFAULT_BANDS[key] : v;
+}
+
+/** 历史记录口径徽标（决策日用什么涨跌口径） */
+function stBasisBadge(rec) {
+  if (!rec) return '';
+  let basis = rec.decisionBasis;
+  if (!basis && Array.isArray(rec.items)) {
+    const hit = rec.items.find((it) => it && it.decisionBasis);
+    if (hit) basis = hit.decisionBasis;
+  }
+  let label = ST_BASIS_LABEL[basis] || '';
+  if (!label && (basis === 'nav' || basis === undefined) && rec.late) label = '真实净值（旧口径）';
+  return label ? ` <span class="st-basis">${esc(label)}</span>` : '';
+}
+
+/** 市场氛围：当天记录里的 market 优先（旧记录可能没有），否则用实时行情 liveMarket */
+function stMarketOf(data, rec) {
+  if (rec && rec.market) return rec.market;
+  if (data && data.liveMarket) return data.liveMarket;
+  const snap = data && data.snapshot;
+  return (snap && snap.liveMarket) || null;
+}
+
+function stMarketBadge(mkt) {
+  const verdict = (mkt && mkt.verdict) || '未知';
+  const cls = ST_MARKET_CLS[verdict] || 'st-flat';
+  return `<span class="st-mkt ${cls}">${esc(verdict)}</span>`;
+}
+
+/** 今日建议卡片里的「市场氛围」一行 */
+function stMarketRowHtml(data, rec) {
+  const mkt = stMarketOf(data, rec);
+  if (!mkt) {
+    return '<div class="admin-kv st-mkt-row"><span>市场氛围</span><div class="st-mkt-cell muted">今天没有市场氛围数据</div></div>';
+  }
+  const score = stNum(mkt.score);
+  const cnScore = stNum(mkt.cnScore);
+  const extScore = stNum(mkt.extScore);
+  const head = [stMarketBadge(mkt)];
+  if (score !== null) head.push(`综合 <b>${score > 0 ? '+' : ''}${score.toFixed(1)}</b> 分`);
+  const sub = [];
+  if (cnScore !== null) sub.push(`A股 ${cnScore > 0 ? '+' : ''}${cnScore.toFixed(1)}`);
+  if (extScore !== null) sub.push(`外围 ${extScore > 0 ? '+' : ''}${extScore.toFixed(1)}`);
+  if (sub.length) head.push(`<span class="muted small">${sub.join(' · ')}</span>`);
+  return `<div class="admin-kv st-mkt-row">
+    <span>市场氛围</span>
+    <div class="st-mkt-cell">
+      <div>${head.join(' ')}</div>
+      <div class="st-mkt-line">${esc(mkt.summary || 'A股盘面数据暂缺')}</div>
+      <div class="st-mkt-line muted">外围：${esc(mkt.ext || '外围数据暂缺')}</div>
+      <div class="muted small">加减仓评分已按市场氛围调整（权重见「策略参数」）</div>
+    </div>
+  </div>`;
 }
 
 function renderStrategyToday(data) {
@@ -1083,7 +1201,8 @@ function renderStrategyToday(data) {
     const mv = rec.snapshot && rec.snapshot.marketValue;
     if (mv) rows.push(['当时市值', `${n(mv).toLocaleString('zh-CN')} 元 · 当日 ${rec.snapshot.portfolioPct === null ? '—' : `${Number(rec.snapshot.portfolioPct).toFixed(2)}%`}`]);
   }
-  $('#stToday').innerHTML = rows.map(([label, value]) => `
+  // 「市场氛围」放最上面：先看大环境，再看当天动作
+  $('#stToday').innerHTML = stMarketRowHtml(data, rec) + rows.map(([label, value]) => `
     <div class="admin-kv"><span>${label}</span><b>${value}</b></div>`).join('');
 
   const time = fmtClock(Date.now());
@@ -1096,30 +1215,80 @@ function renderStrategyStats(data) {
   const stats = data.stats || {};
   const overall = stats.overall || {};
   const byAction = stats.byAction || {};
+  const ov = stTotals(overall);
   $('#stHitMeta').textContent = stats.days
     ? `${n(stats.days)} 个交易日 · ${n(stats.items)} 条建议`
     : '还没有可评价的记录';
 
-  const rows = [];
-  rows.push(['总体命中率', `${stRate(overall.hitRate)} <span class="muted small">（对 ${n(overall.right)} / 错 ${n(overall.wrong)}，中性 ${n(overall.flat)}，未评 ${n(overall.skipped)}）</span>`]);
-  for (const action of ['add', 'cut', 'hold']) {
-    const a = byAction[action] || {};
-    rows.push([`${ST_ACTION_LABEL[action]}命中率`, `${stRate(a.hitRate)} <span class="muted small">（${n(a.right)}/${n(a.decided)} 条可判定）</span>`]);
-  }
-  $('#stStats').innerHTML = rows.map(([label, value]) => `
-    <div class="admin-kv"><span>${label}</span><b>${value}</b></div>`).join('');
+  // 顶部两行：严格口径（对/(对+错)）与含中性口径（对/总条数），都列全 对/错/中性/未评/共
+  const kv = (label, value) => `<div class="admin-kv"><span>${label}</span><b>${value}</b></div>`;
+  const plain = `对 ${ov.right} / 错 ${ov.wrong} / 中性 ${ov.flat} / 未评 ${ov.skipped} / 共 ${ov.total}`;
+  $('#stStats').innerHTML = kv('严格命中率',
+    `${stHitRate(ov.right, ov.decided)} <span class="muted small">对/(对+错) · ${plain}</span>`)
+    + kv('含中性口径',
+      `${stCoverRate(ov.right, ov.total)} <span class="muted small">对/总条数 · ${plain}（中性计入分母、不算对）</span>`);
 
-  // 按评分区间：看「评分门槛」是否定得合理
+  // 按动作表：严格命中率旁标出「对/可判定」
+  const actionRows = ST_ACTION_ORDER.map((action) => {
+    const s = stTotals(byAction[action]);
+    return `<tr>
+      <td><span class="st-tag ${action}">${ST_ACTION_LABEL[action]}</span></td>
+      <td>${s.total}</td>
+      <td class="ok">${s.right}</td>
+      <td class="bad">${s.wrong}</td>
+      <td>${s.flat}</td>
+      <td>${s.skipped}</td>
+      <td>${stHitRate(s.right, s.decided)} <span class="st-hit-frac">${s.right}/${s.decided}</span></td>
+    </tr>`;
+  }).join('');
+  $('#stActionTable').innerHTML = `<table class="admin-table st-table">
+    <thead><tr><th>动作</th><th>条数</th><th>对</th><th>错</th><th>中性</th><th>未评</th><th>严格命中率</th></tr></thead>
+    <tbody>${actionRows}</tbody></table>`;
+
+  // 公式说明：阈值跟着 data.bands 走，规则调整后说明同步变化
+  const addBand = stBandVal(data.bands, 'addBand');
+  const cutBand = stBandVal(data.bands, 'cutBand');
+  const holdBand = stBandVal(data.bands, 'holdBand');
+  $('#stHitNote').innerHTML = '口径：'
+    + `<b>加仓</b> → 次日估值/净值涨过 <b>+${addBand}%</b> 算对、跌过 <b>-${addBand}%</b> 算错；`
+    + `<b>减仓</b> 反之 → 次日跌过 <b>-${cutBand}%</b> 算对、涨过 <b>+${cutBand}%</b> 算错；`
+    + `<b>不变</b> → 次日 |涨跌| ≤ <b>${holdBand}%</b> 算对，超出记中性（不判对也不判错）。`
+    + `严格命中率 = 对/(对+错)，中性/未评不进分母；「条数」= 该组建议总条数（含中性/未评）；`
+    + `可判定样本不足 ${ST_MIN_SAMPLES} 条时命中率显示「样本不足」。`;
+
+  // 按评分区间：看「评分门槛」是否定得合理（只统计加仓/减仓建议）
   const byScore = stats.byScore || {};
-  const keys = Object.keys(byScore).sort();
-  $('#stScoreTable').innerHTML = keys.length
+  const scoreKeys = ST_SCORE_ORDER.filter((k) => byScore[k])
+    .concat(Object.keys(byScore).filter((k) => !ST_SCORE_ORDER.includes(k)));
+  const scoreRows = scoreKeys.map((k) => {
+    const s = stTotals(byScore[k]);
+    return `<tr><td>${esc(k)}</td><td>${s.total}</td><td class="ok">${s.right}</td><td class="bad">${s.wrong}</td><td>${s.flat}</td><td>${s.skipped}</td><td>${stHitRate(s.right, s.decided, ST_MIN_SAMPLES)} <span class="st-hit-frac">${s.right}/${s.decided}</span></td></tr>`;
+  }).join('');
+  const scoreHasData = scoreKeys.some((k) => stTotals(byScore[k]).total > 0);
+  $('#stScoreTable').innerHTML = scoreHasData
     ? `<table class="admin-table st-table">
-      <thead><tr><th>评分区间</th><th>条数</th><th>对</th><th>错</th><th>命中率</th></tr></thead>
-      <tbody>${keys.map((k) => {
-      const b = byScore[k];
-      return `<tr><td>${esc(k)}</td><td>${n(b.n)}</td><td class="ok">${n(b.right)}</td><td class="bad">${n(b.wrong)}</td><td>${stRate(b.hitRate)}</td></tr>`;
-    }).join('')}</tbody></table>`
-    : '';
+      <thead><tr><th>评分区间</th><th>条数</th><th>对</th><th>错</th><th>中性</th><th>未评</th><th>严格命中率</th></tr></thead>
+      <tbody>${scoreRows}</tbody></table>`
+    : '<div class="admin-empty">还没有加仓/减仓建议的评价数据</div>';
+
+  // 按市场氛围：没有数据就整块不渲染
+  const byMarket = stats.byMarket || {};
+  const marketBlock = $('#stMarketBlock');
+  if (marketBlock) {
+    const marketKeys = ST_MARKET_ORDER.filter((k) => byMarket[k])
+      .concat(Object.keys(byMarket).filter((k) => !ST_MARKET_ORDER.includes(k)));
+    const marketKeysWithData = marketKeys.filter((k) => stTotals(byMarket[k]).total > 0);
+    marketBlock.hidden = marketKeysWithData.length === 0;
+    if (marketKeysWithData.length) {
+      const marketRows = marketKeysWithData.map((k) => {
+        const s = stTotals(byMarket[k]);
+        return `<tr><td>${stMarketBadge({ verdict: k })}</td><td>${s.total}</td><td class="ok">${s.right}</td><td class="bad">${s.wrong}</td><td>${s.flat}</td><td>${s.skipped}</td><td>${stHitRate(s.right, s.decided, ST_MIN_SAMPLES)} <span class="st-hit-frac">${s.right}/${s.decided}</span></td></tr>`;
+      }).join('');
+      $('#stMarketTable').innerHTML = `<table class="admin-table st-table">
+        <thead><tr><th>市场氛围</th><th>条数</th><th>对</th><th>错</th><th>中性</th><th>未评</th><th>严格命中率</th></tr></thead>
+        <tbody>${marketRows}</tbody></table>`;
+    }
+  }
 }
 
 function renderStrategySuggestions(data) {
@@ -1153,16 +1322,20 @@ function renderStrategyHistory(data) {
     const c = (rec.snapshot && rec.snapshot.counts) || {};
     const ev = rec.eval;
     const sum = ev && ev.summary;
-    const hitText = sum
-      ? `命中 ${n(sum.right)}/${n(sum.decided)}（${stRate(sum.hitRate)}）${sum.flat ? ` · 中性 ${n(sum.flat)}` : ''}${sum.skipped ? ` · 未评 ${n(sum.skipped)}` : ''}`
-      : '次日待评价';
+    let hitText = '次日待评价';
+    if (sum) {
+      const s = stTotals(sum);
+      hitText = `严格 ${s.right}/${s.decided} · 中性 ${s.flat} · 含中性 ${s.right}/${s.total}(${stCoverRate(s.right, s.total)})${s.skipped ? ` · 未评 ${s.skipped}` : ''}`;
+    }
     const items = (ev && ev.items) || rec.items || [];
     const detail = items.map((it) => {
       const v = ST_VERDICT[it.verdict] || null;
-      const evalPct = it.evalPct === null || it.evalPct === undefined
-        ? '<span class="muted">—</span>'
-        : `<span class="${Number(it.evalPct) >= 0 ? 'ok' : 'bad'}">${Number(it.evalPct) >= 0 ? '+' : ''}${Number(it.evalPct).toFixed(2)}%</span>`;
-      const dayPct = it.pct === null || it.pct === undefined ? '—' : `${Number(it.pct) >= 0 ? '+' : ''}${Number(it.pct).toFixed(2)}%`;
+      // 决策日涨跌：有真实净值（navPct）且与展示口径不同时，用小字补一行「净值 X%」
+      const pctVal = stNum(it.pct);
+      const navPct = stNum(it.navPct);
+      const navHint = navPct !== null && (pctVal === null || Math.abs(navPct - pctVal) >= 0.005)
+        ? `<div class="muted small">净值 ${stPctText(navPct)}</div>`
+        : '';
       const share = it.action === 'hold' || it.delta === 0
         ? `${n(it.shares).toLocaleString('zh-CN')} 份（不变）`
         : `${n(it.shares).toLocaleString('zh-CN')} → ${n(it.targetShares).toLocaleString('zh-CN')}`;
@@ -1170,8 +1343,8 @@ function renderStrategyHistory(data) {
         <td>${esc(it.name)}<div class="t-sub muted">${esc(it.code)}</div></td>
         <td><span class="st-tag ${esc(it.action)}">${ST_ACTION_LABEL[it.action] || esc(it.action)}</span></td>
         <td>${share}</td>
-        <td>${dayPct}</td>
-        <td>${evalPct}</td>
+        <td>${stPctHtml(it.pct)}${navHint}</td>
+        <td>${stPctHtml(it.evalPct)}</td>
         <td>${v ? `<span class="st-verdict ${v.cls}">${v.icon} ${v.label}</span>` : '<span class="muted">待评价</span>'}</td>
         <td class="st-reason">${esc(it.note || it.reason || '')}</td>
       </tr>`;
@@ -1179,7 +1352,7 @@ function renderStrategyHistory(data) {
 
     return `<article class="st-day">
       <header class="st-day-head">
-        <b>${esc(rec.date)}</b>
+        <b>${esc(rec.date)}</b>${stBasisBadge(rec)}
         <span class="st-tag add">加 ${n(c.add)}</span>
         <span class="st-tag cut">减 ${n(c.cut)}</span>
         <span class="st-tag hold">不变 ${n(c.hold)}</span>
@@ -1375,7 +1548,7 @@ function bindStrategy() {
   $('#stRefresh').addEventListener('click', () => loadStrategy());
   $('#stRecord').addEventListener('click', () => stRecord(false));
   $('#stReRecord').addEventListener('click', () => {
-    if (window.confirm('用当前最新数据覆盖今天的记录？已经做过的次日评价不受影响。')) stRecord(true);
+    if (window.confirm('用今天各持仓基金的 15:00 当日估值重新评估并覆盖今天的记录？不会使用已公布的真实净值。已经做过的次日评价不受影响。')) stRecord(true);
   });
   $('#stEvaluate').addEventListener('click', stEvaluate);
   $('#stSave').addEventListener('click', stSave);

@@ -126,6 +126,56 @@ function createStrategyLog(deps) {
     return cfg;
   }
 
+  /* ---------------- 补记口径修正（2026-11-18） ---------------- */
+  /*
+   * 旧版本在 15:00 之后补记/覆盖重记时，会因为当天真实净值已公布而误用净值做决策。
+   * 这些记录（late=true 且 items 里 pctKind==='nav'）在读取时用当日 15:00 冻结估值修正
+   * 「决策日涨跌」，判定结果不变（判定看的是次日净值），并标记为已修正。
+   * 修正只改展示口径，不改当时已经给出的加/减/不变动作。
+   */
+  function frozenEstimateOn(date, code) {
+    if (typeof getFrozenEstimate !== 'function') return null;
+    try {
+      const hit = getFrozenEstimate(String(code || ''), String(date || ''));
+      return hit && hit.pct !== null && hit.pct !== undefined && hit.pct !== '' && Number.isFinite(Number(hit.pct))
+        ? hit : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function repairDecisionBasis(record) {
+    if (!record || !Array.isArray(record.items)) return record;
+    if (record.decisionBasis === 'estimate' || record.decisionBasis === 'estimate-repaired') return record;
+    if (record.late !== true) return record;
+    let changed = false;
+    const patch = (it) => {
+      if (!it || String(it.pctKind) !== 'nav') return;
+      const frozen = frozenEstimateOn(record.date, it.code);
+      if (!frozen) return;
+      it.repairedPct = it.pct;
+      it.pct = Number(frozen.pct);
+      it.pctKind = frozen.kind === 'etf' ? 'etf' : 'holdings';
+      it.pctSource = 'estimate';
+      if (typeof it.reason === 'string') it.reason = it.reason.replace(/今日净值/g, '15:00 估值');
+      changed = true;
+    };
+    record.items.forEach(patch);
+    if (record.eval && Array.isArray(record.eval.items)) record.eval.items.forEach(patch);
+    if (changed) record.decisionBasis = 'estimate-repaired';
+    return record;
+  }
+
+  async function safeMarketContext() {
+    if (typeof collectMarketContext !== 'function') return null;
+    try {
+      const ctx = await collectMarketContext();
+      return ctx && ctx.available !== false ? ctx : null;
+    } catch {
+      return null;
+    }
+  }
+
   function readStore() {
     const store = {
       rules: normalizeStrategyRules(defaultRules),
@@ -144,6 +194,7 @@ function createStrategyLog(deps) {
     store.autoTune = clampAutoTune(meta.autoTune);
     store.records = records
       .filter((r) => r && r.date)
+      .map(repairDecisionBasis)
       .sort((a, b) => String(a.date).localeCompare(String(b.date)))
       .slice(-MAX_RECORDS);
     return store;
@@ -177,36 +228,56 @@ function createStrategyLog(deps) {
     if (action === 'add') {
       if (p >= b.addBand) return { verdict: 'right', note: `次日 +${p.toFixed(2)}%，加仓吃到上涨` };
       if (p <= -b.addBand) return { verdict: 'wrong', note: `次日 ${p.toFixed(2)}%，加仓买在下跌` };
-      return { verdict: 'flat', note: `次日 ${p.toFixed(2)}%，在 ±${b.addBand}% 内，方向不明显` };
+      return { verdict: 'flat', note: `次日 ${p.toFixed(2)}%，在 ±${b.addBand}% 内，方向不明显（中性，不计对错）` };
     }
     if (action === 'cut') {
       if (p <= -b.cutBand) return { verdict: 'right', note: `次日 ${p.toFixed(2)}%，减仓躲开下跌` };
       if (p >= b.cutBand) return { verdict: 'wrong', note: `次日 +${p.toFixed(2)}%，减仓减在上涨` };
-      return { verdict: 'flat', note: `次日 ${p.toFixed(2)}%，在 ±${b.cutBand}% 内，方向不明显` };
+      return { verdict: 'flat', note: `次日 ${p.toFixed(2)}%，在 ±${b.cutBand}% 内，方向不明显（中性，不计对错）` };
     }
     if (Math.abs(p) <= b.holdBand) return { verdict: 'right', note: `次日 ${p.toFixed(2)}%，波动在 ±${b.holdBand}% 内，不动合理` };
-    return { verdict: 'flat', note: `次日 ${p.toFixed(2)}%，有方向但不动没有亏损` };
+    return { verdict: 'flat', note: `次日 ${p.toFixed(2)}%，超出 ±${b.holdBand}%：不动是保守选择，记中性（不计对错）` };
   }
 
   /* ---------------- 记录 ---------------- */
 
-  function buildRecord(port, { slotTime = '14:30', source = 'manual', date, late = false } = {}) {
-    const cls = classifyPortfolio(port);
+  function buildRecord(port, {
+    slotTime = '14:30', source = 'manual', date, late = false, rules = defaultRules, market = null,
+  } = {}) {
+    const effectiveRules = normalizeStrategyRules(rules);
+    const cls = classifyPortfolio(port, effectiveRules, market);
     const items = [...cls.add, ...cls.cut, ...cls.hold];
+    const marketSnapshot = market && market.available !== false
+      ? {
+        available: true,
+        verdict: market.verdict,
+        score: market.score,
+        cnScore: market.cnScore,
+        extScore: market.extScore,
+        summary: market.summary,
+        ext: market.ext,
+        lines: market.lines || [],
+      }
+      : null;
     return {
       date: date || dateKeyOf(),
       slotTime,
       source,
-      // late=true：收盘后才补记（用的是当日已公布净值口径，不是 14:30 的盘中决策）
+      // late=true：15:00 之后的手动记录/覆盖重记。注意：late 只影响展示标签，
+      // 决策口径永远是 15:00 冻结估值（benchmark 见 classifyPortfolio），不再用真实净值。
       late: Boolean(late),
+      decisionBasis: 'estimate',
       createdAt: Date.now(),
-      rules: { ...normalizeStrategyRules(defaultRules) },
+      rules: effectiveRules,
+      market: marketSnapshot,
       snapshot: {
         today: port.today,
         marketValue: port.totals ? port.totals.marketValue : null,
         portfolioPct: port.totals ? port.totals.portfolioPct : null,
         dayProfit: port.totals ? port.totals.dayProfit : null,
         profit: port.totals ? port.totals.profit : null,
+        marketVerdict: marketSnapshot ? marketSnapshot.verdict : '',
+        marketScore: marketSnapshot ? marketSnapshot.score : null,
         counts: {
           add: cls.add.length, cut: cls.cut.length, hold: cls.hold.length, pending: cls.pending.length,
         },
@@ -222,12 +293,19 @@ function createStrategyLog(deps) {
         price: it.price,
         pct: it.pct,
         pctKind: it.pctKind,
+        navPct: it.navPct === undefined ? null : it.navPct,
+        decisionBasis: it.decisionBasis || it.pctKind,
         navDate: it.navDate,
         weight: it.weight === null ? null : Number(Number(it.weight).toFixed(2)),
         score: it.score,
+        fundScore: it.fundScore === undefined ? it.score : it.fundScore,
+        marketAdj: it.marketAdj || 0,
         reason: it.reason,
       })),
-      pending: cls.pending.map((r) => ({ code: r.code, name: r.name, navDate: r.navDate || '', navPct: r.navPct })),
+      pending: cls.pending.map((r) => ({
+        code: r.code, name: r.name, navDate: r.navDate || '', navPct: r.navPct,
+        note: r.decisionPct === null ? '没有 15:00 估值，不参与本次决策' : '',
+      })),
       eval: null,
     };
   }
@@ -240,10 +318,30 @@ function createStrategyLog(deps) {
     if (existing && !force) {
       return { ok: true, recorded: false, reason: 'already-recorded', date: today };
     }
+    // 覆盖重记的关键：无论几点、无论真实净值是否已公布，都重新取各持仓基金的
+    // 15:00 当日估值（getFundWatch 在收盘后会把估值冻结/回读）再评估，绝不用净值口径。
+    const market = await safeMarketContext();
     const port = await collectPortfolio();
-    const record = buildRecord(port, { slotTime, source, date: today, late });
+    const afterClose = shanghaiClockMinutes() >= 15 * 60;
+    const record = buildRecord(port, {
+      slotTime,
+      source,
+      date: today,
+      late: Boolean(late) || afterClose,
+      rules: store.rules,
+      market,
+    });
     persistRecord(record);
-    return { ok: true, recorded: true, date: today, counts: record.snapshot.counts, items: record.items.length };
+    return {
+      ok: true,
+      recorded: true,
+      date: today,
+      counts: record.snapshot.counts,
+      items: record.items.length,
+      decisionBasis: record.decisionBasis,
+      late: record.late,
+      market: record.market,
+    };
   }
 
   /* ---------------- 次日评价 ---------------- */
@@ -251,8 +349,23 @@ function createStrategyLog(deps) {
   function summarizeEval(items) {
     const counts = { right: 0, wrong: 0, flat: 0, skipped: 0 };
     for (const it of items) counts[it.verdict] = (counts[it.verdict] || 0) + 1;
+    const total = counts.right + counts.wrong + counts.flat + counts.skipped;
     const decided = counts.right + counts.wrong;
-    return { ...counts, decided, hitRate: decided > 0 ? counts.right / decided : null };
+    return {
+      ...counts,
+      total,
+      decided,
+      // 严格命中率 = 对 / (对 + 错)：中性/未评不进分母，这是自动调参用的口径。
+      hitRate: decided > 0 ? counts.right / decided : null,
+      // 覆盖率 = 可判定条数 / 全部条数：让「样本被中性/未评吃掉多少」一眼可见。
+      coverageRate: total > 0 ? decided / total : null,
+    };
+  }
+
+  /** 补全旧记录 eval.summary 的新字段（total/coverageRate），不改判定结果 */
+  function normalizeEval(ev) {
+    if (!ev || !Array.isArray(ev.items)) return ev || null;
+    return { ...ev, summary: summarizeEval(ev.items) };
   }
 
   /**
@@ -330,8 +443,9 @@ function createStrategyLog(deps) {
 
   function buildStats(store) {
     const evaluated = store.records.filter((r) => r.eval);
-    const items = [];
-    for (const r of evaluated) for (const it of r.eval.items || []) items.push(it);
+    const pairs = [];
+    for (const r of evaluated) for (const it of r.eval.items || []) pairs.push({ it, record: r });
+    const items = pairs.map((p) => p.it);
 
     const byAction = {};
     for (const action of ['add', 'cut', 'hold']) {
@@ -339,24 +453,35 @@ function createStrategyLog(deps) {
       byAction[action] = { n: sub.length, ...summarizeEval(sub) };
     }
 
+    // 评分区间只统计「加仓 / 减仓」：不变没有方向性评分，硬分档会误导。
     const byScore = {};
+    const scoreGroups = {};
     for (const it of items.filter((x) => x.action === 'add' || x.action === 'cut')) {
       const key = bucketOfScore(it.score);
-      if (!byScore[key]) byScore[key] = { n: 0, right: 0, wrong: 0, flat: 0, skipped: 0, decided: 0, hitRate: null };
-      byScore[key].n += 1;
-      byScore[key][it.verdict] = (byScore[key][it.verdict] || 0) + 1;
+      if (!scoreGroups[key]) scoreGroups[key] = [];
+      scoreGroups[key].push(it);
     }
-    for (const key of Object.keys(byScore)) {
-      const b = byScore[key];
-      b.decided = b.right + b.wrong;
-      b.hitRate = b.decided > 0 ? b.right / b.decided : null;
+    for (const key of Object.keys(scoreGroups)) {
+      byScore[key] = { n: scoreGroups[key].length, ...summarizeEval(scoreGroups[key]) };
+    }
+
+    // 按市场氛围分档：验证「偏空时少加仓 / 偏多时多加仓」到底有没有效果。
+    const byMarket = {};
+    const marketGroups = {};
+    for (const { it, record } of pairs) {
+      const key = (record.market && record.market.verdict) || '未记录';
+      if (!marketGroups[key]) marketGroups[key] = [];
+      marketGroups[key].push(it);
+    }
+    for (const key of Object.keys(marketGroups)) {
+      byMarket[key] = { n: marketGroups[key].length, ...summarizeEval(marketGroups[key]) };
     }
 
     const overall = summarizeEval(items);
     const recent = evaluated
       .slice(-10)
       .reverse()
-      .map((r) => ({ date: r.date, counts: r.eval.summary, hitRate: r.eval.summary.hitRate }));
+      .map((r) => ({ date: r.date, counts: summarizeEval(r.eval.items || []), hitRate: summarizeEval(r.eval.items || []).hitRate }));
 
     return {
       days: evaluated.length,
@@ -364,6 +489,7 @@ function createStrategyLog(deps) {
       overall,
       byAction,
       byScore,
+      byMarket,
       recent,
       lastEvaluated: evaluated.length ? evaluated[evaluated.length - 1].date : null,
     };
@@ -381,7 +507,7 @@ function createStrategyLog(deps) {
       out.push({
         key: 'addScore',
         level: 'warn',
-        text: `加仓命中率只有 ${rate(add)}：次日在加仓后多数没涨。建议把加仓评分门槛从 ${rules.addScore} 提到 ${next}，或把加仓幅度从 10% 降到 5%，减少「抄底抄在半山腰」。`,
+        text: `加仓命中率只有 ${rate(add)}：次日在加仓后多数没涨。建议把加仓评分门槛从 ${rules.addScore} 提到 ${next}，或把强信号比例从 ${rules.strongRatio}% 降到常规 ${rules.baseRatio}%（仍不少于 1 成），减少「抄底抄在半山腰」。`,
       });
     } else if (add.decided >= 5 && add.hitRate !== null && add.hitRate >= 0.6) {
       out.push({ key: 'addScore', level: 'ok', text: `加仓命中率 ${rate(add)}，当前评分门槛 ${rules.addScore} 有效，先保持不变继续积累样本。` });
@@ -407,11 +533,26 @@ function createStrategyLog(deps) {
       });
     }
 
+    const bear = stats.byMarket && stats.byMarket['偏空'];
+    if (bear && bear.decided >= 5 && bear.hitRate !== null && bear.hitRate < 0.5) {
+      out.push({
+        key: 'marketWeight',
+        level: 'warn',
+        text: `偏空氛围下命中率只有 ${rate(bear)}：说明逆着市场加/减仓容易吃亏。建议把「市场氛围权重」从 ${rules.marketWeight} 调高到 ${Math.min(2, Number(rules.marketWeight) + 0.3).toFixed(1)}，让偏空时加减仓判断更谨慎。`,
+      });
+    } else if (bear && bear.decided >= 5 && bear.hitRate !== null && bear.hitRate >= 0.6) {
+      out.push({
+        key: 'marketWeight',
+        level: 'ok',
+        text: `偏空氛围下命中率 ${rate(bear)}，当前市场氛围权重 ${rules.marketWeight} 有效，先保持。`,
+      });
+    }
+
     if (stats.days < 5) {
       out.push({
         key: 'sample',
         level: 'info',
-        text: `目前只有 ${stats.days} 个交易日的样本，命中率还不足以下结论。建议先积累到 10 个交易日以上（每天 14:35 会自动记录），再依据统计调参。`,
+        text: `目前只有 ${stats.days} 个交易日的样本，命中率还不足以下结论。建议先积累到 10 个交易日以上（每个交易日 14:35 自动记录），再依据统计调参。`,
       });
     }
     return out;
@@ -506,9 +647,11 @@ function createStrategyLog(deps) {
         slotTime: r.slotTime,
         source: r.source,
         late: Boolean(r.late),
+        decisionBasis: r.decisionBasis || (r.late ? 'nav' : 'estimate'),
         createdAt: r.createdAt,
+        market: r.market || null,
         snapshot: r.snapshot,
-        eval: r.eval,
+        eval: normalizeEval(r.eval),
         items: r.items,
         pending: r.pending,
       }));
@@ -562,8 +705,12 @@ function createStrategyLog(deps) {
     let recorded = false;
     const exists = store.records.some((r) => r.date === today);
     if (!exists && shanghaiClockMinutes() >= AUTO_RECORD_AFTER) {
+      // 自动记录同样只用 15:00 估值；若 14:35 时估值还没填上，稍后的 tick 会再试一次。
+      const market = await safeMarketContext();
       const late = shanghaiClockMinutes() > 15 * 60 + 5;
-      persistRecord(buildRecord(port, { slotTime: '14:30', source: 'auto', date: today, late }));
+      persistRecord(buildRecord(port, {
+        slotTime: '14:30', source: 'auto', date: today, late, rules: store.rules, market,
+      }));
       recorded = true;
     }
 
@@ -573,6 +720,7 @@ function createStrategyLog(deps) {
   return {
     getRules,
     snapshot,
+    marketContext: () => safeMarketContext(),
     recordNow,
     evaluateNow,
     saveConfig,

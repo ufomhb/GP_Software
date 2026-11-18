@@ -212,7 +212,10 @@ async function collectPortfolio() {
     // 决策口径（2026-11-18 用户要求）：持仓策略的「加/减/不变」只认 15:00 当日估值，
     // 绝不使用收盘后公布的真实净值。estimatePct 是 server.js 在 15:00 冻结的估值终值；
     // 场内 ETF 没有独立估值，收盘价本身就是它的当日涨跌，仍按当日口径使用。
-    const estimatePct = Number.isFinite(Number(x.estimatePct)) ? Number(x.estimatePct) : null;
+    // 注意 Number(null) === 0：缺估值必须先显式判空，否则会把 null 当成 0% 估值。
+    const estimatePct = x.estimatePct === null || x.estimatePct === undefined || x.estimatePct === ''
+      ? null
+      : (Number.isFinite(Number(x.estimatePct)) ? Number(x.estimatePct) : null);
     const estimateKind = String(x.estimateKind || '');
     const isMarketKind = x.pctKind === 'market';
     const decisionPct = estimatePct !== null
@@ -449,7 +452,9 @@ function buildMarketContext(pulse) {
     summary: '行情快照暂不可用，本次只按基金评级与当日估值判断', ext: '', lines: [],
   };
   if (!pulse) return empty;
-  const p = (q) => (q && Number.isFinite(Number(q.pct)) ? Number(q.pct) : null);
+  // Number(null) === 0：行情缺失时必须显式判空，不能把 null 当成 0% 涨跌。
+  const p = (q) => (q && q.pct !== null && q.pct !== undefined && q.pct !== '' && Number.isFinite(Number(q.pct))
+    ? Number(q.pct) : null);
   const clampN = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const fmt = (v) => (Number.isFinite(Number(v)) ? `${Number(v) > 0 ? '+' : ''}${Number(v).toFixed(2)}%` : '');
   const out = buildOutlook(pulse);
@@ -468,7 +473,7 @@ function buildMarketContext(pulse) {
     const ratio = adv / (adv + dec);
     cnScore += ratio >= 0.6 ? 2 : ratio <= 0.35 ? -2 : 0;
   }
-  if (Number.isFinite(Number(pulse.mainYi))) {
+  if (pulse.mainYi !== null && pulse.mainYi !== undefined && pulse.mainYi !== '' && Number.isFinite(Number(pulse.mainYi))) {
     if (Number(pulse.mainYi) >= 50) cnScore += 1;
     else if (Number(pulse.mainYi) <= -50) cnScore -= 1;
   }
@@ -542,6 +547,7 @@ function pctKindLabel(kind) {
     nav: '今日净值',
     market: '场内实时',
     estimate: '盘中估值',
+    official: '官方估值',
     etf: '穿透估算·ETF',
     holdings: '穿透估算·重仓',
     stale: '当日未更新',
@@ -597,7 +603,9 @@ function classifyPortfolio(port, rules = DEFAULT_STRATEGY_RULES, market = null) 
     const scoreText = score === null
       ? ''
       : `技术评分 ${score}${marketAdj ? `（基金 ${fundScore}${marketHint}）` : ''}`;
-    const navPct = Number.isFinite(Number(r.pct)) ? Number(r.pct) : null;
+    const navPct = r.pct === null || r.pct === undefined || r.pct === ''
+      ? null
+      : (Number.isFinite(Number(r.pct)) ? Number(r.pct) : null);
     const itemBase = {
       shares: r.shares, price: r.price, pct, pctKind: dk, navPct,
       navDate: r.navDate || '', weight: r.weight,

@@ -111,6 +111,58 @@ test('push：pushChannelLabel 中文名', () => {
   assert.equal(push.pushChannelLabel('unknown'), 'unknown');
 });
 
+test('push：决策口径只用 15:00 估值，真实净值只作展示', async () => {
+  const service = createPushService({
+    store: { loadPushConfig: () => ({}), savePushConfig: () => {} },
+    loadUsers: () => ({ users: [{ primary: true }] }),
+    loadPortfolio: () => ({ funds: [{ code: '000001' }], holdings: { '000001': { shares: 1000, cost: 1 } } }),
+    market: {
+      shanghaiToday: () => '2026-11-17',
+      getFundWatch: async () => ({
+        items: [{
+          code: '000001', name: '样本', type: 'open', price: 1.1,
+          pct: -6.36, pctKind: 'nav', navDate: '2026-11-17', navPct: -6.36,
+          estimatePct: -5.98, estimateKind: 'holdings', estimateFrozen: true,
+          date: '2026-11-17', estimateTime: '',
+        }],
+      }),
+    },
+  });
+  const port = await service.collectPortfolio();
+  const row = port.rows[0];
+  assert.equal(row.pct, -6.36, '真实净值保留给当日盈亏展示');
+  assert.equal(row.decisionPct, -5.98, '决策只认 15:00 估值');
+  assert.equal(row.decisionKind, 'holdings');
+  const cls = service.classifyPortfolio(port, service.DEFAULT_STRATEGY_RULES, null);
+  const items = [...cls.add, ...cls.cut, ...cls.hold];
+  assert.equal(items.length, 1);
+  assert.equal(items[0].pct, -5.98);
+  assert.equal(cls.pending.length, 0);
+});
+
+test('push：没有 15:00 估值时不拿真净值决策，记 pending', async () => {
+  const service = createPushService({
+    store: { loadPushConfig: () => ({}), savePushConfig: () => {} },
+    loadUsers: () => ({ users: [{ primary: true }] }),
+    loadPortfolio: () => ({ funds: [{ code: '000001' }], holdings: { '000001': { shares: 1000, cost: 1 } } }),
+    market: {
+      shanghaiToday: () => '2026-11-17',
+      getFundWatch: async () => ({
+        items: [{
+          code: '000001', name: '样本', type: 'open', price: 1.1,
+          pct: -6.36, pctKind: 'nav', navDate: '2026-11-17', navPct: -6.36,
+          estimatePct: null, estimateKind: '', date: '2026-11-17', estimateTime: '',
+        }],
+      }),
+    },
+  });
+  const port = await service.collectPortfolio();
+  assert.equal(port.rows[0].decisionPct, null);
+  const cls = service.classifyPortfolio(port, service.DEFAULT_STRATEGY_RULES, null);
+  assert.equal(cls.add.length + cls.cut.length + cls.hold.length, 0);
+  assert.equal(cls.pending.length, 1);
+});
+
 test('push：handleDueSlot 错过超过 6 小时只记账不补发', async () => {
   const calls = [];
   const service = createPushService({

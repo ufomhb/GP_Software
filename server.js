@@ -63,7 +63,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -3067,6 +3067,16 @@ async function getFundWatch(codes, risk = 'balanced') {
         // 官方盘中估值（天天基金 GSZ/GSZZL/GZTIME）：与「当日涨跌」口径分开返回，
         // 前端可同屏对比净值涨跌与估值偏差；非当日估值一律置空，避免拿旧估值冒充。
         const pair = resolveFundPctPair({ code, info, today, pastClose, est });
+        // 决策口径：15:00 冻结估值优先；场内 ETF 之外的基金绝不回落到实时净值。
+        // 注意 Number(null) === 0：缺估值必须显式判空，否则会被当成 0% 估值。
+        const hasEstimate = pair.estimatePct !== null && pair.estimatePct !== undefined && pair.estimatePct !== ''
+          && Number.isFinite(Number(pair.estimatePct));
+        const decisionPct = hasEstimate
+          ? Number(pair.estimatePct)
+          : (r.kind !== 'nav' && r.kind !== 'stale' && Number.isFinite(Number(r.pct)) ? Number(r.pct) : null);
+        const decisionKind = hasEstimate
+          ? (pair.estimateKind || (r.kind === 'estimate' ? 'estimate' : '') || 'estimate')
+          : (r.kind !== 'nav' && r.kind !== 'stale' ? r.kind : 'stale');
         let price = nav;
         if (r.kind === 'estimate') price = num(info.GSZ) ?? nav;
         else if ((r.kind === 'etf' || r.kind === 'holdings') && nav && Number.isFinite(r.pct)) {
@@ -3084,6 +3094,8 @@ async function getFundWatch(codes, risk = 'balanced') {
           navPct,
           pct: r.pct,
           pctKind: r.kind,
+          decisionPct,
+          decisionKind,
           pctDate: r.date,
           pctLabel: r.label,
           pctNote: r.note,
@@ -3121,6 +3133,14 @@ async function getFundWatch(codes, risk = 'balanced') {
           est,
         });
         const r = resolveFundTodayPct({ navDate, navPct, gsz: 0, gszzl: null, gzTime: '', est, today });
+        const hasEstimate = pair.estimatePct !== null && pair.estimatePct !== undefined && pair.estimatePct !== ''
+          && Number.isFinite(Number(pair.estimatePct));
+        const decisionPct = hasEstimate
+          ? Number(pair.estimatePct)
+          : (r.kind !== 'nav' && r.kind !== 'stale' && Number.isFinite(Number(r.pct)) ? Number(r.pct) : null);
+        const decisionKind = hasEstimate
+          ? (pair.estimateKind || (r.kind === 'estimate' ? 'estimate' : '') || 'estimate')
+          : (r.kind !== 'nav' && r.kind !== 'stale' ? r.kind : 'stale');
         let price = nav;
         if ((r.kind === 'etf' || r.kind === 'holdings') && nav && Number.isFinite(r.pct)) {
           price = round(nav * (1 + r.pct / 100), 4);
@@ -3137,6 +3157,8 @@ async function getFundWatch(codes, risk = 'balanced') {
           navPct,
           pct: r.pct,
           pctKind: r.kind,
+          decisionPct,
+          decisionKind,
           pctDate: r.date,
           pctLabel: r.label,
           pctNote: r.note,
@@ -3164,6 +3186,9 @@ async function getFundWatch(codes, risk = 'balanced') {
       map.set(q.code, {
         ...q,
         pctKind: 'market',
+        // 场内 ETF：收盘价就是 15:00 的当日涨跌，没有独立估值，决策用它。
+        decisionPct: q.pct,
+        decisionKind: 'market',
         pctDate: today,
         pctLabel: '场内实时',
         pctNote: '',
@@ -3192,45 +3217,51 @@ async function getFundWatch(codes, risk = 'balanced') {
         if (item.type === 'etf' && item.secid) {
           const kline = await getKline(item.secid, 101, 120);
           item.advice = stockAdvice(
-            { name: item.name || item.code, price: item.price, pct: item.pct, mainPct: item.mainPct },
+            { name: item.name || item.code, price: item.price, pct: item.decisionPct ?? item.pct, mainPct: item.mainPct },
             kline.candles,
             { risk },
           );
           return;
         }
         // 场外基金按最近净值序列计算均线 / RSI / MACD 技术评分。
+        // 关键（2026-11-18）：今日这一根必须用 15:00 估值，不能用收盘后公布的真实净值。
+        // 所以先去掉序列里「今天」的真实净值，再用决策估值补一根；没有估值就不给评分，
+        // 这样分类阶段会把它当成「未更新」而不是拿净值来做错误决策。
+        const basis = item.decisionPct === null || item.decisionPct === undefined || item.decisionPct === ''
+          ? null
+          : (Number.isFinite(Number(item.decisionPct)) ? Number(item.decisionPct) : null);
+        if (basis === null) { item.advice = null; return; }
         const rows = await fetchFundNav(item.code, 4);
-        const candles = rows
+        const history = rows
           .slice()
           .reverse()
           .map((r) => {
             const c = num(r.DWJZ);
             return { d: r.FSRQ, o: c, h: c, l: c, c, v: 0, pct: num(r.JZZZL) };
           })
-          .filter((x) => Number.isFinite(x.c));
-        // 把当日估算补进序列：评分要反映「今天」，而不是停在最近一次公布的净值。
-        const lastBar = candles[candles.length - 1];
-        if (lastBar && Number.isFinite(item.pct) && item.pctKind !== 'nav' && String(lastBar.d || '') !== today) {
+          .filter((x) => Number.isFinite(x.c) && String(x.d || '') !== today);
+        const lastBar = history[history.length - 1];
+        if (lastBar) {
           const lastClose = lastBar.c;
-          const close = round(lastClose * (1 + item.pct / 100), 4);
-          candles.push({
+          const close = round(lastClose * (1 + basis / 100), 4);
+          history.push({
             d: today,
             o: lastClose,
             h: Math.max(lastClose, close),
             l: Math.min(lastClose, close),
             c: close,
             v: 0,
-            pct: item.pct,
+            pct: basis,
             est: true,
           });
         }
-        if (candles.length >= 20) {
+        if (history.length >= 20) {
           item.advice = stockAdvice(
-            { name: item.name || item.code, price: item.price, pct: item.pct },
-            candles,
+            { name: item.name || item.code, price: item.price, pct: basis },
+            history,
             { risk },
           );
-          if (item.advice && item.advice.analysis) item.advice.analysis.includesToday = Boolean(candles[candles.length - 1].est);
+          if (item.advice && item.advice.analysis) item.advice.analysis.includesToday = true;
         } else {
           item.advice = null;
         }
@@ -3766,10 +3797,14 @@ function persistFundEstimateStore() {
   }
 }
 
-function frozenFundEstimate(code, today) {
-  const day = fundEstimateStore()[today];
+function frozenFundEstimateOn(date, code) {
+  const day = fundEstimateStore()[String(date)];
   const hit = day && day[String(code)];
   return hit && Number.isFinite(Number(hit.pct)) ? hit : null;
+}
+
+function frozenFundEstimate(code, today) {
+  return frozenFundEstimateOn(today, code);
 }
 
 function freezeFundEstimate(code, today, live) {
@@ -6968,6 +7003,10 @@ const strategyLog = createStrategyLog({
   normalizeStrategyRules: pushService.normalizeStrategyRules,
   defaultRules: pushService.DEFAULT_STRATEGY_RULES,
   todayKey: shanghaiToday,
+  // 15:00 冻结估值：补记口径修正用（late + 旧净值口径的记录回填估值）
+  getFrozenEstimate: (code, date) => frozenFundEstimateOn(date, code),
+  // 市场氛围：A 股指数/涨跌家数/成交/主力 + 隔夜外围，用于多维评分
+  collectMarketContext: pushService.collectMarketContext,
 });
 strategyLogRef = strategyLog;
 

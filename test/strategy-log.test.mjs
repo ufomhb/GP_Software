@@ -43,7 +43,7 @@ function makePort(rows) {
 }
 
 /** 内存 strategyStore + 可控时钟 */
-function makeHarness({ today = '2026-11-13', rules = {}, bands = {}, autoTune = {} } = {}) {
+function makeHarness({ today = '2026-11-13', rules = {}, bands = {}, autoTune = {}, extraDeps = {} } = {}) {
   const state = {
     today,
     meta: { rules, bands, tunes: [], autoTune },
@@ -62,6 +62,7 @@ function makeHarness({ today = '2026-11-13', rules = {}, bands = {}, autoTune = 
     normalizeStrategyRules: pushService.normalizeStrategyRules,
     defaultRules: pushService.DEFAULT_STRATEGY_RULES,
     todayKey: () => state.today,
+    ...extraDeps,
   });
   return { log, state, setToday: (d) => { state.today = d; } };
 }
@@ -290,4 +291,139 @@ test('自动调参：可回滚到上一次之前的值', () => {
   assert.equal(res.rules.addScore, before, '应回到调参前的门槛');
   assert.notEqual(tunedTo, before);
   assert.equal(harness.log.snapshot().tunes[0].rolledBackAt !== undefined, true, '回滚应留痕');
+});
+
+/* ---------------- 2026-11-18 新增：15:00 估值口径 / 统计口径 / 最少 1 成 / 市场氛围 ---------------- */
+
+test('决策口径：有 15:00 估值时优先用估值，不采用真实净值', async () => {
+  portState = makePort([
+    row({
+      code: 'A001', name: '估值样本',
+      pct: -6.36, pctKind: 'nav', navDate: '2026-11-17',
+      decisionPct: -5.98, decisionKind: 'holdings', estimatePct: -5.98, estimateKind: 'holdings',
+      advice: { score: 70, rating: { label: '偏多' }, position: { text: '3 成' } },
+    }),
+  ]);
+  const { log } = makeHarness({ today: '2026-11-17' });
+  const res = await log.recordNow();
+  assert.equal(res.recorded, true);
+  assert.equal(res.decisionBasis, 'estimate');
+  const rec = log.snapshot().records.find((r) => r.date === '2026-11-17');
+  assert.equal(rec.items.length, 1);
+  assert.equal(rec.items[0].pct, -5.98, '决策日涨跌应取 15:00 估值');
+  assert.equal(rec.items[0].pctKind, 'holdings');
+  assert.equal(rec.items[0].navPct, -6.36, '真实净值只作参考留存，不参与决策');
+});
+
+test('决策口径：没有 15:00 估值时宁可 pending，也不用真实净值', async () => {
+  portState = makePort([
+    row({
+      code: 'B002', name: '只有净值',
+      pct: -3.2, pctKind: 'nav', navDate: '2026-11-17',
+      decisionPct: null, decisionKind: 'stale',
+    }),
+  ]);
+  const { log } = makeHarness({ today: '2026-11-17' });
+  await log.recordNow();
+  const rec = log.snapshot().records.find((r) => r.date === '2026-11-17');
+  assert.equal(rec.items.length, 0, '没有估值不应给出动作');
+  assert.equal(rec.pending.length, 1);
+  assert.equal(rec.pending[0].code, 'B002');
+});
+
+test('加减仓位：常规最少 1 成，强信号 2 成', () => {
+  const port = makePort([
+    row({
+      code: 'A001', shares: 6000, marketValue: 9000, price: 1.5,
+      pct: -2, pctKind: 'holdings', decisionPct: -2, decisionKind: 'holdings',
+      advice: { score: 70 },
+    }),
+  ]);
+  const normal = pushService.classifyPortfolio(port, pushService.DEFAULT_STRATEGY_RULES, null).add[0];
+  assert.ok(normal, '常规信号应加仓');
+  assert.equal(normal.delta, 600, '6000 份的 1 成 = 600 份');
+  assert.equal(normal.ratioPct, 10);
+
+  const strongPort = makePort([
+    row({
+      code: 'A001', shares: 6000, marketValue: 9000, price: 1.5,
+      pct: -2.5, pctKind: 'holdings', decisionPct: -2.5, decisionKind: 'holdings',
+      advice: { score: 85 },
+    }),
+  ]);
+  const strong = pushService.classifyPortfolio(strongPort, pushService.DEFAULT_STRATEGY_RULES, null).add[0];
+  assert.ok(strong, '强信号应加仓');
+  assert.equal(strong.delta, 1200, '强信号 2 成 = 1200 份');
+  assert.equal(strong.ratioPct, 20);
+});
+
+test('市场氛围：偏空时综合评分下调，加仓变难', () => {
+  const makePortWithScore = () => makePort([
+    row({
+      code: 'A001', shares: 6000, marketValue: 9000, price: 1.5,
+      pct: -2, pctKind: 'holdings', decisionPct: -2, decisionKind: 'holdings',
+      advice: { score: 70 },
+    }),
+  ]);
+  const neutral = pushService.classifyPortfolio(makePortWithScore(), pushService.DEFAULT_STRATEGY_RULES, null);
+  assert.equal(neutral.add.length, 1, '无市场分时按原规则加仓');
+  assert.equal(neutral.marketAdj, 0);
+
+  const bear = pushService.classifyPortfolio(makePortWithScore(), pushService.DEFAULT_STRATEGY_RULES, { available: true, score: -4 });
+  assert.equal(bear.marketAdj, -6, '-4 分 × 1.5 × 权重 1 = -6');
+  assert.equal(bear.add.length, 0, '偏空时 70 - 6 = 64，低于加仓门槛 65');
+  assert.equal(bear.hold.length, 1);
+});
+
+test('统计口径：严格命中率与含中性口径同时给出（对/错/中性/未评）', () => {
+  const harness = makeHarness({ today: '2026-11-18' });
+  seedEvaluated(harness, '2026-11-17', [
+    { action: 'cut', verdict: 'right', score: 41 },
+    { action: 'cut', verdict: 'right', score: 30 },
+    { action: 'hold', verdict: 'right', score: 26 },
+    { action: 'hold', verdict: 'right', score: 32 },
+    { action: 'hold', verdict: 'flat', score: 46 },
+    { action: 'hold', verdict: 'flat', score: 36 },
+    { action: 'hold', verdict: 'flat', score: 16 },
+  ]);
+  const stats = harness.log.snapshot().stats;
+  assert.equal(stats.overall.total, 7);
+  assert.equal(stats.overall.right, 4, '对 4 条');
+  assert.equal(stats.overall.flat, 3, '中性 3 条');
+  assert.equal(stats.overall.decided, 4);
+  assert.equal(stats.overall.hitRate, 1, '严格命中率 = 对/(对+错)');
+  assert.equal(stats.overall.coverageRate, 4 / 7, '覆盖率 = 可判定/全部');
+  assert.equal(stats.byAction.hold.flat, 3);
+  assert.equal(stats.byAction.hold.decided, 2);
+  assert.ok(stats.byScore['35-45'], '评分分档只统计加/减仓');
+  assert.equal(stats.byScore['35-45'].n, 1);
+  assert.ok(stats.byMarket['未记录'], '旧记录没有市场快照，归入未记录');
+  assert.equal(stats.byMarket['未记录'].n, 7);
+});
+
+test('补记口径修正：late + 旧净值口径的记录用冻结估值回填', () => {
+  const harness = makeHarness({
+    today: '2026-11-18',
+    extraDeps: {
+      getFrozenEstimate: (code, date) => (code === 'A001' && date === '2026-11-17'
+        ? { pct: -5.98, kind: 'holdings' }
+        : null),
+    },
+  });
+  harness.state.records.set('2026-11-17', {
+    date: '2026-11-17',
+    slotTime: '14:30',
+    source: 'auto',
+    late: true,
+    items: [{ code: 'A001', name: '旧记录', action: 'cut', pct: -6.36, pctKind: 'nav', score: 41, reason: '今日净值下跌 6.36%' }],
+    pending: [],
+    snapshot: { counts: { add: 0, cut: 1, hold: 0, pending: 0 } },
+    eval: null,
+  });
+  const rec = harness.log.snapshot().records.find((r) => r.date === '2026-11-17');
+  assert.equal(rec.decisionBasis, 'estimate-repaired');
+  assert.equal(rec.items[0].pct, -5.98, '决策日涨跌回填为 15:00 估值');
+  assert.equal(rec.items[0].pctKind, 'holdings');
+  assert.equal(rec.items[0].repairedPct, -6.36, '原净值口径保留在 repairedPct 便于核对');
+  assert.match(rec.items[0].reason, /15:00 估值/);
 });

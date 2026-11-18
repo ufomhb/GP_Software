@@ -557,7 +557,15 @@ async function handleAdmin(req, res, url) {
      - POST config：保存策略规则参数（推送与记录立即生效）
      --------------------------------------------------------- */
   if (p === '/api/admin/strategy' && req.method === 'GET') {
-    return strategyLog.snapshot();
+    const snap = strategyLog.snapshot();
+    // 实时市场氛围：页面打开时给出当前的 A 股 + 外围快照，记录里也会存一份当时快照。
+    // 行情不可用时返回 null，不影响其它字段。
+    try {
+      snap.liveMarket = await strategyLog.marketContext();
+    } catch {
+      snap.liveMarket = null;
+    }
+    return snap;
   }
 
   if (p === '/api/admin/strategy/record' && req.method === 'POST') {

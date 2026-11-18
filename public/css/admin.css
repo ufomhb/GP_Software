@@ -529,3 +529,33 @@
 .st-table .ok { color: #22c55e; }
 .st-table .bad { color: var(--up); }
 .st-reason { color: var(--muted); max-width: 330px; }
+
+/* 涨跌色（A 股习惯）：>0 红、<0 绿、0 灰；与判定色 .ok/.bad 分开用 */
+.st-up { color: var(--up); }
+.st-down { color: var(--down); }
+.st-flat { color: var(--flat); }
+
+/* 市场氛围：情绪徽标 + 说明行（今日建议卡片 & 按市场氛围表） */
+.st-mkt {
+  display: inline-block; padding: 1px 7px; border-radius: 6px;
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+  color: var(--flat); background: rgba(148, 163, 184, 0.12);
+}
+.st-mkt.st-up { color: var(--up); background: rgba(255, 77, 94, 0.12); }
+.st-mkt.st-down { color: var(--down); background: rgba(22, 199, 132, 0.12); }
+.st-mkt.st-flat { color: var(--muted); background: rgba(148, 163, 184, 0.12); }
+.st-mkt-row { flex-direction: column; align-items: stretch; gap: 4px; }
+.st-mkt-cell { min-width: 0; font-size: 12.5px; line-height: 1.65; word-break: break-word; }
+.st-mkt-line { margin-top: 3px; color: var(--text-2); font-size: 11.5px; }
+.st-mkt-line + .st-mkt-line { margin-top: 2px; }
+
+/* 历史记录口径徽标（15:00 估值 / 真实净值…） */
+.st-basis {
+  display: inline-block; padding: 1px 6px; border: 1px solid var(--line-strong); border-radius: 5px;
+  color: var(--text-2); font-size: 10.5px; font-weight: 500; white-space: nowrap;
+}
+
+/* 命中率卡片的分区块（评分区间 / 按市场氛围） */
+.st-block { margin-top: 12px; }
+.st-block-head { margin-bottom: 6px; color: var(--text-2); font-size: 12px; font-weight: 600; }
+.st-hit-frac { margin-left: 4px; color: var(--muted); font-size: 11px; }
