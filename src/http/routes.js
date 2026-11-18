@@ -767,7 +767,9 @@ async function handleApi(req, res, url) {
     const limit = Math.max(30, Math.min(3000, Number(q.get('limit') || 160)));
     const allowed = new Set([1, 5, 15, 30, 60, 101, 102, 103]);
     if (!allowed.has(klt)) throw new Error('不支持的 K 线周期');
-    const kline = await getKline(secid, klt, limit);
+    // 复权口径白名单：0 不复权 / 1 前复权 / 2 后复权；非法值按不复权处理。
+    const fqt = [0, 1, 2].includes(Number(q.get('fqt'))) ? Number(q.get('fqt')) : 0;
+    const kline = await getKline(secid, klt, limit, fqt);
     let analysis = null;
     try { analysis = analyze(kline.candles); } catch { /* 数据不足时仍返回 K 线 */ }
     return { ...kline, analysis };
@@ -775,7 +777,8 @@ async function handleApi(req, res, url) {
   if (p === '/api/stock') {
     const secid = q.get('secid');
     if (!secid) throw new Error('缺少 secid');
-    return getStock(secid, q.get('risk') || 'balanced');
+    const fqt = [0, 1, 2].includes(Number(q.get('fqt'))) ? Number(q.get('fqt')) : 0;
+    return getStock(secid, q.get('risk') || 'balanced', fqt);
   }
   if (p === '/api/quotes') {
     const secids = (q.get('secids') || '').split(',').map((s) => s.trim()).filter(Boolean);

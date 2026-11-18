@@ -246,6 +246,17 @@
             <button data-klt="103">月K</button>
             <button data-klt="60">60分</button>
           </div>
+          <div class="seg seg-sm" id="cnIndSeg" title="K 线副图指标">
+            <button data-ind="macd" class="is-active">MACD</button>
+            <button data-ind="kdj">KDJ</button>
+            <button data-ind="boll">BOLL</button>
+            <button data-ind="none">关</button>
+          </div>
+          <div class="seg seg-sm" id="cnFqtSeg" title="复权口径">
+            <button data-fqt="0" class="is-active">不复权</button>
+            <button data-fqt="1">前复权</button>
+            <button data-fqt="2">后复权</button>
+          </div>
         </div>
       </div>
 
@@ -369,7 +380,15 @@
               <h3 id="globalChartTitle">恒生指数</h3>
               <span class="muted small" id="globalChartSub">100.HSI</span>
             </div>
-            <div class="quote-pill" id="globalQuote">--</div>
+            <div class="head-actions">
+              <div class="seg seg-sm global-ind-seg" title="K 线副图指标">
+                <button data-ind="macd" class="is-active">MACD</button>
+                <button data-ind="kdj">KDJ</button>
+                <button data-ind="boll">BOLL</button>
+                <button data-ind="none">关</button>
+              </div>
+              <div class="quote-pill" id="globalQuote">--</div>
+            </div>
           </div>
           <div class="main-chart" id="globalChart"></div>
         </article>
@@ -414,7 +433,15 @@
               <h2 id="usChartTitle">纳斯达克指数</h2>
               <span class="muted small" id="usChartSub">100.NDX · 日K</span>
             </div>
-            <div class="quote-pill" id="usQuote">--</div>
+            <div class="head-actions">
+              <div class="seg seg-sm us-ind-seg" title="K 线副图指标">
+                <button data-ind="macd" class="is-active">MACD</button>
+                <button data-ind="kdj">KDJ</button>
+                <button data-ind="boll">BOLL</button>
+                <button data-ind="none">关</button>
+              </div>
+              <div class="quote-pill" id="usQuote">--</div>
+            </div>
           </div>
           <div class="main-chart" id="usChart"></div>
         </article>
@@ -507,6 +534,12 @@
           <div class="panel-head">
             <div><h3 id="comChartTitle">COMEX 黄金</h3><span class="muted small" id="comChartSub">101.GC00Y</span></div>
             <div class="com-head-right">
+              <div class="seg seg-sm com-ind-seg" title="K 线副图指标">
+                <button data-ind="macd" class="is-active">MACD</button>
+                <button data-ind="kdj">KDJ</button>
+                <button data-ind="boll">BOLL</button>
+                <button data-ind="none">关</button>
+              </div>
               <div class="seg seg-sm" id="comPeriodSeg">
                 <button data-com-days="30">近1月</button>
                 <button data-com-days="65">近3月</button>

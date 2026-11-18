@@ -159,6 +159,8 @@ const state = {
   refreshing: false,
   searchItems: [],
   searchIndex: -1,
+  // 当前打开的个股详情（用于指标 / 复权切换后原地重绘）
+  stockModal: null,
   quoteMeta: null,
   sourceStatus: null,
   battle: null,

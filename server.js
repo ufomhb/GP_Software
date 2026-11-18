@@ -5146,11 +5146,12 @@ async function getSearch(query) {
   return { items };
 }
 
-async function getStock(secid, risk = 'balanced') {
-  return cached(`stock:${secid}:${risk}`, 30000, async () => {
+async function getStock(secid, risk = 'balanced', fqt = 0) {
+  const fq = [0, 1, 2].includes(Number(fqt)) ? Number(fqt) : 0;
+  return cached(`stock:${secid}:${risk}:fq${fq}`, 30000, async () => {
     const [quotes, kline] = await Promise.all([
       fetchQuoteList([secid], 'stock'),
-      getKline(secid, 101, 160),
+      getKline(secid, 101, 160, fq),
     ]);
     const quote = quotes[0];
     if (!quote) throw new Error('未找到该标的');

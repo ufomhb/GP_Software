@@ -49,7 +49,8 @@ import {
   DEFAULT_WATCH, DEFAULT_FUNDS,
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
-} from './core.js?v=2.2.0';
+  ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
+} from './core.js?v=2.4.0';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -64,7 +65,99 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.2.0';
+} from './views/funds.js?v=2.4.0';
+
+
+/* =========================================================
+   K 线显示选项（副图指标 / 复权口径）
+   ========================================================= */
+
+const INDICATOR_OPTIONS = [
+  { key: 'macd', label: 'MACD' },
+  { key: 'kdj', label: 'KDJ' },
+  { key: 'boll', label: 'BOLL' },
+  { key: 'none', label: '关' },
+];
+const FQT_OPTIONS = [
+  { v: 0, label: '不复权' },
+  { v: 1, label: '前复权' },
+  { v: 2, label: '后复权' },
+];
+const INDICATOR_NAME = { macd: 'MACD', kdj: 'KDJ', boll: 'BOLL', none: '无副图' };
+const FQT_NAME = { 0: '不复权', 1: '前复权', 2: '后复权' };
+
+/** 当前副图指标（非法值回落 macd） */
+function currentIndicator() {
+  const v = state.settings.indicator;
+  return ['macd', 'kdj', 'boll', 'none'].includes(v) ? v : 'macd';
+}
+
+/** 当前复权口径（0/1/2，非法值回落不复权） */
+function currentFqt() {
+  const v = Number(state.settings.fqt);
+  return [0, 1, 2].includes(v) ? v : 0;
+}
+
+/** 数据源不支持复权时，K 线副标题给出的口径提示 */
+function fqtHint(k) {
+  const fq = currentFqt();
+  if (fq === 0) return '';
+  if (k && k.fqtApplied === false) return ' · 该标的数据源暂无复权序列，仅为不复权价';
+  return ` · ${FQT_NAME[fq]}`;
+}
+
+/** 让所有指标 / 复权分段控件与已保存的设置保持一致（页面加载与切换后都调用） */
+function syncKlineSegs() {
+  const ind = currentIndicator();
+  const fq = currentFqt();
+  $$('[data-ind]').forEach((b) => b.classList.toggle('is-active', b.dataset.ind === ind));
+  $$('[data-fqt]').forEach((b) => b.classList.toggle('is-active', Number(b.dataset.fqt) === fq));
+}
+
+/** 切换副图指标：数据没变，只重画当前可见的 K 线 */
+function applyIndicator(key) {
+  if (!INDICATOR_OPTIONS.some((o) => o.key === key) || currentIndicator() === key) {
+    syncKlineSegs();
+    return;
+  }
+  state.settings.indicator = key;
+  saveSettings();
+  syncKlineSegs();
+  redrawCandles();
+  toast(`副图指标：${INDICATOR_NAME[key]}`, 'info', 1600);
+}
+
+/** 切换复权口径：口径变了必须重新取数（缓存 key 已含 fqt） */
+function applyFqt(v) {
+  const fq = Number(v);
+  if (![0, 1, 2].includes(fq) || currentFqt() === fq) {
+    syncKlineSegs();
+    return;
+  }
+  state.settings.fqt = fq;
+  saveSettings();
+  syncKlineSegs();
+  reloadCandles();
+  toast(`复权口径已切换为：${FQT_NAME[fq]}`, 'info', 1800);
+}
+
+/** 指标切换后的重绘（不重新取数） */
+function redrawCandles() {
+  if (state.view === 'china') renderChinaChart();
+  if (state.view === 'global') loadGlobalChart(false);
+  if (state.view === 'us') renderUSChart();
+  if (state.view === 'commodities') renderCommodityChart();
+  if (state.stockModal) renderStockModalAgain();
+}
+
+/** 复权切换后的重新取数 */
+function reloadCandles() {
+  if (state.view === 'china') loadChinaChart(true);
+  if (state.view === 'global') loadGlobalChart(true);
+  if (state.view === 'us') loadUSChart(true);
+  if (state.view === 'commodities') loadCommodityChart(true);
+  if (state.stockModal) renderStockModalAgain();
+}
 
 
 /* =========================================================
@@ -121,13 +214,15 @@ function todayText() {
 // 会话失效时统一跳登录页，并带上当前地址，登录后能回到原页面。
 
 
-async function getKlineCached(secid, klt = 101, limit = 140) {
-  const key = `${secid}:${klt}:${limit}`;
+async function getKlineCached(secid, klt = 101, limit = 140, fqt = null) {
+  // 复权口径默认跟随设置；切换复权后 key 变化，不会拿到另一口径的旧缓存。
+  const fq = [0, 1, 2].includes(Number(fqt)) ? Number(fqt) : Number(state.settings.fqt) || 0;
+  const key = `${secid}:${klt}:${limit}:fq${fq}`;
   const hit = state.klineCache.get(key);
   // 分时图要跟着行情刷新走，其它周期没必要频繁重取。
   const ttl = klt === 1 ? 8000 : 180000;
   if (hit && Date.now() - hit.at < ttl) return hit.data;
-  const data = await api(`/api/kline?secid=${encodeURIComponent(secid)}&klt=${klt}&limit=${limit}`);
+  const data = await api(`/api/kline?secid=${encodeURIComponent(secid)}&klt=${klt}&limit=${limit}&fqt=${fq}`);
   state.klineCache.set(key, { at: Date.now(), data });
   return data;
 }
@@ -168,8 +263,13 @@ function mountOverlay(html, className = '') {
 function closeOverlay() {
   const root = $('#overlayRoot');
   if (!root) return;
+  const wasDetail = parseHashRoute().detail;
   root.innerHTML = '';
   document.body.style.overflow = '';
+  // 详情弹窗关闭后清掉「当前个股」标记，避免指标切换去重绘一个不存在的弹窗
+  state.stockModal = null;
+  // 地址栏退回视图级 hash，否则刷新页面还会重新弹出已经关掉的详情
+  if (wasDetail) history.replaceState({ view: state.view }, '', `#${state.view}`);
 }
 
 function beep() {
@@ -941,6 +1041,7 @@ function renderChinaChart() {
   const defaultStart = intraday ? 0 : k.candles.length > 1500 ? 80 : k.candles.length > 500 ? 70 : 30;
   const chart = candleChart($('#cnChart'), k, {
     intraday,
+    indicator: currentIndicator(),
     zoomStart: saved ? undefined : defaultStart,
     zoomStartValue: saved?.startValue,
     zoomEndValue: saved?.endValue,
@@ -1328,7 +1429,7 @@ async function loadGlobalChart(force = false) {
   try {
     if (!force && state.globalKline && state.globalKline.secid === state.globalIndex) {
       resetChart();
-      candleChart(chartEl, state.globalKline, { zoomStart: 20 });
+      candleChart(chartEl, state.globalKline, { zoomStart: 20, indicator: currentIndicator() });
       return;
     }
     const k = await getKlineCached(state.globalIndex, 101, 150);
@@ -1338,7 +1439,7 @@ async function loadGlobalChart(force = false) {
     if ($('#globalChartTitle')) $('#globalChartTitle').textContent = cleanName(k.name) || cleanName(q.name);
     if ($('#globalChartSub')) $('#globalChartSub').textContent = state.globalIndex;
     resetChart();
-    candleChart(chartEl, k, { zoomStart: 20 });
+    candleChart(chartEl, k, { zoomStart: 20, indicator: currentIndicator() });
   } catch (err) {
     resetChart();
     if (chartEl) chartEl.innerHTML = '<div class="empty">该市场历史K 线暂不可用，最新报价与涨跌幅仍正常显示。</div>';
@@ -1450,7 +1551,7 @@ function renderUSChart() {
   const q = (state.usData?.indices || []).find((x) => x.secid === state.usIndex);
   const pill = $('#usQuote');
   if (pill && q) pill.innerHTML = `${nf(q.price, 2)} <small class="${toneClass(q.pct)}">${pctFmt(q.pct)}</small>`;
-  candleChart($('#usChart'), k, { intraday: false });
+  candleChart($('#usChart'), k, { intraday: false, indicator: currentIndicator() });
 }
 
 function renderUS() {
@@ -1766,7 +1867,7 @@ function renderCommodityChart() {
     $('#comChartSub').textContent = `${state.comSecid} · 日K · ${n} 根 · ${first} ~ ${last}`;
   }
   if ($('#comQuote')) $('#comQuote').innerHTML = `${priceFmt(q.price)} <small class="${toneClass(q.pct)}">${pctFmt(q.pct)}</small>`;
-  candleChart($('#comChart'), k, { zoomStart: 0 });
+  candleChart($('#comChart'), k, { zoomStart: 0, indicator: currentIndicator() });
   const note = $('#comChartNote');
   if (note) {
     const map = { 30: '近1 个月', 65: '近3 个月', 130: '近6 个月', 260: '近1 年' };
@@ -3528,24 +3629,35 @@ function renderWatchTable() {
   }).join('')}</div>`;
 }
 
+/** 把一条预警规则渲染成人类可读的条件文本 */
+function alertConditionText(a) {
+  if (!a) return '';
+  const opLabel = ALERT_OP_LABEL[a.op] || a.op;
+  if (isTrendAlert(a.kind)) return `${ALERT_KIND_LABEL[a.kind]} ${opLabel}`;
+  const unit = a.kind === 'pct' ? '%' : a.kind === 'volume' ? ' 倍' : '';
+  return `${ALERT_KIND_LABEL[a.kind]} ${opLabel} ${nf(a.value, 2)}${unit}`;
+}
+
 function renderAlerts() {
   const el = $('#alertsPanel');
   if (!el) return;
   const rows = state.alerts;
+  const activeRows = rows.filter((a) => a.active);
+  const hitRows = rows.filter((a) => !a.active).sort((a, b) => (b.triggeredAt || 0) - (a.triggeredAt || 0));
   el.innerHTML = `
-    <div class="panel-head"><div><div class="eyebrow">PRICE ALERTS</div><h2>价格预警</h2></div><span class="badge">${rows.filter((a) => a.active).length} 条监控中</span></div>
-    ${rows.length ? `<div class="alert-list">${rows.map((a) => `
+    <div class="panel-head"><div><div class="eyebrow">CONDITION ALERTS</div><h2>条件预警</h2></div><span class="badge">${activeRows.length} 条监控中</span></div>
+    ${rows.length ? `<div class="alert-list">${[...activeRows, ...hitRows].map((a) => `
       <div class="alert-row">
         <div class="alert-main">
-          <div class="alert-name">${esc(cleanName(a.name))} <span class="code">${esc(a.code)}</span></div>
-          <div class="alert-cond">${a.type === 'above' ? '突破' : '跌破'} ${nf(a.price, 2)} 时提醒</div>
+          <div class="alert-name">${esc(cleanName(a.name))} <span class="code">${esc(a.code)}</span><span class="alert-kind">${esc(ALERT_KIND_LABEL[a.kind] || '')}</span></div>
+          <div class="alert-cond">${esc(alertConditionText(a))}${a.active ? ' 时提醒' : ''}${a.triggerNote ? ` · ${esc(a.triggerNote)}` : ''}</div>
         </div>
         <span class="alert-state ${a.active ? 'on' : 'hit'}">${a.active ? '监控中' : '已触发'}</span>
         <button class="alert-del" title="删除" data-alert-id="${esc(a.id)}">×</button>
-      </div>`).join('')}</div>` : '<div class="empty">还没有价格预警。打开任意股票详情，设置“突破跌破”价格即可</div>'}
+      </div>`).join('')}</div>` : '<div class="empty">还没有条件预警。打开任意股票详情，可选价格、涨跌幅、量比、均线穿越与 MACD 交叉。</div>'}
     <div class="mt12 row-between">
       <button class="btn small" data-action="notify">${('Notification' in window) && Notification.permission === 'granted' ? '通知已开启' : '开启浏览器通知'}</button>
-      <span class="muted small">预警仅在页面打开时监控</span>
+      <span class="muted small">预警仅在页面打开时监控（云端推送见后台）</span>
     </div>`;
 }
 
@@ -3706,43 +3818,149 @@ function bindTouchReorder(container, rowSelector, dataKey, onReorder) {
   });
 }
 
-function addAlert(secid, code, name, type, price) {
-  if (!secid || !isNum(price) || Number(price) <= 0) {
-    toast('请输入有效的预警价格', 'warn');
+/* =========================================================
+   条件预警（v2）
+   ========================================================= */
+
+/**
+ * 单条预警判定：纯函数，不依赖 DOM / 网络，便于单测复现。
+ * 返回 { hit:boolean, price?:number, note?:string }，数据不足时一律不触发。
+ */
+function evalAlertRule(alert, quote, kline) {
+  if (!alert) return { hit: false };
+  const price = quote ? Number(quote.price) : NaN;
+  const series = (kline && kline.series) || {};
+  const candles = (kline && kline.candles) || [];
+
+  if (alert.kind === 'price') {
+    if (!Number.isFinite(price)) return { hit: false };
+    const hit = alert.op === 'below' ? price <= alert.value : price >= alert.value;
+    return { hit, price, note: `最新价 ${nf(price, 2)}` };
+  }
+
+  if (alert.kind === 'pct') {
+    const pct = quote ? Number(quote.pct) : NaN;
+    if (!Number.isFinite(pct)) return { hit: false };
+    const hit = alert.op === 'below' ? pct <= alert.value : pct >= alert.value;
+    return { hit, price, note: `涨跌幅 ${nf(pct, 2)}%` };
+  }
+
+  if (alert.kind === 'volume') {
+    // 量比 = 当日成交量 ÷ 前 5 日均量（与前端口径一致，用成交量而非成交额避免缺失）
+    if (candles.length < 6) return { hit: false };
+    const last = candles[candles.length - 1];
+    const prev5 = candles.slice(-6, -1).map((c) => Number(c.v) || 0);
+    const avg = prev5.reduce((s, v) => s + v, 0) / prev5.length;
+    if (!avg) return { hit: false };
+    const ratio = (Number(last.v) || 0) / avg;
+    const hit = alert.op === 'below' ? ratio <= alert.value : ratio >= alert.value;
+    return { hit, price, note: `量比 ${nf(ratio, 2)} 倍` };
+  }
+
+  if (alert.kind === 'ma') {
+    const ma = series.ma20;
+    if (!Array.isArray(ma) || candles.length < 2) return { hit: false };
+    const n = candles.length;
+    const c0 = Number(candles[n - 2].c);
+    const c1 = Number(candles[n - 1].c);
+    const m0 = Number(ma[n - 2]);
+    const m1 = Number(ma[n - 1]);
+    if (![c0, c1, m0, m1].every((v) => Number.isFinite(v))) return { hit: false };
+    const hit = alert.op === 'dead' ? (c0 >= m0 && c1 < m1) : (c0 <= m0 && c1 > m1);
+    return { hit, price, note: `收盘 ${nf(c1, 2)} / MA20 ${nf(m1, 2)}` };
+  }
+
+  if (alert.kind === 'macd') {
+    const dif = series.dif;
+    const dea = series.dea;
+    if (!Array.isArray(dif) || !Array.isArray(dea) || dif.length < 2) return { hit: false };
+    const n = dif.length;
+    const d0 = Number(dif[n - 2]);
+    const d1 = Number(dif[n - 1]);
+    const e0 = Number(dea[n - 2]);
+    const e1 = Number(dea[n - 1]);
+    if (![d0, d1, e0, e1].every((v) => Number.isFinite(v))) return { hit: false };
+    const hit = alert.op === 'dead' ? (d0 >= e0 && d1 < e1) : (d0 <= e0 && d1 > e1);
+    return { hit, price, note: `DIF ${nf(d1, 2)} / DEA ${nf(e1, 2)}` };
+  }
+
+  return { hit: false };
+}
+
+function addAlert({ secid, code, name, kind = 'price', op = 'above', value = null } = {}) {
+  if (!secid) {
+    toast('缺少标的代码', 'warn');
     return false;
+  }
+  const k = ALERT_KINDS.includes(kind) ? kind : 'price';
+  const trend = isTrendAlert(k);
+  let v = null;
+  if (!trend) {
+    v = Number(value);
+    if (!Number.isFinite(v)) {
+      toast('请输入有效的预警数值', 'warn');
+      return false;
+    }
+    if (k === 'price' && v <= 0) {
+      toast('请输入有效的预警价格', 'warn');
+      return false;
+    }
   }
   if (!state.watchlist.some((w) => w.secid === secid)) {
     addWatch({ secid, code, name });
   }
-  state.alerts.push({
-    id: `${Date.now()}-${Math.floor(Math.random() * 9999)}`,
-    secid, code, name, type, price: Number(price),
-    active: true,
-    createdAt: Date.now(),
-  });
+  const normalized = normalizeAlerts([{
+    id: `alert-${Date.now()}-${Math.floor(Math.random() * 9999)}`,
+    secid, code, name, kind: k, op, value: v,
+    active: true, createdAt: Date.now(),
+  }], state.alerts.length);
+  if (!normalized.length) {
+    toast('预警条件不合法', 'warn');
+    return false;
+  }
+  state.alerts.push(normalized[0]);
   saveJSON(ALERTS_KEY, state.alerts);
   renderAlerts();
-  toast(`预警已设置：${cleanName(name)} ${type === 'above' ? '突破' : '跌破'} ${nf(price, 2)}`, 'ok');
+  toast(`预警已设置：${cleanName(name)} ${alertConditionText(normalized[0])}`, 'ok');
   return true;
 }
 
-function checkAlerts() {
-  if (!state.alerts.length) return;
+let alertsChecking = false;
+
+async function checkAlerts() {
+  if (!state.alerts.length || alertsChecking) return;
+  alertsChecking = true;
   let changed = false;
-  for (const alert of state.alerts) {
-    if (!alert.active) continue;
-    const q = state.quotes.get(alert.secid);
-    if (!q || !isNum(q.price)) continue;
-    const hit = alert.type === 'above' ? Number(q.price) >= Number(alert.price) : Number(q.price) <= Number(alert.price);
-    if (!hit) continue;
-    alert.active = false;
-    alert.triggeredAt = Date.now();
-    alert.triggeredPrice = Number(q.price);
-    changed = true;
-    const msg = `${cleanName(alert.name)} 最新 ${nf(q.price, 2)}，已${alert.type === 'above' ? '突破' : '跌破'} ${nf(alert.price, 2)}`;
-    toast(msg, 'warn', 6000);
-    notify('价格预警触发', msg);
-    beep();
+  try {
+    const items = (state.watchData && state.watchData.items) || [];
+    for (const alert of state.alerts) {
+      if (!alert.active) continue;
+      const q = state.quotes.get(alert.secid)
+        || (items.find((it) => it.quote && it.quote.secid === alert.secid) || {}).quote
+        || null;
+      let kline = null;
+      // 只有量比与趋势类规则才需要 K 线；价格 / 涨跌幅用快照即可，避免多余请求。
+      if (alert.kind === 'volume' || isTrendAlert(alert.kind)) {
+        try {
+          kline = await getKlineCached(alert.secid, 101, 120);
+        } catch {
+          kline = null;
+        }
+      }
+      const res = evalAlertRule(alert, q, kline);
+      if (!res.hit) continue;
+      alert.active = false;
+      alert.triggeredAt = Date.now();
+      alert.triggeredPrice = Number.isFinite(res.price) ? res.price : null;
+      alert.triggerNote = res.note || '';
+      changed = true;
+      const msg = `${cleanName(alert.name)} ${alertConditionText(alert)} · ${res.note || ''}`;
+      toast(msg, 'warn', 6000);
+      notify('条件预警触发', msg);
+      beep();
+    }
+  } finally {
+    alertsChecking = false;
   }
   if (changed) {
     saveJSON(ALERTS_KEY, state.alerts);
@@ -4398,6 +4616,7 @@ async function openFundCompare(codes) {
 
 function openStockFund(code, name) {
   if (!code) return;
+  if (!routeOpening) pushDetailRoute('fund', code);
   mountOverlay(`
     <div class="modal">
       <div class="modal-head"><div class="modal-title"><h2>${esc(cleanName(name) || code)}</h2><span class="code">${esc(code)}</span></div><button class="modal-close" data-close>×</button></div>
@@ -4808,6 +5027,7 @@ function bindFundDrag(container) {
 
 async function openFund(code, name, type) {
   if (!code) return;
+  if (!routeOpening) pushDetailRoute('fund', code);
   mountOverlay(`
     <div class="modal">
       <div class="modal-head"><div class="modal-title"><h2>${esc(cleanName(name) || code)}</h2><span class="code">${esc(code)}</span></div><button class="modal-close" data-close>×</button></div>
@@ -4869,7 +5089,7 @@ function renderFundModal(data, fallbackName) {
         </div>
       </div>
     </div>`;
-    if (data.kline) candleChart($('#fundKline'), data.kline, { zoomStart: 25 });
+    if (data.kline) candleChart($('#fundKline'), data.kline, { zoomStart: 25, indicator: currentIndicator() });
     if (data.flow && data.flow.points && data.flow.points.length) flowLine($('#fundFlowChart'), data.flow);
     const btn = $('#fundModalWatch');
     if (btn) btn.addEventListener('click', () => {
@@ -5089,6 +5309,9 @@ function chooseSearchItem(item) {
    ========================================================= */
 async function openStock(secid, code, name) {
   if (!secid) return;
+  state.stockModal = { secid, code: code || '', name: name || '' };
+  // 路由化：把详情写进地址栏，支持复制分享与新标签直接打开
+  if (!routeOpening) pushDetailRoute('stock', secid);
   const overlay = mountOverlay(`
     <div class="modal">
       <div class="modal-head">
@@ -5098,12 +5321,25 @@ async function openStock(secid, code, name) {
       <div class="empty">正在加载行情与策略评分…</div>
     </div>`);
   try {
-    const data = await api(`/api/stock?secid=${encodeURIComponent(secid)}&risk=${state.settings.risk}`);
+    const data = await api(`/api/stock?secid=${encodeURIComponent(secid)}&risk=${state.settings.risk}&fqt=${currentFqt()}`);
     if (!document.body.contains(overlay)) return;
     renderStockModal(data);
   } catch (err) {
-    toast(`个股详情加载失败：{err.message}`, 'err');
+    toast(`个股详情加载失败：${err.message}`, 'err');
     closeOverlay();
+  }
+}
+
+/** 指标 / 复权切换后原地刷新个股详情（服务端按 fqt 缓存，重复调用代价很低） */
+async function renderStockModalAgain() {
+  const m = state.stockModal;
+  if (!m || !$('.overlay')) return;
+  try {
+    const data = await api(`/api/stock?secid=${encodeURIComponent(m.secid)}&risk=${state.settings.risk}&fqt=${currentFqt()}`);
+    if (!$('.overlay')) return;
+    renderStockModal(data);
+  } catch (err) {
+    handleLoadError('个股详情', err);
   }
 }
 
@@ -5125,6 +5361,15 @@ function renderStockModal(data) {
       <span class="modal-chg ${toneClass(q.pct)}">${pctFmt(q.pct)} ${signedFmt(q.change)}</span>
       <span class="badge">评分 ${a.score} / 100</span>
       <span class="badge">参考仓位 ${esc(a.position.text)}</span>
+    </div>
+    <div class="modal-kline-tools">
+      <div class="seg seg-sm modal-ind-seg" title="K 线副图指标">
+        ${INDICATOR_OPTIONS.map((o) => `<button data-ind="${o.key}" class="${currentIndicator() === o.key ? 'is-active' : ''}">${o.label}</button>`).join('')}
+      </div>
+      <div class="seg seg-sm modal-fqt-seg" title="复权口径">
+        ${FQT_OPTIONS.map((o) => `<button data-fqt="${o.v}" class="${currentFqt() === o.v ? 'is-active' : ''}">${o.label}</button>`).join('')}
+      </div>
+      <span class="muted small">${esc(FQT_NAME[currentFqt()])}${kline && kline.fqtApplied === false && currentFqt() !== 0 ? ' · 该源暂无复权序列' : ''}</span>
     </div>
     <div class="modal-body-grid">
       <div>
@@ -5162,23 +5407,28 @@ function renderStockModal(data) {
           <button class="btn" data-goto="strategy" data-close>查看大盘策略</button>
         </div>
         <div class="modal-advice">
-          <div class="muted small">价格预警</div>
-          <div class="row-between mt8">
-            <div class="seg" id="modalAlertType">
-              <button class="is-active" data-alert-type="above">突破</button>
-              <button data-alert-type="below">跌破</button>
+          <div class="muted small">条件预警</div>
+          <div class="alert-form mt8">
+            <select id="modalAlertKind" aria-label="预警类型">
+              ${ALERT_KINDS.map((k) => `<option value="${k}">${ALERT_KIND_LABEL[k]}</option>`).join('')}
+            </select>
+            <div class="seg seg-sm" id="modalAlertOp">
+              <button class="is-active" data-alert-op="above">↗ 突破</button>
+              <button data-alert-op="below">↘ 跌破</button>
             </div>
-            <div class="input-wrap" style="width:120px"><input id="modalAlertPrice" type="number" step="0.01" value="${Number(q.price).toFixed(2)}"><span>提</span></div>
           </div>
-          <button class="btn primary block" id="modalAlertAdd">添加预警</button>
-          <p class="muted small mt8">预警仅在本页面打开时监控；触发后会发送浏览器通知（需授权）。</p>
+          <div class="alert-form mt8" id="modalAlertValueRow">
+            <div class="input-wrap grow"><input id="modalAlertValue" type="number" step="0.01" value="${Number(q.price).toFixed(2)}"><span id="modalAlertUnit">元</span></div>
+          </div>
+          <button class="btn primary block mt8" id="modalAlertAdd">添加预警</button>
+          <p class="muted small mt8">预警保存在本机浏览器，只在页面打开时监控；触发后会发浏览器通知（需授权）。云端推送见后台「定时推送」。</p>
         </div>
         <div class="disclaimer">${esc(a.disclaimer)}</div>
       </div>
     </div>
   </div>`;
 
-  candleChart($('#stockKline'), kline, { zoomStart: 25 });
+  candleChart($('#stockKline'), kline, { zoomStart: 25, indicator: currentIndicator() });
   const watchBtn = $('#modalWatch');
   if (watchBtn) watchBtn.addEventListener('click', () => {
     if (addWatch({ secid: q.secid, code: q.code, name: q.name })) {
@@ -5186,15 +5436,40 @@ function renderStockModal(data) {
       watchBtn.disabled = true;
     }
   });
-  let alertType = 'above';
-  $$('#modalAlertType button').forEach((btn) => btn.addEventListener('click', () => {
-    alertType = btn.dataset.alertType;
-    $$('#modalAlertType button').forEach((b) => b.classList.toggle('is-active', b === btn));
-  }));
+  // 条件预警：类型决定操作符口径（突破/跌破 vs 金叉/死叉）与数值单位
+  const alertKindEl = $('#modalAlertKind');
+  const alertOpWrap = $('#modalAlertOp');
+  const alertValueRow = $('#modalAlertValueRow');
+  const alertValueEl = $('#modalAlertValue');
+  const alertUnitEl = $('#modalAlertUnit');
+  const alertDefaults = { price: Number(q.price) || 0, pct: 5, volume: 2, ma: 0, macd: 0 };
+  const alertUnits = { price: '元', pct: '%', volume: '倍', ma: '', macd: '' };
+  let alertOp = 'above';
+  const syncAlertForm = () => {
+    const kind = alertKindEl ? alertKindEl.value : 'price';
+    const trend = isTrendAlert(kind);
+    if (alertOpWrap) {
+      alertOpWrap.innerHTML = trend
+        ? '<button data-alert-op="golden" class="is-active">金叉</button><button data-alert-op="dead">死叉</button>'
+        : '<button data-alert-op="above" class="is-active">↗ 突破</button><button data-alert-op="below">↘ 跌破</button>';
+      alertOp = trend ? 'golden' : 'above';
+      $$('#modalAlertOp button').forEach((b) => b.addEventListener('click', () => {
+        alertOp = b.dataset.alertOp;
+        $$('#modalAlertOp button').forEach((x) => x.classList.toggle('is-active', x === b));
+      }));
+    }
+    if (alertValueRow) alertValueRow.hidden = trend;
+    if (alertUnitEl) alertUnitEl.textContent = alertUnits[kind] || '';
+    if (alertValueEl && !trend) alertValueEl.value = String(alertDefaults[kind] ?? 0);
+  };
+  if (alertKindEl) alertKindEl.addEventListener('change', syncAlertForm);
+  syncAlertForm();
   const alertBtn = $('#modalAlertAdd');
   if (alertBtn) alertBtn.addEventListener('click', () => {
-    const price = Number($('#modalAlertPrice').value);
-    if (addAlert(q.secid, q.code, q.name, alertType, price)) {
+    const kind = alertKindEl ? alertKindEl.value : 'price';
+    const trend = isTrendAlert(kind);
+    const value = trend ? null : Number(alertValueEl ? alertValueEl.value : NaN);
+    if (addAlert({ secid: q.secid, code: q.code, name: q.name, kind, op: alertOp, value })) {
       alertBtn.textContent = '预警已添加';
       setTimeout(() => { alertBtn.textContent = '添加预警'; }, 1800);
     }
@@ -5205,6 +5480,7 @@ function renderStockModal(data) {
    板块详情抽屉
    ========================================================= */
 async function openSector(code, name) {
+  if (!routeOpening) pushDetailRoute('sector', code);
   mountOverlay(`
     <div class="drawer">
       <div class="drawer-head"><div><div class="eyebrow">SECTOR DETAIL</div><h2>${esc(name || code)}</h2><span class="code">${esc(code)}</span></div><button class="modal-close" data-close>×</button></div>
@@ -5740,8 +6016,67 @@ function showView(view) {
 
 function navigate(view) {
   if (state.view === view) { loadView(view); return; }
-  history.pushState({ view }, '', `#${view}`);
+  pushViewRoute(view);
   showView(view);
+}
+
+/* =========================================================
+   详情路由
+   ---------------------------------------------------------
+   视图级仍是 #dashboard 这种单段 hash；个股 / 板块 / 基金详情
+   升级为 #/stock/1.600519、#/sector/BK0475、#/fund/510300，
+   这样地址栏可以直接复制、收藏、新标签打开，后退键也能正常关闭弹窗。
+   ========================================================= */
+const VIEWS = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'strategy', 'watchlist'];
+const DETAIL_KINDS = ['stock', 'sector', 'fund'];
+const DETAIL_BASE_VIEW = { stock: 'watchlist', sector: 'sectors', fund: 'funds' };
+// 由 popstate / 直接打开详情路由时为 true，避免「打开详情」再压一条新历史
+let routeOpening = false;
+
+function parseHashRoute() {
+  const raw = (location.hash || '').replace(/^#/, '');
+  if (raw.startsWith('/')) {
+    const seg = raw.slice(1).split('/');
+    const kind = seg[0] || '';
+    const key = decodeURIComponent(seg[1] || '');
+    if (DETAIL_KINDS.includes(kind) && key) return { detail: { kind, key } };
+    return { view: 'dashboard' };
+  }
+  return { view: VIEWS.includes(raw) ? raw : 'dashboard' };
+}
+
+function detailHash(kind, key) {
+  return `#/${kind}/${encodeURIComponent(key)}`;
+}
+
+function pushDetailRoute(kind, key) {
+  const h = detailHash(kind, key);
+  if (location.hash === h) return;
+  history.pushState({ view: state.view, detail: { kind, key } }, '', h);
+}
+
+function pushViewRoute(view) {
+  const h = `#${view}`;
+  if (location.hash === h) return;
+  history.pushState({ view }, '', h);
+}
+
+/** 从详情路由打开详情（popstate 与首屏深链共用） */
+async function openDetailRoute(detail) {
+  routeOpening = true;
+  try {
+    if (detail.kind === 'stock') await openStock(detail.key);
+    else if (detail.kind === 'sector') await openSector(detail.key);
+    else if (detail.kind === 'fund') {
+      try {
+        await openFund(detail.key);
+      } catch {
+        await openStockFund(detail.key);
+      }
+    }
+  } finally {
+    routeOpening = false;
+  }
 }
 
 function loadView(view) {
@@ -5938,6 +6273,18 @@ function bindEvents() {
   $$('.nav-tab').forEach((tab) => tab.addEventListener('click', () => navigate(tab.dataset.view)));
 
   document.addEventListener('click', (e) => {
+    const indBtn = e.target.closest('[data-ind]');
+    if (indBtn) {
+      e.preventDefault();
+      applyIndicator(indBtn.dataset.ind);
+      return;
+    }
+    const fqtBtn = e.target.closest('[data-fqt]');
+    if (fqtBtn) {
+      e.preventDefault();
+      applyFqt(fqtBtn.dataset.fqt);
+      return;
+    }
     const retry = e.target.closest('[data-sector-retry]');
     if (retry) {
       e.preventDefault();
@@ -6510,7 +6857,15 @@ function bindEvents() {
   }));
 
   window.addEventListener('resize', debounce(resizeCharts, 180));
-  window.addEventListener('popstate', () => showView((location.hash || '#dashboard').slice(1)));
+  window.addEventListener('popstate', () => {
+    const route = parseHashRoute();
+    if (route.detail) {
+      openDetailRoute(route.detail);
+      return;
+    }
+    closeOverlay();
+    showView(route.view);
+  });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && state.settings.autoRefresh) refreshFast();
   });
