@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 前端 DOM smoke 测试
  *
  * 用 jsdom 载入真实的 index.html，把 app.js 当模块加载（关掉自动 init），
@@ -945,3 +945,118 @@ test('DOM：模拟交易面板渲染账户/持仓/成交，没有数据时给引
 
   app.state.paper = null;
 });
+
+/* ---------------------------------------------------------
+   v2.7.0：叠层弹窗 / 自选表格式 / 新股·转债申购日历 / 席位明细
+   --------------------------------------------------------- */
+test('DOM：叠层只关最上面一层，个股详情必须保住', () => {
+  app.state.stockModal = { secid: '1.600519', code: '600519', name: '贵州茅台' };
+  const base = app.mountOverlay('<div class="modal" id="baseModal">个股详情</div>');
+  // 模拟「基本面 / 龙虎榜」抽屉压在个股详情之上
+  const layer = app.pushOverlay('<div class="drawer" id="layerDrawer">F10</div>', 'drawer-overlay');
+  assert.ok(base.isConnected, '基座仍应在文档里');
+  assert.ok(layer.isConnected, '叠层应已挂上');
+  assert.equal(app.topLayer(), layer, 'topLayer 应返回最上层');
+  assert.equal(document.querySelectorAll('#overlayRoot .overlay').length, 2, '应有两层');
+
+  app.closeOverlay(); // 关抽屉
+  assert.equal(document.getElementById('layerDrawer'), null, '叠层应被移除');
+  assert.ok(document.getElementById('baseModal'), '关闭叠层后个股详情必须还在');
+  assert.equal(app.topLayer(), null, '叠层已清空');
+  assert.ok(app.state.stockModal, '个股详情状态不能被清掉');
+
+  app.closeOverlay(); // 再关基座
+  assert.equal(document.getElementById('baseModal'), null, '基座也关闭');
+  assert.equal(app.state.stockModal, null);
+  assert.equal(document.body.style.overflow, '', '全部关闭后恢复滚动');
+});
+
+test('DOM：我的自选是表格式列表，与自选基金同一套结构', () => {
+  app.state.watchlist = [{ secid: '1.600519', code: '600519', name: '贵州茅台' }];
+  app.state.watchData = {
+    items: [{
+      quote: { secid: '1.600519', code: '600519', name: '贵州茅台', price: 1500, pct: 1.1, mainYi: 2, industry: '白酒<img src=x onerror=1>' },
+      advice: { score: 62, rating: { tone: 'up', label: '偏强' }, position: { text: '三成仓' } },
+    }],
+  };
+  app.renderWatchTable();
+  const table = document.querySelector('#watchTable table.fund-watch-table.watch-stock-table');
+  assert.ok(table, '应渲染成 table.fund-watch-table（复用自选基金样式）');
+  assert.equal(table.querySelectorAll('tbody tr').length, 1, '一行一只股票');
+  const row = table.querySelector('tbody tr');
+  assert.equal(row.dataset.dragSecid, '1.600519', '行上要带拖拽用的 secid');
+  assert.equal(row.dataset.stockSecid, '1.600519', '点行能打开详情');
+  assert.ok(row.querySelector('.fund-drag-grip'), '应有拖拽手柄');
+  assert.ok(row.querySelector('.t-name'), '股票名用 t-name（与基金表一致）');
+  assert.match(row.textContent, /白酒/, '行业列');
+  assert.match(row.textContent, /偏强/, '评级徽标');
+  assert.equal(table.querySelectorAll('img').length, 0, '行业等上游文本必须被转义，不能注入标签');
+  // 5 个操作按钮顺序与基金表一致（大小写图标不能错乱，历史上出过重复图标）
+  const btns = [...row.querySelectorAll('.fund-watch-actions button')];
+  assert.deepEqual(btns.map((b) => b.dataset.watchAction), ['up', 'down', 'chart', 'alert', 'remove']);
+});
+
+test('DOM：新股申购日历（ipo）与转债申购日历（cbapply）能渲染', () => {
+  app.state.calendar = {
+    type: 'ipo', count: 1, since: '2026-11-19',
+    items: [{
+      code: '301661', name: '猎奇智能', applyCode: '301661', applyDate: '2026-11-26',
+      ballotDate: '2026-11-30', listingDate: '', market: '深交所创业板',
+      issuePrice: null, onlineApplyUpper: 2500, pe: null, industryPe: 37.03,
+    }],
+  };
+  app.renderCalendar();
+  let table = document.querySelector('#calendarTable');
+  assert.ok(table.classList.contains('calendar-ipo'), '用 calendar-ipo 类做列精简');
+  assert.match(table.textContent, /猎奇智能/);
+  assert.match(table.textContent, /2026-11-26/, '申购日');
+  assert.match(table.textContent, /待定/, '未定价要显示「待定」');
+  assert.match(table.textContent, /2,500 股/, '申购上限');
+
+  app.state.calendar = {
+    type: 'cbapply', count: 1, since: '2026-11-19',
+    items: [{
+      code: '113712', name: '圣晖转债', applyCode: '754163', stockCode: '603163',
+      applyDate: '2026-11-23', listingDate: '', rating: 'AA-', issueYi: 5.5, transferPrice: 66.46,
+    }],
+  };
+  app.renderCalendar();
+  table = document.querySelector('#calendarTable');
+  assert.ok(table.classList.contains('calendar-cbapply'));
+  assert.match(table.textContent, /754163/, '申购代码');
+  assert.match(table.textContent, /AA-/, '评级');
+  assert.match(table.textContent, /5.50 亿/, '发行规模');
+
+  // 空列表要有针对性文案，而不是笼统的「暂无数据」
+  app.state.calendar = { type: 'ipo', count: 0, items: [], since: '2026-11-19' };
+  app.renderCalendar();
+  assert.match(document.querySelector('#calendarTable').textContent, /近期暂无新股申购/);
+  app.state.calendar = null;
+});
+
+test('DOM：龙虎榜席位明细区块按日期分组并标出机构与股通', () => {
+  const html = app.renderSeatsBlock({
+    items: [{
+      date: '2026-11-18',
+      reason: '日涨幅达到15%的前五只证券',
+      orgNetYi: 1.25,
+      seats: [
+        { dept: '机构专用', buyYi: 2, sellYi: 0.75, netYi: 1.25, isOrg: true, isNorth: false },
+        { dept: '沪股通专用', buyYi: 0.5, sellYi: null, netYi: 0.5, isOrg: false, isNorth: true },
+      ],
+    }],
+    note: '席位为交易所公开披露',
+  });
+  const box = document.createElement('div');
+  box.innerHTML = html;
+  assert.match(box.textContent, /2026-11-18/, '上榜日');
+  assert.match(box.textContent, /机构净额 \+1.25 亿/, '机构净额汇总');
+  assert.match(box.textContent, /日涨幅达到15%/, '上榜原因');
+  assert.equal(box.querySelectorAll('.seat-table tbody tr').length, 2, '两个席位');
+  assert.match(box.textContent, /机构/, '机构标签');
+  assert.match(box.textContent, /股通/, '沪深股通标签');
+  // 拿不到数据时给降级文案而不是抛错
+  assert.match(app.renderSeatsBlock(null), /席位明细加载失败/);
+  assert.match(app.renderSeatsBlock({ items: [] }), /近期没有可用的席位明细/);
+});
+
