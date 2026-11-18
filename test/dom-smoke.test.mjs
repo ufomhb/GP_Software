@@ -660,3 +660,131 @@ test('DOM：板块资金与基金页互相跳转的入口都在', () => {
   const toSectors = document.querySelector('#fundSectorView [data-goto="sectors"]');
   assert.ok(toSectors, '基金板块资金子页应有回到全市场板块资金的入口');
 });
+
+/* ---------------------------------------------------------
+   v2.4.1：A 股个股弹窗加宽、美股个股实时分时
+   --------------------------------------------------------- */
+function mountEmptyOverlay() {
+  const root = document.querySelector('#overlayRoot');
+  root.innerHTML = '<div class="overlay"><div class="modal"><div class="empty">loading</div></div></div>';
+  return document.querySelector('#overlayRoot .overlay');
+}
+
+test('DOM：A 股个股弹窗用加宽版面，盘口 10 项全部渲染', () => {
+  mountEmptyOverlay();
+  app.renderStockModal({
+    quote: {
+      secid: '1.600519', code: '600519', name: '贵州茅台', price: 1500.5, pct: 1.2, change: 18,
+      open: 1490, prevClose: 1482.5, high: 1510, low: 1488, amount: 8.6e9,
+      turnover: 0.52, pe: 31.2, mktCapYi: 18900, mainYi: 2.4, mainPct: 3.1, industry: '酿酒行业',
+    },
+    advice: {
+      score: 62, rating: { label: '偏强', tone: 'up' }, position: { text: '五成' },
+      summary: '均线多头排列', levels: { s1: 1470, s2: 1450, r1: 1520, r2: 1550 },
+      reasons: ['站上 MA20', 'MACD 红柱'], risks: ['量能不足'], disclaimer: '规则模型，非投资建议',
+    },
+    kline: {
+      candles: [
+        { d: '2026-11-17', o: 1480, c: 1482, h: 1490, l: 1475, v: 1000, pct: 0.5 },
+        { d: '2026-11-18', o: 1490, c: 1500, h: 1510, l: 1488, v: 1200, pct: 1.2 },
+      ],
+      series: {},
+    },
+  });
+  const modal = document.querySelector('#overlayRoot .modal');
+  assert.ok(modal.classList.contains('modal-stock'), '个股弹窗应使用加宽版面 modal-stock');
+  // 盘口 10 项：今开/昨收/最高/最低/成交额/换手率/市盈率/总市值/主力净流入/净流入占比
+  const kv = [...modal.querySelectorAll('.modal-kv .kv')];
+  assert.equal(kv.length, 10, `盘口应有 10 项，实际 ${kv.length}`);
+  for (const label of ['今开', '昨收', '最高', '最低', '成交额', '换手率', '市盈率', '总市值', '主力净流入', '净流入占比']) {
+    assert.ok(kv.some((x) => x.textContent.includes(label)), `盘口缺字段：${label}`);
+  }
+  assert.ok(modal.querySelector('#stockKline'), '应有 K 线容器');
+  assert.ok(modal.querySelectorAll('[data-ind]').length >= 4, '应带副图指标切换');
+  assert.ok(modal.querySelectorAll('[data-fqt]').length >= 3, '应带复权切换');
+  assert.equal(modal.querySelectorAll('[onerror]').length, 0, '不允许注入属性');
+});
+
+test('DOM：美股个股分时把盘前/盘中/盘后拼成整日曲线，且不重复同一分钟', () => {
+  const item = {
+    symbol: 'AAPL', prevClose: 179, last: 182, pct: 1.6,
+    days: [{
+      day: '2026-11-18',
+      pre: [['04:05', 180.1], ['04:06', 180.4]],
+      regular: [['09:30', 181.0], ['09:31', 182.0]],
+      post: [['16:05', 183.0]],
+    }],
+  };
+  const all = app.usPointsFor(item, 'all');
+  assert.equal(all.day, '2026-11-18');
+  assert.deepEqual(all.points.map((p) => p[0]), ['04:05', '04:06', '09:30', '09:31', '16:05'], '顺序应为盘前→盘中→盘后');
+  assert.equal(all.points.length, 5);
+  assert.equal(app.usPointsFor(item, 'regular').points.length, 2, '只取盘中时 2 个点');
+  assert.equal(app.usPointsFor(item, 'pre').points.length, 2);
+  assert.equal(app.usPointsFor({ days: [] }, 'all').points.length, 0, '没有数据时返回空');
+
+  // 同一分钟在两个时段重复出现时保留后者，曲线不能回折
+  const dup = { days: [{ day: '2026-11-18', pre: [['09:30', 180]], regular: [['09:30', 181]] }] };
+  assert.deepEqual(app.usPointsFor(dup, 'all').points, [['09:30', 181]]);
+});
+
+test('DOM：美股个股详情渲染三段快照、整日分时图与时段切换', () => {
+  mountEmptyOverlay();
+  app.state.usData = {
+    usBoard: {
+      phase: 'regular', local: '10:32', label: '交易中',
+      windows: { pre: '04:00–09:30', regular: '09:30–16:00', post: '16:00–20:00' },
+    },
+    topHot: [{
+      symbol: 'AAPL', name: '苹果', market: 'NASDAQ', sectorName: '科技', industry: '消费电子',
+      dollarVolumeYi: 128.5,
+      sessions: {
+        pre: { price: 180, pct: 0.5 }, regular: { price: 182, pct: 1.6 }, post: { price: 183, pct: 1.9 },
+      },
+    }],
+    hot: [],
+  };
+  app.state.usSeg = 'all';
+  const meta = app.usHotItemOf('AAPL');
+  assert.ok(meta, '应从热度池里找到该股快照');
+  assert.equal(meta.name, '苹果');
+
+  app.renderUsStockModal('AAPL', meta, {
+    symbol: 'AAPL', prevClose: 179, last: 182, pct: 1.6,
+    days: [{ day: '2026-11-18', pre: [['04:05', 180.1]], regular: [['09:30', 181], ['09:31', 182]], post: [['16:05', 183]] }],
+  }, {});
+
+  const modal = document.querySelector('#overlayRoot .modal');
+  assert.ok(modal.classList.contains('modal-stock'), '美股详情也用加宽版面');
+  assert.ok(modal.querySelector('#usStockChart'), '应有分时图容器');
+  assert.equal(modal.querySelectorAll('.us-sess-row').length, 3, '盘前/盘中/盘后三段都要列出');
+  const live = modal.querySelector('.us-sess-row.is-live');
+  assert.ok(live && live.textContent.includes('盘中'), '当前时段应高亮「盘中」');
+  assert.match(modal.textContent, /苹果/, '应显示股票名');
+  assert.match(modal.textContent, /昨收 179\.00/, '应显示昨收基准');
+  assert.equal(modal.querySelectorAll('[data-us-seg]').length, 4, '应有整日/盘前/盘中/盘后四个切换');
+  assert.ok(modal.querySelector('[data-us-seg="regular"]'), '应有盘中分段按钮');
+
+  // 切换分段按钮后应记住选择
+  modal.querySelector('[data-us-seg="post"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  assert.equal(app.state.usSeg, 'post', '点击盘后应把状态切到 post');
+
+  app.state.usSeg = 'all';
+  app.state.usData = null;
+});
+
+test('DOM：美股热度表每行都能点开详情（带 data-us-stock）', () => {
+  app.state.usData = {
+    usBoard: { phase: 'regular', local: '10:32', label: '交易中', windows: {} },
+    indices: [], distribution: null,
+    hot: [
+      { rank: 1, symbol: 'NVDA', name: '英伟达', market: 'NASDAQ', sectorName: '科技', industry: '半导体', dollarVolumeYi: 300, sessions: {} },
+      { rank: 2, symbol: 'MSFT', name: '微软', market: 'NASDAQ', sectorName: '科技', industry: '软件', dollarVolumeYi: 200, sessions: {} },
+    ],
+  };
+  app.renderUS();
+  const rows = [...document.querySelectorAll('#usHotColumns tbody tr[data-us-stock]')];
+  assert.equal(rows.length, 2, '热度表两行都该带可点击标记');
+  assert.equal(rows[0].getAttribute('data-us-stock'), 'NVDA');
+  app.state.usData = null;
+});

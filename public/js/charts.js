@@ -1551,4 +1551,121 @@ export function usSectorFlowBar(el, items) {
   });
 }
 
+/* =========================================================
+   美股详情：整幅分时图（04:00–20:00 延时交易全时段）
+   points: [[ 'HH:MM', price ], ...]，来自 /api/us/minutes 的 pre/regular/post 拼接
+   options: { preClose, segments: [{ label, time }] } 用竖线标出 09:30 / 16:00 分界
+   ========================================================= */
+export function usIntradayChart(el, points, options = {}) {
+  const list = (Array.isArray(points) ? points : []).filter((p) => Array.isArray(p) && Number.isFinite(Number(p[1])));
+  if (!el) return null;
+  if (list.length < 2) {
+    el.innerHTML = '<div class="empty">该时段暂无成交数据</div>';
+    return null;
+  }
+  const preClose = Number(options.preClose);
+  const base = Number.isFinite(preClose) && preClose > 0 ? preClose : Number(list[0][1]);
+  const times = list.map((p) => p[0]);
+  const values = list.map((p) => Number(p[1]));
+  const last = values[values.length - 1];
+  const up = last >= base;
+  const color = up ? C.up : C.down;
+  const rgb = up ? '255,77,94' : '22,199,132';
+
+  // 左右两轴按同一价格区间换算，右轴显示相对昨收的百分比
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const span = Math.max(rawMax - rawMin, base * 0.001, 0.01);
+  const pad = span * 0.16;
+  const yMin = Math.min(rawMin, base) - pad;
+  const yMax = Math.max(rawMax, base) + pad;
+  const pctOf = (v) => (base ? ((v - base) / base) * 100 : 0);
+
+  // 09:30 / 16:00 两条分界线，标出盘前 | 盘中 | 盘后
+  const segmentLines = (options.segments || [
+    { time: '09:30', label: '开盘' },
+    { time: '16:00', label: '收盘' },
+  ]).filter((s) => times.includes(s.time)).map((s) => ({
+    xAxis: s.time,
+    lineStyle: { color: 'rgba(148,163,184,.35)', width: 1, type: 'dashed' },
+    label: { formatter: s.label, color: C.muted, fontSize: 8, position: 'start' },
+  }));
+
+  return setOption(el, {
+    animation: false,
+    tooltip: {
+      ...TOOLTIP,
+      trigger: 'axis',
+      axisPointer: { type: 'cross', lineStyle: { color: 'rgba(56,189,248,.28)' }, crossStyle: { color: 'rgba(56,189,248,.28)' } },
+      formatter: (ps) => {
+        const p = ps[0];
+        if (!p) return '';
+        const i = p.dataIndex;
+        const diff = values[i] - base;
+        const tone = diff >= 0 ? C.up : C.down;
+        return `<div style="color:#7f8fa8;font-size:10px;margin-bottom:3px">${esc(times[i])} 美东</div>
+          <div style="font-family:Bahnschrift;font-size:15px;color:${tone}">${values[i].toFixed(2)}
+            <span style="font-size:10px">${diff >= 0 ? '+' : ''}${diff.toFixed(2)} (${diff >= 0 ? '+' : ''}${pctOf(values[i]).toFixed(2)}%)</span>
+          </div>
+          <div style="color:#7f8fa8;font-size:9px;margin-top:2px">昨收 ${base.toFixed(2)}</div>`;
+      },
+    },
+    grid: { left: 52, right: 56, top: 18, bottom: 26 },
+    xAxis: {
+      type: 'category',
+      data: times,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: C.line } },
+      axisTick: { show: false },
+      axisLabel: { color: C.muted, fontSize: 9, hideOverlap: true, interval: Math.max(1, Math.floor(times.length / 8)) },
+      splitLine: { show: false },
+    },
+    yAxis: [
+      {
+        type: 'value',
+        scale: true,
+        min: yMin,
+        max: yMax,
+        position: 'left',
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { color: C.muted, fontSize: 9, formatter: (v) => Number(v).toFixed(2) },
+        splitLine: { lineStyle: { color: C.split } },
+      },
+      {
+        type: 'value',
+        min: pctOf(yMin),
+        max: pctOf(yMax),
+        position: 'right',
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { color: C.muted, fontSize: 9, formatter: (v) => `${v > 0 ? '+' : ''}${Number(v).toFixed(2)}%` },
+        splitLine: { show: false },
+      },
+    ],
+    series: [{
+      name: '价格',
+      type: 'line',
+      data: values,
+      smooth: false,
+      showSymbol: false,
+      lineStyle: { width: 1.6, color },
+      itemStyle: { color },
+      areaStyle: {
+        color: new window.echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: `rgba(${rgb},.26)` },
+          { offset: 1, color: `rgba(${rgb},0)` },
+        ]),
+      },
+      markLine: {
+        silent: true,
+        symbol: 'none',
+        label: { show: false },
+        lineStyle: { color: 'rgba(148,163,184,.45)', width: 1, type: 'dashed' },
+        data: [{ yAxis: base }, ...segmentLines],
+      },
+    }],
+  });
+}
+
 export { C as COLORS };

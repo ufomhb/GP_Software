@@ -16,6 +16,7 @@ import {
   timelineCumulative,
   intradayChart,
   usMiniChart,
+  usIntradayChart,
   sectorCompareBar,
   usSectorFlowBar,
   COLORS,
@@ -264,6 +265,7 @@ function closeOverlay() {
   document.body.style.overflow = '';
   // 详情弹窗关闭后清掉「当前个股」标记，避免指标切换去重绘一个不存在的弹窗
   state.stockModal = null;
+  state.usStockModal = null;
   // 地址栏退回视图级 hash，否则刷新页面还会重新弹出已经关掉的详情
   if (wasDetail) history.replaceState({ view: state.view }, '', `#${state.view}`);
 }
@@ -1290,7 +1292,7 @@ function renderUS() {
   const mid = Math.ceil(hot.length / 2);
   const renderColumn = (rows) => `<div class="us-hot-column"><div class="table-scroll"><table class="table">
     <thead><tr><th>#</th><th>股票</th><th>板块</th>${sessionHead('pre', '盘前', board.windows?.pre || '04:00–09:30')}${sessionHead('regular', '盘中', board.windows?.regular || '09:30–16:00')}${sessionHead('post', '盘后', board.windows?.post || '16:00–20:00')}<th>成交额</th></tr></thead>
-    <tbody>${rows.map((x) => `<tr>
+    <tbody>${rows.map((x) => `<tr data-us-stock="${esc(x.symbol)}" title="查看 ${esc(cleanName(x.name))} 实时分时">
       <td><span class="us-hot-rank">${x.rank}</span></td>
       <td><span class="us-hot-name">${esc(cleanName(x.name))}</span><span class="us-hot-symbol">${esc(x.symbol)} · ${esc(x.market)}</span></td>
       <td class="t-sess-sector"><span class="us-sector-tag" title="${esc(x.industry || '')}">${esc(x.sectorName || '--')}</span></td>
@@ -1411,6 +1413,157 @@ function renderUSMinutes() {
       usMiniChart(chartEl, got.points, { preClose: Number.isFinite(base) && base > 0 ? base : m.prevClose });
     }
   });
+}
+
+/* =========================================================
+   美股个股详情（v2.4.1）
+   ---------------------------------------------------------
+   美股没有 A 股那套「个股 secid + 日 K」，但 CNBC 的 1 分钟成交价
+   覆盖 04:00–20:00 的盘前/盘中/盘后，因此这里用真实分钟成交画整幅分时，
+   再配上热度表里的三段快照，做到和 A 股详情同样的「点开就能看图」。
+   ========================================================= */
+const US_SEG_LABEL = { all: '整日', pre: '盘前', regular: '盘中', post: '盘后' };
+const US_PHASE_LABEL = { pre: '盘前', regular: '盘中', post: '盘后' };
+
+/** 从美股热度池里找到某只股票的快照（topHot 优先，其次 hot 全量） */
+function usHotItemOf(symbol) {
+  const d = state.usData;
+  if (!d) return null;
+  for (const pool of [d.topHot, d.hot]) {
+    if (!Array.isArray(pool)) continue;
+    const hit = pool.find((x) => x && x.symbol === symbol);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** 把最近一个交易日的分钟成交按「整日 / 盘前 / 盘中 / 盘后」拼成统一点数序列 */
+function usPointsFor(item, seg = 'all') {
+  const days = (item && item.days) || [];
+  if (!days.length) return { points: [], day: null };
+  const d = days[days.length - 1] || {};
+  const parts = seg === 'pre' ? [d.pre]
+    : seg === 'post' ? [d.post]
+      : seg === 'regular' ? [d.regular]
+        : [d.pre, d.regular, d.post];
+  const points = [];
+  for (const arr of parts) {
+    if (!Array.isArray(arr)) continue;
+    for (const p of arr) {
+      if (!Array.isArray(p) || !Number.isFinite(Number(p[1]))) continue;
+      const last = points[points.length - 1];
+      // 同一分钟在两个时段里重复出现时保留后者，避免曲线回折
+      if (last && last[0] === p[0]) { points[points.length - 1] = [p[0], Number(p[1])]; continue; }
+      points.push([p[0], Number(p[1])]);
+    }
+  }
+  return { points, day: d.day || null };
+}
+
+async function openUsStock(symbol) {
+  if (!symbol) return;
+  const meta = usHotItemOf(symbol) || {};
+  state.usStockModal = { symbol, name: meta.name || '' };
+  if (!routeOpening) pushDetailRoute('us', symbol);
+  const overlay = mountOverlay(`
+    <div class="modal modal-stock">
+      <div class="modal-head">
+        <div class="modal-title"><h2>${esc(cleanName(meta.name) || symbol)}</h2><span class="code">${esc(symbol)} · ${esc(meta.market || 'US')}</span></div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="empty">正在加载美股实时分时…</div>
+    </div>`);
+  try {
+    const data = await api(`/api/us/minutes?symbols=${encodeURIComponent(symbol)}`, 60000);
+    if (!document.body.contains(overlay)) return;
+    renderUsStockModal(symbol, meta, (data.items || [])[0] || {}, data);
+  } catch (err) {
+    toast(`美股分时加载失败：${err.message}`, 'err');
+    closeOverlay();
+  }
+}
+
+function renderUsStockModal(symbol, meta, item, data) {
+  const overlay = $('.overlay');
+  if (!overlay) return;
+  const board = (state.usData && state.usData.usBoard) || {};
+  const sessions = meta.sessions || {};
+  const phaseNow = board.phase || '';
+  const seg = state.usSeg || 'all';
+  const { points, day } = usPointsFor(item, seg);
+  const preClose = Number(item.prevClose);
+  const lastPoint = points.length ? points[points.length - 1][1] : null;
+  const liveSess = sessions[phaseNow] || sessions.regular || null;
+  const price = liveSess && isNum(liveSess.price) ? Number(liveSess.price) : (isNum(item.last) ? Number(item.last) : lastPoint);
+  const pct = liveSess && isNum(liveSess.pct) ? Number(liveSess.pct) : (isNum(item.pct) ? Number(item.pct) : null);
+  const sessRow = (key, label, windowText) => {
+    const s = sessions[key];
+    const on = phaseNow === key;
+    return `<div class="us-sess-row${on ? ' is-live' : ''}">
+      <div class="usr-label">${label}<small>${esc(windowText)}</small></div>
+      <div class="usr-price">${s && isNum(s.price) ? nf(s.price, 2) : '--'}</div>
+      <div class="usr-pct ${s && isNum(s.pct) ? toneClass(s.pct) : 'muted'}">${s && isNum(s.pct) ? pctFmt(s.pct) : '--'}</div>
+    </div>`;
+  };
+
+  overlay.innerHTML = `<div class="modal modal-stock">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title"><h2>${esc(cleanName(meta.name) || symbol)}</h2>
+          <span class="code">${esc(symbol)} · ${esc(meta.market || 'US')}</span>
+          ${meta.sectorName ? `<span class="badge">${esc(meta.sectorName)}</span>` : ''}
+          ${phaseNow ? `<span class="badge tone-up">${esc(US_PHASE_LABEL[phaseNow] || '')}</span>` : ''}
+        </div>
+        <div class="muted small mt8">${esc(meta.industry || '')}${day ? ` · ${esc(String(day).slice(5))} 分钟成交` : ''}${item.error ? ' · 该股分时暂不可用' : ''}</div>
+      </div>
+      <button class="modal-close" data-close>×</button>
+    </div>
+    <div class="modal-price-row">
+      <span class="modal-price ${toneClass(pct)}">${isNum(price) ? nf(price, 2) : '--'}</span>
+      <span class="modal-chg ${toneClass(pct)}">${pctFmt(pct)}</span>
+      <span class="badge">昨收 ${isNum(preClose) ? nf(preClose, 2) : '--'}</span>
+      <span class="badge">成交额 ${isNum(meta.dollarVolumeYi) ? `${nf(meta.dollarVolumeYi, 1)} 亿` : '--'}</span>
+      <span class="badge">美元 · 美东时间</span>
+    </div>
+    <div class="modal-kline-tools">
+      <div class="seg seg-sm" id="usStockSeg" title="分时段查看">
+        ${['all', 'pre', 'regular', 'post'].map((k) => `<button data-us-seg="${k}" class="${seg === k ? 'is-active' : ''}">${US_SEG_LABEL[k]}</button>`).join('')}
+      </div>
+      <span class="muted small">${points.length ? `${points.length} 个分钟成交点` : '该时段暂无成交'}</span>
+    </div>
+    <div class="modal-body-grid">
+      <div>
+        <div id="usStockChart" class="modal-chart"></div>
+      </div>
+      <div class="modal-side">
+        <div class="modal-advice">
+          <div class="ma-top"><span class="muted small">分时段快照</span><span class="muted small">${esc(board.local || '--')} 美东</span></div>
+          <div class="us-sess-table mt8">
+            ${sessRow('pre', '盘前', (board.windows && board.windows.pre) || '04:00–09:30')}
+            ${sessRow('regular', '盘中', (board.windows && board.windows.regular) || '09:30–16:00')}
+            ${sessRow('post', '盘后', (board.windows && board.windows.post) || '16:00–20:00')}
+          </div>
+          <p class="mt8">分时取自 CNBC 1 分钟成交价，覆盖 04:00–20:00 的全部延时交易时段；没有成交的时段留空，不做插值。</p>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" data-goto="us" data-close>返回美股专题</button>
+        </div>
+        <div class="disclaimer">美股为延时行情，不是交易所实时逐笔；分时用于刻画当日量价方向，不构成投资建议。</div>
+      </div>
+    </div>
+  </div>`;
+
+  usIntradayChart($('#usStockChart'), points, {
+    preClose,
+    segments: seg === 'all'
+      ? [{ time: '09:30', label: '开盘' }, { time: '16:00', label: '收盘' }]
+      : [],
+  });
+
+  $$('#usStockSeg button').forEach((b) => b.addEventListener('click', () => {
+    state.usSeg = b.dataset.usSeg;
+    renderUsStockModal(symbol, meta, item, data);
+  }));
 }
 
 async function loadUSMinutes(force = false) {
@@ -5033,7 +5186,7 @@ function renderStockModal(data) {
   const overlay = $('.overlay');
   if (!overlay) return;
   const inWatch = state.watchlist.some((w) => w.secid === q.secid);
-  overlay.innerHTML = `<div class="modal">
+  overlay.innerHTML = `<div class="modal modal-stock">
     <div class="modal-head">
       <div>
         <div class="modal-title"><h2>${esc(cleanName(q.name))}</h2><span class="code">${esc(q.code)} · ${esc(q.secid)}</span><span class="badge tone-${a.rating.tone}">${esc(a.rating.label)}</span></div>
@@ -5713,8 +5866,8 @@ function navigate(view) {
    这样地址栏可以直接复制、收藏、新标签打开，后退键也能正常关闭弹窗。
    ========================================================= */
 const VIEWS = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'strategy', 'watchlist'];
-const DETAIL_KINDS = ['stock', 'sector', 'fund'];
-const DETAIL_BASE_VIEW = { stock: 'watchlist', sector: 'sectors', fund: 'funds' };
+const DETAIL_KINDS = ['stock', 'sector', 'fund', 'us'];
+const DETAIL_BASE_VIEW = { stock: 'watchlist', sector: 'sectors', fund: 'funds', us: 'us' };
 // 由 popstate / 直接打开详情路由时为 true，避免「打开详情」再压一条新历史
 let routeOpening = false;
 
@@ -5752,6 +5905,7 @@ async function openDetailRoute(detail) {
   try {
     if (detail.kind === 'stock') await openStock(detail.key);
     else if (detail.kind === 'sector') await openSector(detail.key);
+    else if (detail.kind === 'us') await openUsStock(detail.key);
     else if (detail.kind === 'fund') {
       try {
         await openFund(detail.key);
@@ -5993,6 +6147,12 @@ function bindEvents() {
     if (stock) {
       e.preventDefault();
       openStock(stock.dataset.stockSecid);
+      return;
+    }
+    const usStock = e.target.closest('[data-us-stock]');
+    if (usStock) {
+      e.preventDefault();
+      openUsStock(usStock.dataset.usStock);
       return;
     }
     const idx = e.target.closest('[data-index-secid]');
@@ -6834,5 +6994,7 @@ export {
   // 预警 / K 线选项的纯逻辑，供 dom-smoke 与单元测试直接调用
   evalAlertRule, alertConditionText, currentIndicator, currentFqt,
   parseHashRoute, detailHash, normalizeAlerts, syncKlineSegs, renderAlerts,
+  // 详情弹窗（v2.4.1：A 股弹窗加宽 + 美股分时详情）供回归测试直接渲染
+  renderStockModal, renderUsStockModal, usPointsFor, usHotItemOf, renderUS,
 };
 

@@ -138,6 +138,9 @@ const state = {
   usPhaseTouched: false,
   usMinutes: null,
   usMinutesLoading: false,
+  // 美股个股详情（v2.4.1）：当前分段与当前打开的标的
+  usSeg: 'all',
+  usStockModal: null,
   sectorPeriod: 'today',
   sectorPeriodData: { industry: {}, concept: {} },
   sectorLoadingPeriod: false,
