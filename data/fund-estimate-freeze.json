@@ -127,6 +127,12 @@
       "at": "",
       "nav": null,
       "kind": "holdings"
+    },
+    "024418": {
+      "pct": 1.6,
+      "at": "",
+      "nav": null,
+      "kind": "etf"
     }
   }
 }
