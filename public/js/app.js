@@ -252,14 +252,47 @@ async function getKlineCached(secid, klt = 101, limit = 140, fqt = null) {
 
 function mountOverlay(html, className = '') {
   const root = $('#overlayRoot');
+  // 新建基座会顶掉之前的所有叠加层（例如多个弹窗互跳时），避免残留挡视线
   root.innerHTML = `<div class="overlay ${className}">${html}</div>`;
   document.body.style.overflow = 'hidden';
   return $('.overlay', root);
 }
 
+/**
+ * 在当前弹窗之上叠一层，**不销毁下层**。
+ * v2.7.0 修复：个股详情里点「基本面 / 龙虎榜」「个股资讯」原来走 mountOverlay，
+ * 会直接把 #overlayRoot 的 innerHTML 换掉——个股详情被销毁，关掉抽屉后回不到个股。
+ * 改成叠加层后，上层关闭只移除自己，下层（个股详情/基金详情…）原样保留。
+ * 返回上层元素，调用方应基于它做作用域查询（如 overlay.querySelector('.drawer')），
+ * 否则 $('.drawer') 之类可能命中下层。
+ */
+function pushOverlay(html, className = '') {
+  const root = $('#overlayRoot');
+  const el = document.createElement('div');
+  el.className = `overlay overlay-layer ${className}`.trim();
+  el.innerHTML = html;
+  root.appendChild(el);
+  document.body.style.overflow = 'hidden';
+  return el;
+}
+
+/** 当前最上层的叠加层（没有则返回 null） */
+function topLayer() {
+  const root = $('#overlayRoot');
+  if (!root) return null;
+  const layers = $$('.overlay-layer', root);
+  return layers.length ? layers[layers.length - 1] : null;
+}
+
 function closeOverlay() {
   const root = $('#overlayRoot');
   if (!root) return;
+  // 叠加层：只关最上面那层，下面那层（个股详情等）继续留着
+  const layer = topLayer();
+  if (layer) {
+    layer.remove();
+    return;
+  }
   const wasDetail = parseHashRoute().detail;
   root.innerHTML = '';
   document.body.style.overflow = '';
@@ -3442,27 +3475,78 @@ function renderWatchTable() {
   }
   const order = new Map(state.watchlist.map((w, i) => [w.secid, i]));
   const sorted = [...items].sort((a, b) => (order.get(a.quote.secid) ?? 999) - (order.get(b.quote.secid) ?? 999));
-  el.innerHTML = `<div class="watch-table">${sorted.map(({ quote, advice }) => {
-    const q = quote || {};
-    return `<div class="watch-card-row" draggable="true" data-drag-secid="${esc(q.secid)}" data-stock-secid="${esc(q.secid)}">
-      <div class="watch-ident">
-        <span class="watch-avatar">${esc(String(q.code || '').slice(-3))}</span>
-        <div><div class="wi-name">${esc(cleanName(q.name))}</div><div class="wi-code">${esc(q.code)} · ${esc(q.industry || '')}</div></div>
-      </div>
-      <div class="watch-cell"><div class="wc-label">最新</div><div class="wc-value">${stockFmt(q.price)}</div></div>
-      <div class="watch-cell"><div class="wc-label">涨跌幅</div><div class="wc-value ${toneClass(q.pct)}">${pctFmt(q.pct)}</div></div>
-      <div class="watch-cell"><div class="wc-label">主力净流入</div><div class="wc-value ${toneClass(q.mainYi)}">${yiFmt(q.mainYi)}</div></div>
-      <div class="watch-cell"><div class="wc-label">技术评分</div><div class="wc-value ${advice && advice.score >= 60 ? 'tone-up' : advice && advice.score < 45 ? 'tone-down' : ''}">${advice ? advice.score : '--'}</div></div>
-      <div class="watch-cell"><div class="wc-label">评级 / 仓位</div><div class="wc-value">${advice ? `<span class="badge tone-${advice.rating.tone}">${esc(advice.rating.label)}</span><div class="wc-sub">${esc(advice.position.text)}</div>` : '--'}</div></div>
-      <div class="watch-actions">
-        <button class="move" title="上移" data-watch-action="up" data-secid="${esc(q.secid)}">↑</button>
-        <button class="move" title="下移" data-watch-action="down" data-secid="${esc(q.secid)}">↓</button>
-        <button title="查看 K 线详情" data-watch-action="chart" data-secid="${esc(q.secid)}">K</button>
-        <button title="添加价格预警" data-watch-action="alert" data-secid="${esc(q.secid)}">警</button>
-        <button class="del" title="移出自选" data-watch-action="remove" data-secid="${esc(q.secid)}">×</button>
-      </div>
-    </div>`;
-  }).join('')}</div>`;
+  // v2.7.0：改成和「我的自选基金」一致的表格式列表（同样的表头/拖拽/操作按钮/手机端列精简），
+  // 复用 .fund-watch-table 的样式与响应式规则，只额外标一个 watch-stock-table 便于单独微调。
+  el.innerHTML = `<div class="table-scroll"><table class="table fund-watch-table watch-stock-table">
+    <thead><tr>
+      <th>股票</th><th data-col="nav">最新</th><th>涨跌幅</th><th data-col="flow">主力净流入</th>
+      <th data-col="score">技术评分</th><th data-col="rating">评级 / 仓位</th><th data-col="industry">行业</th><th>操作</th>
+    </tr></thead>
+    <tbody>${sorted.map(({ quote, advice: av }) => {
+      const q = quote || {};
+      return `<tr draggable="true" data-drag-secid="${esc(q.secid)}" data-stock-secid="${esc(q.secid)}" title="拖动行排序，点击查看详情">
+        <td><span class="fund-drag-grip">⋮⋮</span><span class="t-name">${esc(cleanName(q.name))}</span><span class="t-code">${esc(q.code)}</span></td>
+        <td data-col="nav" class="t-price">${stockFmt(q.price)}</td>
+        <td class="t-chg ${toneClass(q.pct)}">${pctFmt(q.pct)}</td>
+        <td data-col="flow" class="t-chg ${toneClass(q.mainYi)}">${yiFmt(q.mainYi)}</td>
+        <td data-col="score" class="t-price ${av && av.score >= 60 ? 'tone-up' : av && av.score < 45 ? 'tone-down' : ''}">${av ? av.score : '--'}</td>
+        <td data-col="rating">${av ? `<span class="badge tone-${av.rating.tone}">${esc(av.rating.label)}</span><div class="t-sub">${esc(av.position.text)}</div>` : '--'}</td>
+        <td data-col="industry" class="t-dim">${esc(q.industry || '--')}</td>
+        <td><div class="fund-watch-actions watch-actions">
+          <button class="move" title="上移" data-watch-action="up" data-secid="${esc(q.secid)}">↑</button>
+          <button class="move" title="下移" data-watch-action="down" data-secid="${esc(q.secid)}">↓</button>
+          <button title="查看 K 线详情" data-watch-action="chart" data-secid="${esc(q.secid)}">K</button>
+          <button title="添加价格预警" data-watch-action="alert" data-secid="${esc(q.secid)}">警</button>
+          <button class="del" title="移出自选" data-watch-action="remove" data-secid="${esc(q.secid)}">×</button>
+        </div></td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table></div>`;
+  bindWatchDrag(el);
+}
+
+/** 自选股拖拽排序（桌面 HTML5 + 手机长按），与自选基金同一套体验 */
+function bindWatchDrag(container) {
+  if (!container || container.dataset.watchDragBound === '1') return;
+  container.dataset.watchDragBound = '1';
+  bindTouchReorder(container, '[data-drag-secid]', 'dragSecid', (from, to) => reorderWatch(from, to));
+  let dragSecid = null;
+  container.addEventListener('dragstart', (e) => {
+    const row = e.target.closest('[data-drag-secid]');
+    if (!row) return;
+    dragSecid = row.dataset.dragSecid;
+    row.classList.add('dragging');
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragSecid || '');
+    }
+  });
+  container.addEventListener('dragover', (e) => {
+    const row = e.target.closest('[data-drag-secid]');
+    if (!row || !dragSecid) return;
+    e.preventDefault();
+    $$('.drag-over', container).forEach((r) => r.classList.remove('drag-over'));
+    if (row.dataset.dragSecid !== dragSecid) row.classList.add('drag-over');
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  });
+  container.addEventListener('dragleave', (e) => {
+    const row = e.target.closest('[data-drag-secid]');
+    if (row) row.classList.remove('drag-over');
+  });
+  container.addEventListener('drop', (e) => {
+    const row = e.target.closest('[data-drag-secid]');
+    if (!row) return;
+    e.preventDefault();
+    const target = row.dataset.dragSecid;
+    row.classList.remove('drag-over');
+    const from = dragSecid;
+    dragSecid = null;
+    reorderWatch(from, target);
+  });
+  container.addEventListener('dragend', () => {
+    dragSecid = null;
+    $$('.dragging, .drag-over', container).forEach((r) => r.classList.remove('dragging', 'drag-over'));
+  });
 }
 
 /** 把一条预警规则渲染成人类可读的条件文本 */
@@ -3726,7 +3810,8 @@ function openPaperTrade(side = 'buy', preset = {}) {
 
 async function openStockNews(code, name) {
   if (!code) return;
-  const overlay = mountOverlay(`
+  // 叠在个股详情之上：关掉资讯抽屉后仍回到个股详情
+  const overlay = pushOverlay(`
     <div class="drawer">
       <div class="drawer-head">
         <div><div class="eyebrow">STOCK NEWS</div><h2>${esc(cleanName(name) || code)} · 资讯</h2><span class="code">${esc(code)}</span></div>
@@ -3737,7 +3822,7 @@ async function openStockNews(code, name) {
   try {
     const data = await api(`/api/stock/news?code=${encodeURIComponent(code)}&limit=12`, 30000);
     if (!document.body.contains(overlay)) return;
-    const drawer = $('.drawer');
+    const drawer = overlay.querySelector('.drawer');
     if (!drawer) return;
     const items = (data && data.items) || [];
     drawer.innerHTML = `
@@ -3756,6 +3841,28 @@ async function openStockNews(code, name) {
     toast(`资讯加载失败：${err.message}`, 'err');
     closeOverlay();
   }
+}
+
+/**
+ * 查看大盘策略：在新标签页打开，个股详情原样保留（v2.7.0 修复）
+ * 原来这个按钮带 data-goto="strategy" data-close：先关掉弹窗再切视图，
+ * 用户看完策略回到本页时个股详情已经没了。新标签页等于并排看，回来还是原弹窗。
+ * 弹窗被浏览器拦截时退回原行为（关弹窗 + 本页切到策略），功能不会丢。
+ */
+function openStrategyInNewTab() {
+  let win = null;
+  try {
+    win = window.open(`${location.pathname}${location.search}#strategy`, '_blank');
+  } catch {
+    win = null;
+  }
+  if (win) {
+    toast('已在新标签页打开大盘策略，个股详情保留', 'ok', 2800);
+    return;
+  }
+  closeOverlay();
+  navigate('strategy');
+  toast('新标签页被拦截，已在本页打开大盘策略', 'warn', 2800);
 }
 
 /* =========================================================
@@ -5491,7 +5598,7 @@ function renderStockModal(data) {
           <button class="btn primary" id="modalWatch" ${inWatch ? 'disabled' : ''}>${inWatch ? '已加入自选' : '加入自选'}</button>
           <button class="btn" data-f10-open data-f10-secid="${esc(q.secid)}" data-f10-code="${esc(q.code)}" data-f10-name="${esc(q.name)}">基本面 / 龙虎榜</button>
           <button class="btn" data-news-open data-news-code="${esc(q.code)}" data-news-name="${esc(q.name)}">个股资讯</button>
-          <button class="btn" data-goto="strategy" data-close>查看大盘策略</button>
+          <button class="btn" data-strategy-new title="在新标签页打开大盘策略，个股详情保留">查看大盘策略 ↗</button>
         </div>
         <div class="modal-advice">
           <div class="muted small">条件预警</div>
@@ -6169,20 +6276,26 @@ function renderLonghu() {
   </tr>`).join('')}</tbody>`;
 }
 
+const CAL_TITLE = {
+  lift: '限售解禁（今日及以后）',
+  bonus: '分红送转（按公告日倒序）',
+  ipo: '新股申购（今日及以后）',
+  cbapply: '转债申购（今日及以后）',
+};
+const CAL_NAME = { lift: '限售解禁', bonus: '分红送转', ipo: '新股申购', cbapply: '转债申购' };
+
 async function loadCalendar(type = 'lift') {
-  const kind = type === 'bonus' ? 'bonus' : 'lift';
+  const kind = CAL_TITLE[type] ? type : 'lift';
   state.calendarType = kind;
   $$('#calendarTypeSeg button').forEach((b) => b.classList.toggle('is-active', b.dataset.calType === kind));
-  if ($('#calendarTitle')) {
-    $('#calendarTitle').textContent = kind === 'bonus' ? '分红送转（按公告日倒序）' : '限售解禁（今日及以后）';
-  }
+  if ($('#calendarTitle')) $('#calendarTitle').textContent = CAL_TITLE[kind];
   if ($('#calendarTable')) $('#calendarTable').innerHTML = '<tbody><tr><td><div class="empty">加载中…</div></td></tr></tbody>';
   try {
     const data = await api(`/api/calendar?type=${kind}&limit=40`, 30000);
     state.calendar = { ...data, type: kind };
     renderCalendar();
   } catch (err) {
-    handleLoadError(kind === 'bonus' ? '分红送转' : '限售解禁', err);
+    handleLoadError(CAL_NAME[kind], err);
     if ($('#calendarTable')) $('#calendarTable').innerHTML = `<tbody><tr><td><div class="empty">加载失败：${esc(err.message)}</div></td></tr></tbody>`;
   }
 }
@@ -6198,7 +6311,48 @@ function renderCalendar() {
   }
   if ($('#calendarNote') && d && d.note) $('#calendarNote').textContent = d.note;
   if (!d || !(d.items || []).length) {
-    table.innerHTML = '<tbody><tr><td><div class="empty">暂无数据</div></td></tr></tbody>';
+    const empty = d && d.type === 'ipo' ? '近期暂无新股申购' : d && d.type === 'cbapply' ? '近期暂无可转债申购' : '暂无数据';
+    table.innerHTML = `<tbody><tr><td><div class="empty">${empty}</div></td></tr></tbody>`;
+    return;
+  }
+  // 新股申购（v2.7.0）
+  if (d.type === 'ipo') {
+    table.className = 'table calendar-table calendar-ipo';
+    table.innerHTML = `<thead><tr>
+      <th>申购日</th><th>新股</th><th data-col="apply">申购代码</th><th data-col="price">发行价</th>
+      <th data-col="upper">申购上限</th><th data-col="pe">发行市盈率</th><th data-col="ipe">行业PE</th>
+      <th data-col="ballot">中签号日</th><th data-col="listing">上市日</th>
+    </tr></thead>
+    <tbody>${d.items.map((x) => `<tr>
+      <td>${esc(x.applyDate)}</td>
+      <td><span class="t-name">${esc(cleanName(x.name))}</span><span class="t-sub">${esc(x.code)}${x.market ? ` · ${esc(x.market)}` : ''}</span></td>
+      <td data-col="apply">${esc(x.applyCode || '--')}</td>
+      <td data-col="price">${x.issuePrice === null ? '<span class="muted">待定</span>' : `${nf(x.issuePrice, 2)} 元`}</td>
+      <td data-col="upper">${x.onlineApplyUpper === null ? '--' : `${nf(x.onlineApplyUpper, 0)} 股`}</td>
+      <td data-col="pe">${x.pe === null ? '--' : nf(x.pe, 2)}</td>
+      <td data-col="ipe">${x.industryPe === null ? '--' : nf(x.industryPe, 2)}</td>
+      <td data-col="ballot">${esc(x.ballotDate || '--')}</td>
+      <td data-col="listing">${esc(x.listingDate || '--')}</td>
+    </tr>`).join('')}</tbody>`;
+    return;
+  }
+  // 转债申购（v2.7.0）
+  if (d.type === 'cbapply') {
+    table.className = 'table calendar-table calendar-cbapply';
+    table.innerHTML = `<thead><tr>
+      <th>申购日</th><th>转债</th><th data-col="apply">申购代码</th><th data-col="stock">正股</th>
+      <th data-col="rating">评级</th><th data-col="scale">发行规模</th><th data-col="tp">转股价</th><th data-col="listing">上市日</th>
+    </tr></thead>
+    <tbody>${d.items.map((x) => `<tr>
+      <td>${esc(x.applyDate)}</td>
+      <td><span class="t-name">${esc(cleanName(x.name))}</span><span class="t-sub">${esc(x.code)}</span></td>
+      <td data-col="apply">${esc(x.applyCode || '--')}</td>
+      <td data-col="stock">${esc(x.stockCode || '--')}</td>
+      <td data-col="rating">${esc(x.rating || '--')}</td>
+      <td data-col="scale">${x.issueYi === null ? '--' : `${nf(x.issueYi, 2)} 亿`}</td>
+      <td data-col="tp">${x.transferPrice === null ? '--' : `${nf(x.transferPrice, 2)} 元`}</td>
+      <td data-col="listing">${esc(x.listingDate || '--')}</td>
+    </tr>`).join('')}</tbody>`;
     return;
   }
   if (d.type === 'bonus') {
@@ -6485,7 +6639,8 @@ const F10_TABS = [
 
 async function openFundamental(secid, code, name) {
   if (!code && !secid) return;
-  const overlay = mountOverlay(`
+  // 叠在个股详情之上：关掉 F10 抽屉后仍回到个股详情（v2.7.0 修复）
+  const overlay = pushOverlay(`
     <div class="drawer">
       <div class="drawer-head">
         <div><div class="eyebrow">FUNDAMENTALS</div><h2>${esc(cleanName(name) || code || secid)}</h2><span class="code">${esc(code || '')}</span></div>
@@ -6494,20 +6649,22 @@ async function openFundamental(secid, code, name) {
       <div class="empty">正在加载基本面数据…</div>
     </div>`, 'drawer-overlay');
   try {
-    const [f10, longhu] = await Promise.all([
+    const [f10, longhu, seats] = await Promise.all([
       api(`/api/f10?secid=${encodeURIComponent(secid || '')}&code=${encodeURIComponent(code || '')}`, 45000),
       api(`/api/longhu/stock?code=${encodeURIComponent(code || (secid || '').split('.')[1] || '')}&limit=15`, 30000).catch(() => null),
+      // 席位明细（机构专用 / 营业部）单独取，失败不影响其它页签
+      api(`/api/longhu/seats?code=${encodeURIComponent(code || (secid || '').split('.')[1] || '')}&limit=60`, 30000).catch(() => null),
     ]);
     if (!document.body.contains(overlay)) return;
-    renderFundamentalDrawer(f10 || {}, longhu || {});
+    renderFundamentalDrawer(f10 || {}, longhu || {}, overlay, seats || null);
   } catch (err) {
     toast(`基本面加载失败：${err.message}`, 'err');
     closeOverlay();
   }
 }
 
-function renderFundamentalDrawer(f10, longhu) {
-  const drawer = $('.drawer');
+function renderFundamentalDrawer(f10, longhu, overlay, seats) {
+  const drawer = overlay ? overlay.querySelector('.drawer') : $('.drawer');
   if (!drawer) return;
   const survey = f10.survey || {};
   const finance = f10.finance || {};
@@ -6550,7 +6707,8 @@ function renderFundamentalDrawer(f10, longhu) {
     bonus: `<table class="table"><thead><tr><th>日期</th><th>方案</th><th>每10股派息</th><th>送转</th><th>进度</th></tr></thead>
       <tbody>${(bonus.items || []).map((x) => `<tr><td>${esc(x.date || '--')}</td><td class="t-sub">${esc(x.profile || '--')}</td><td>${x.cashPer10 === null ? '--' : `${nf(x.cashPer10, 2)} 元`}</td><td>${x.bonusPer10 === null ? '--' : `${nf(x.bonusPer10, 2)} 股`}</td><td class="t-sub">${esc(x.progress || '')}</td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">暂无分红记录</div></td></tr>'}</tbody></table>`,
     longhu: `<table class="table"><thead><tr><th>日期</th><th>收盘</th><th>涨跌幅</th><th>上榜净额</th><th>上榜原因</th></tr></thead>
-      <tbody>${((longhu && longhu.items) || []).map((x) => `<tr><td>${esc(x.date)}</td><td>${nf(x.close, 2)}</td><td class="${toneClass(x.pct)}">${pctFmt(x.pct)}</td><td class="${toneClass(x.netYi)}">${x.netYi === null ? '--' : `${nf(x.netYi, 2)} 亿`}</td><td class="t-sub">${esc(x.reason || '')}</td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">该股近期没有上榜记录</div></td></tr>'}</tbody></table>`,
+      <tbody>${((longhu && longhu.items) || []).map((x) => `<tr><td>${esc(x.date)}</td><td>${nf(x.close, 2)}</td><td class="${toneClass(x.pct)}">${pctFmt(x.pct)}</td><td class="${toneClass(x.netYi)}">${x.netYi === null ? '--' : `${nf(x.netYi, 2)} 亿`}</td><td class="t-sub">${esc(x.reason || '')}</td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">该股近期没有上榜记录</div></td></tr>'}</tbody></table>
+      ${renderSeatsBlock(seats)}`,
   };
 
   drawer.innerHTML = `
@@ -6562,10 +6720,38 @@ function renderFundamentalDrawer(f10, longhu) {
     ${F10_TABS.map(([k], i) => `<div class="f10-pane" data-f10-pane="${k}" ${i === 0 ? '' : 'hidden'}>${panes[k]}</div>`).join('')}
     <p class="muted small mt12">F10 数据来自东财公开接口，财务指标为报告期口径；十大股东存在披露滞后，不代表当前持股。</p>`;
 
-  $$('#f10Tabs button').forEach((b) => b.addEventListener('click', () => {
-    $$('#f10Tabs button').forEach((x) => x.classList.toggle('is-active', x === b));
-    $$('[data-f10-pane]').forEach((p) => { p.hidden = p.dataset.f10Pane !== b.dataset.f10Tab; });
+  // 作用域限定在本抽屉内：F10 现在是叠加层，全局选择器可能命中下层元素
+  const tabBtns = $$('#f10Tabs button', drawer);
+  const panesEls = $$('[data-f10-pane]', drawer);
+  tabBtns.forEach((b) => b.addEventListener('click', () => {
+    tabBtns.forEach((x) => x.classList.toggle('is-active', x === b));
+    panesEls.forEach((p) => { p.hidden = p.dataset.f10Pane !== b.dataset.f10Tab; });
   }));
+}
+
+/**
+ * 龙虎榜「机构与席位明细」区块（v2.7.0）
+ * 数据来自东财 RPT_BILLBOARD_DAILYDETAILSBUY / ...SELL：
+ * 主板披露的是营业部（含「机构专用」），科创板/创业板有时直接披露
+ * 「机构 / 中小投资者 / 其他自然人 / 沪深股通」这类投资者分类，这里统一按席位展示并打标签。
+ */
+function renderSeatsBlock(seats) {
+  if (!seats) return '<div class="modal-section-title">机构与席位明细</div><div class="empty">席位明细加载失败，可稍后重试</div>';
+  const groups = seats.items || [];
+  if (!groups.length) return '<div class="modal-section-title">机构与席位明细</div><div class="empty">近期没有可用的席位明细</div>';
+  const rows = groups.map((g) => {
+    const head = `<div class="seat-day"><span class="seat-date">${esc(g.date)}</span><span class="t-sub">${esc(g.reason || '')}</span>${g.orgNetYi !== null ? `<span class="badge ${g.orgNetYi >= 0 ? 'tone-up' : 'tone-down'}">机构净额 ${g.orgNetYi >= 0 ? '+' : ''}${nf(g.orgNetYi, 2)} 亿</span>` : ''}</div>`;
+    const list = (g.seats || []).map((s) => `<tr>
+      <td class="t-sub seat-name">${esc(s.dept)}${s.isOrg ? '<span class="seat-tag">机构</span>' : ''}${s.isNorth ? '<span class="seat-tag north">股通</span>' : ''}</td>
+      <td class="t-chg">${s.buyYi === null ? '--' : nf(s.buyYi, 2)}</td>
+      <td class="t-chg ${toneClass(-(s.sellYi || 0))}">${s.sellYi === null ? '--' : nf(s.sellYi, 2)}</td>
+      <td class="t-chg ${toneClass(s.netYi)}">${s.netYi === null ? '--' : `${s.netYi >= 0 ? '+' : ''}${nf(s.netYi, 2)}`}</td>
+    </tr>`).join('');
+    return `${head}<table class="table seat-table"><thead><tr><th>席位</th><th>买入(亿)</th><th>卖出(亿)</th><th>净额(亿)</th></tr></thead><tbody>${list}</tbody></table>`;
+  }).join('');
+  return `<div class="modal-section-title">机构与席位明细 <span class="muted small">近 ${groups.length} 个上榜日 · 单位亿元</span></div>
+    <div class="seat-list">${rows}</div>
+    <p class="muted small mt8">${esc(seats.note || '')}</p>`;
 }
 
 /* =========================================================
@@ -6890,6 +7076,12 @@ function bindEvents() {
       e.preventDefault();
       const st = state.stockModal || {};
       openStockNews(newsBtn.dataset.newsCode || st.code, newsBtn.dataset.newsName || st.name);
+      return;
+    }
+    const strategyBtn = e.target.closest('[data-strategy-new]');
+    if (strategyBtn) {
+      e.preventDefault();
+      openStrategyInNewTab();
       return;
     }
     const idx = e.target.closest('[data-index-secid]');
@@ -7418,46 +7610,8 @@ function bindEvents() {
     if (btn.dataset.watchAction === 'remove') removeWatch(secid);
   });
 
-  let dragSecid = null;
-  const watchTable = $('#watchTable');
-  if (watchTable) {
-    watchTable.addEventListener('dragstart', (e) => {
-      const row = e.target.closest('.watch-card-row');
-      if (!row) return;
-      dragSecid = row.dataset.dragSecid;
-      row.classList.add('dragging');
-      if (e.dataTransfer) {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', dragSecid || '');
-      }
-    });
-    watchTable.addEventListener('dragover', (e) => {
-      const row = e.target.closest('.watch-card-row');
-      if (!row || !dragSecid) return;
-      e.preventDefault();
-      $$('.watch-card-row.drag-over', watchTable).forEach((r) => r.classList.remove('drag-over'));
-      row.classList.add('drag-over');
-    });
-    watchTable.addEventListener('dragleave', (e) => {
-      const row = e.target.closest('.watch-card-row');
-      if (row) row.classList.remove('drag-over');
-    });
-    watchTable.addEventListener('drop', (e) => {
-      const row = e.target.closest('.watch-card-row');
-      if (!row) return;
-      e.preventDefault();
-      const target = row.dataset.dragSecid;
-      row.classList.remove('drag-over');
-      reorderWatch(dragSecid, target);
-      dragSecid = null;
-    });
-    watchTable.addEventListener('dragend', () => {
-      dragSecid = null;
-      $$('.watch-card-row', watchTable).forEach((r) => r.classList.remove('dragging', 'drag-over'));
-    });
-    // 手机端没有 HTML5 拖放事件：长按行进入拖拽，手指上下移动到目标行松手即重排。
-    bindTouchReorder(watchTable, '.watch-card-row', 'dragSecid', (from, to) => reorderWatch(from, to));
-  }
+  // 拖拽排序（桌面 HTML5 + 手机长按）已改由 bindWatchDrag 在渲染时绑定，
+  // 因为 v2.7.0 起自选股是表格式列表（行 = tr[data-drag-secid]）。
 
   $('#sectorSearch') && $('#sectorSearch').addEventListener('input', (e) => {
     state.sectorQuery = e.target.value;

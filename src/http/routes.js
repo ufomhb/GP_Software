@@ -853,11 +853,20 @@ async function handleApi(req, res, url) {
     if (!code) throw new Error('缺少股票代码');
     return datacenter.longhuStock(code, { limit: Number(q.get('limit') || 12) });
   }
+  // 龙虎榜席位明细（机构专用 / 营业部），按上榜日分组
+  if (p === '/api/longhu/seats') {
+    const code = q.get('code');
+    if (!code) throw new Error('缺少股票代码');
+    return datacenter.longhuSeats(code, { limit: Number(q.get('limit') || 60) });
+  }
   if (p === '/api/calendar') {
-    const kind = q.get('type') === 'bonus' ? 'bonus' : q.get('type') === 'cb' ? 'cb' : 'lift';
+    const type = q.get('type');
+    const kind = ['bonus', 'cb', 'ipo', 'cbapply'].includes(type) ? type : 'lift';
     const limit = Number(q.get('limit') || 30);
     if (kind === 'bonus') return datacenter.calendarBonus({ limit });
     if (kind === 'cb') return getConvertibleBoard(limit);
+    if (kind === 'ipo') return datacenter.calendarIpo({ limit, since: q.get('since') || undefined });
+    if (kind === 'cbapply') return datacenter.calendarCbApply({ limit, since: q.get('since') || undefined });
     return datacenter.calendarLift({ limit, since: q.get('since') || undefined });
   }
   if (p === '/api/screener') {

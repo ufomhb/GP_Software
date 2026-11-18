@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -1183,7 +1183,7 @@
         <div>
           <div class="eyebrow">DATA CENTER</div>
           <h1>数据中心</h1>
-          <p>龙虎榜、限售解禁、分红送转、可转债与条件选股</p>
+          <p>龙虎榜与机构席位、限售解禁、分红送转、新股/转债申购、可转债与条件选股</p>
         </div>
         <div class="head-actions">
           <div class="seg" id="dataTabSeg">
@@ -1226,6 +1226,8 @@
             <div class="seg" id="calendarTypeSeg">
               <button class="is-active" data-cal-type="lift">限售解禁</button>
               <button data-cal-type="bonus">分红送转</button>
+              <button data-cal-type="ipo">新股申购</button>
+              <button data-cal-type="cbapply">转债申购</button>
             </div>
           </div>
           <div class="table-scroll tall-table">
@@ -1310,6 +1312,8 @@
         </div>
       </div>
 
+      <article class="panel" id="paperPanel"><div class="empty">加载模拟交易账户…</div></article>
+
       <article class="panel">
         <div class="panel-head"><div><h3>我的自选</h3><span class="muted small" id="watchCount">0 只</span><span class="muted small" style="margin-left:10px">拖动行或点击 ↑↓ 排序（手机长按行拖动）</span></div><button class="text-link" id="exportWatch">导出 JSON</button></div>
         <div id="watchTable"></div>
@@ -1324,8 +1328,6 @@
         <article class="panel" id="alertsPanel"><div class="empty">加载中…</div></article>
         <article class="panel" id="watchTips"><div class="empty">加载中…</div></article>
       </div>
-
-      <article class="panel" id="paperPanel"><div class="empty">加载模拟交易账户…</div></article>
     </section>
   </main>
 
