@@ -53,6 +53,10 @@ function createStrategyLog(deps) {
     normalizeStrategyRules,
     defaultRules,
     todayKey,
+    // 15:00 冻结估值的读取（server.js 注入）：用于补记口径修正，只在记录/统计里用，不碰净值。
+    getFrozenEstimate,
+    // 市场氛围（A 股 + 外围）快照（server.js 注入，来自 push 的 collectMarketPulse）
+    collectMarketContext,
   } = deps;
 
   /* ---------------- 日期工具 ---------------- */

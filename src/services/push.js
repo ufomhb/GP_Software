@@ -25,7 +25,10 @@ const DEFAULT_STRATEGY_RULES = {
   cutScore: 45,              // 评分 < cutScore 且（涨 ≥ cutRise 或 跌 ≥ cutDip）才建议减仓
   cutRise: 0.8,
   cutDip: 1.2,
-  weakScore: 35,             // 评分 < weakScore 减 10%，否则减 5%
+  weakScore: 35,             // 评分 < weakScore 用强信号比例，否则常规比例
+  baseRatio: 10,             // 常规加/减比例（%，10 = 1 成；用户要求最少 1 成起）
+  strongRatio: 20,           // 强信号加/减比例（%，20 = 2 成）
+  marketWeight: 1,           // 市场氛围对综合评分的权重（0=忽略，1=标准，2=加倍）
   concentrationPct: 40,      // 单只占比上限，超过则强制减仓
   concentrationTargetPct: 30,
 };
@@ -37,6 +40,8 @@ function normalizeStrategyRules(raw) {
     if (!Number.isFinite(v)) return DEFAULT_STRATEGY_RULES[key];
     return Math.min(max, Math.max(min, v));
   };
+  const baseRatio = num('baseRatio', 10, 50);
+  const strongRatio = Math.max(baseRatio, num('strongRatio', 10, 80));
   return {
     addScore: num('addScore', 40, 100),
     addDip: num('addDip', 0.2, 10),
@@ -46,6 +51,9 @@ function normalizeStrategyRules(raw) {
     cutRise: num('cutRise', 0.1, 10),
     cutDip: num('cutDip', 0.2, 10),
     weakScore: num('weakScore', 5, 60),
+    baseRatio,
+    strongRatio,
+    marketWeight: num('marketWeight', 0, 2),
     concentrationPct: num('concentrationPct', 20, 90),
     concentrationTargetPct: num('concentrationTargetPct', 10, 80),
   };
@@ -201,6 +209,18 @@ async function collectPortfolio() {
     const pct = fresh ? Number(x.pct) : null;
     const held = shares > 0 && Number.isFinite(price);
     const mv = held ? price * shares : null;
+    // 决策口径（2026-11-18 用户要求）：持仓策略的「加/减/不变」只认 15:00 当日估值，
+    // 绝不使用收盘后公布的真实净值。estimatePct 是 server.js 在 15:00 冻结的估值终值；
+    // 场内 ETF 没有独立估值，收盘价本身就是它的当日涨跌，仍按当日口径使用。
+    const estimatePct = Number.isFinite(Number(x.estimatePct)) ? Number(x.estimatePct) : null;
+    const estimateKind = String(x.estimateKind || '');
+    const isMarketKind = x.pctKind === 'market';
+    const decisionPct = estimatePct !== null
+      ? estimatePct
+      : (isMarketKind && fresh ? Number(pct) : null);
+    const decisionKind = estimatePct !== null
+      ? (estimateKind || 'estimate')
+      : (isMarketKind ? 'market' : 'stale');
     if (held) {
       marketValue += mv;
       if (cost > 0) costValue += cost * shares;
@@ -216,6 +236,10 @@ async function collectPortfolio() {
       price: Number.isFinite(price) ? price : null,
       pct,
       pctKind: x.pctKind || (fresh ? 'nav' : 'stale'),
+      decisionPct,
+      decisionKind,
+      estimatePct,
+      estimateKind,
       pctDate: x.pctDate || x.date || '',
       pctLabel: x.pctLabel || '',
       pctNote: x.pctNote || '',
@@ -411,6 +435,90 @@ function buildOutlook(pulse) {
   return { verdict, score, lines: lines.filter(Boolean) };
 }
 
+/* ---------------------------------------------------------
+   市场氛围 → 评分调整（2026-11-18 用户要求 6）
+   持仓建议不能只看「基金评级 + 当日估值」，还要把 A 股整体氛围（指数涨跌、
+   涨跌家数、成交额、主力净流入）和外围（隔夜美股/港股/日经、美元、黄金）算进去。
+   这里把盘面汇总成一个 -6 ~ +6 的分数：正分=偏多，负分=偏空；
+   classifyPortfolio 会按「基金技术评分 + 市场分 × 权重」得到综合评分，
+   再决定加仓/减仓/不变。市场数据不可用时分数为 0，退回原规则，不影响可用性。
+   --------------------------------------------------------- */
+function buildMarketContext(pulse) {
+  const empty = {
+    available: false, verdict: '未知', score: 0, cnScore: 0, extScore: 0,
+    summary: '行情快照暂不可用，本次只按基金评级与当日估值判断', ext: '', lines: [],
+  };
+  if (!pulse) return empty;
+  const p = (q) => (q && Number.isFinite(Number(q.pct)) ? Number(q.pct) : null);
+  const clampN = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const fmt = (v) => (Number.isFinite(Number(v)) ? `${Number(v) > 0 ? '+' : ''}${Number(v).toFixed(2)}%` : '');
+  const out = buildOutlook(pulse);
+
+  let cnScore = 0;
+  const sh = p(pulse.sh);
+  if (sh !== null) cnScore += sh <= -1.5 ? -2 : sh <= -0.7 ? -1 : sh >= 1.5 ? 2 : sh >= 0.7 ? 1 : 0;
+  const cyb = p(pulse.cyb);
+  if (cyb !== null) cnScore += cyb <= -1.5 ? -1.5 : cyb <= -0.5 ? -0.75 : cyb >= 1.5 ? 1.5 : cyb >= 0.5 ? 0.75 : 0;
+  const sz = p(pulse.sz);
+  if (sz !== null) cnScore += sz <= -1 ? -0.5 : sz <= -0.5 ? -0.25 : sz >= 1 ? 0.5 : sz >= 0.5 ? 0.25 : 0;
+  const b = pulse.breadth || {};
+  const adv = Number(b.up);
+  const dec = Number(b.down);
+  if (adv && dec) {
+    const ratio = adv / (adv + dec);
+    cnScore += ratio >= 0.6 ? 2 : ratio <= 0.35 ? -2 : 0;
+  }
+  if (Number.isFinite(Number(pulse.mainYi))) {
+    if (Number(pulse.mainYi) >= 50) cnScore += 1;
+    else if (Number(pulse.mainYi) <= -50) cnScore -= 1;
+  }
+
+  let extScore = 0;
+  const ndx = p(pulse.ndx);
+  if (ndx !== null) extScore += ndx <= -1.5 ? -1.5 : ndx <= -0.5 ? -0.75 : ndx >= 1.5 ? 1.5 : ndx >= 0.5 ? 0.75 : 0;
+  const spx = p(pulse.spx);
+  if (spx !== null) extScore += spx <= -1 ? -0.5 : spx <= -0.5 ? -0.25 : spx >= 1 ? 0.5 : spx >= 0.5 ? 0.25 : 0;
+  const hsi = p(pulse.hsi);
+  if (hsi !== null) extScore += hsi <= -1 ? -0.5 : hsi <= -0.5 ? -0.25 : hsi >= 1 ? 0.5 : hsi >= 0.5 ? 0.25 : 0;
+  const dxyP = p(pulse.dxy);
+  if (dxyP !== null) {
+    if (dxyP >= 0.5) extScore -= 1;
+    else if (dxyP <= -0.5) extScore += 0.5;
+  }
+  const xauP = p(pulse.xau);
+  if (xauP !== null) {
+    if (xauP >= 1.5) extScore -= 0.5;
+    else if (xauP <= -1.5) extScore += 0.5;
+  }
+
+  const score = clampN(Math.round((Number(out.score) || 0) * 10) / 10, -6, 6);
+  const cnText = [
+    sh !== null ? `上证 ${fmt(sh)}` : '',
+    cyb !== null ? `创业板 ${fmt(cyb)}` : '',
+    adv && dec ? `涨跌 ${adv}:${dec}` : '',
+    Number.isFinite(Number(pulse.amountYi)) && Number(pulse.amountYi) > 0 ? `两市成交 ${pushNum(pulse.amountYi, 0)} 亿` : '',
+    Number.isFinite(Number(pulse.mainYi)) ? `主力 ${pushSigned(pulse.mainYi, 0)} 亿` : '',
+  ].filter(Boolean);
+  const extText = [
+    ndx !== null ? `纳指 ${fmt(ndx)}` : '',
+    spx !== null ? `标普 ${fmt(spx)}` : '',
+    hsi !== null ? `恒生 ${fmt(hsi)}` : '',
+    pulse.dxy && Number.isFinite(Number(pulse.dxy.price)) ? `美元指数 ${pushNum(pulse.dxy.price, 2)}${dxyP !== null ? `(${fmt(dxyP)})` : ''}` : '',
+    xauP !== null ? `伦敦金 ${fmt(xauP)}` : '',
+  ].filter(Boolean);
+  return {
+    available: true,
+    verdict: out.verdict,
+    score,
+    cnScore: Math.round(cnScore * 10) / 10,
+    extScore: Math.round(extScore * 10) / 10,
+    summary: cnText.join(' ｜ ') || '盘面数据暂缺',
+    ext: extText.join(' ｜ ') || '外围数据暂缺',
+    lines: (out.lines || []).filter((x) => x && !x.startsWith('###')),
+  };
+}
+
+
 // 0.05 → 0.5 成，0.1 → 1 成
 function chengText(ratio) {
   const c = Number(ratio) * 10;
@@ -418,10 +526,13 @@ function chengText(ratio) {
 }
 
 // 按份额给出具体加减仓数量（份额由用户自行在页面更新，这里只是建议）
-function roundShares(shares, delta) {
+function roundShares(shares, delta, minRatio = 0) {
   const base = Number(shares) || 0;
   const unit = base >= 10000 ? 500 : base >= 2000 ? 100 : 10;
-  const v = Math.round(Math.abs(delta) / unit) * unit;
+  let v = Math.round(Math.abs(delta) / unit) * unit;
+  // 用户要求「最少 1 成起」：即使四舍五入也不要低于约定比例，避免加/减得太轻。
+  const floor = Math.ceil((base * Number(minRatio || 0)) / unit) * unit;
+  if (floor > v) v = floor;
   return Math.max(unit, v);
 }
 
@@ -448,23 +559,50 @@ function isTodayPct(r) {
  * 后台管理的「持仓策略」页面也用它：按天记录、次日评价必须和推送口径完全一致，
  * 否则「建议」和「事后评价」会对着两套规则说话，改进策略就失去意义。
  */
-function classifyPortfolio(port, rules = DEFAULT_STRATEGY_RULES) {
+function classifyPortfolio(port, rules = DEFAULT_STRATEGY_RULES, market = null) {
   const R = normalizeStrategyRules(rules);
   const { rows, totals } = port;
   const hold = [];
   const add = [];
   const cut = [];
   const pendingList = [];
+  // 市场氛围只调整「综合评分」，不改评分门槛本身：偏空时门槛实质变严，偏多时变松。
+  const marketScore = market && market.available !== false && Number.isFinite(Number(market.score))
+    ? Number(market.score) : 0;
+  const marketWeight = Number.isFinite(Number(R.marketWeight)) ? Number(R.marketWeight) : 1;
+  const marketAdj = marketScore
+    ? Math.max(-8, Math.min(8, Math.round(marketScore * 1.5 * marketWeight)))
+    : 0;
+  const baseRatio = Number(R.baseRatio) / 100;
+  const strongRatio = Math.max(baseRatio, Number(R.strongRatio) / 100);
+  const withMarket = (score) => (score === null ? null : Math.max(0, Math.min(100, Math.round(score + marketAdj))));
+  const marketHint = marketAdj ? `，市场氛围 ${marketAdj > 0 ? '+' : ''}${marketAdj}` : '';
+
   for (const r of rows) {
     if (!r.held) continue; // 未录入持仓的不进三组，避免干扰
-    if (!isTodayPct(r) || !r.price) {
+    // 决策口径优先级：15:00 冻结估值 > 场内收盘价（ETF 无独立估值）> 无（不进建议组）。
+    // 绝不再拿「今日真实净值」参与决策——收盘后补记/覆盖重记也只用估值。
+    const dp = r.decisionPct === undefined ? r.pct : r.decisionPct;
+    const dk = r.decisionKind === undefined ? r.pctKind : r.decisionKind;
+    const decisionPct = dp === null || dp === undefined || !Number.isFinite(Number(dp)) ? null : Number(dp);
+    if (decisionPct === null || !r.price || dk === 'stale') {
       pendingList.push(r);
       continue;
     }
     const av = r.advice;
-    const score = av && Number.isFinite(Number(av.score)) ? Number(av.score) : null;
-    const pct = r.pct;
-    const src = r.pctKind === 'nav' ? '今日净值' : r.pctKind === 'market' ? '今日场内' : '今日穿透估算';
+    const fundScore = av && Number.isFinite(Number(av.score)) ? Number(av.score) : null;
+    const score = withMarket(fundScore);
+    const pct = decisionPct;
+    const src = pctKindLabel(dk) || '15:00 估值';
+    const scoreText = score === null
+      ? ''
+      : `技术评分 ${score}${marketAdj ? `（基金 ${fundScore}${marketHint}）` : ''}`;
+    const navPct = Number.isFinite(Number(r.pct)) ? Number(r.pct) : null;
+    const itemBase = {
+      shares: r.shares, price: r.price, pct, pctKind: dk, navPct,
+      navDate: r.navDate || '', weight: r.weight,
+      score, fundScore, marketAdj, decisionBasis: dk,
+    };
     // 1) 集中度强制减仓
     if (r.weight !== null && r.weight > R.concentrationPct && totals.marketValue > 0) {
       const targetMv = totals.marketValue * (R.concentrationTargetPct / 100);
@@ -472,60 +610,60 @@ function classifyPortfolio(port, rules = DEFAULT_STRATEGY_RULES) {
       const delta = Math.min(-10, targetShares - r.shares);
       if (delta < 0) {
         cut.push({
+          ...itemBase,
           code: r.code, name: r.name, action: 'cut', rule: 'concentration',
-          shares: r.shares, targetShares: r.shares + delta, delta,
-          price: r.price, pct, pctKind: r.pctKind, navDate: r.navDate || '', weight: r.weight,
-          score, ratioPct: r.weight - R.concentrationTargetPct,
+          targetShares: r.shares + delta, delta,
+          ratioPct: r.weight - R.concentrationTargetPct,
           reason: `单只占比 ${r.weight.toFixed(1)}%，超过 ${R.concentrationPct}% 上限，建议降到 ${R.concentrationTargetPct}% 左右（${pushNum(targetMv, 0)} 元）`,
         });
         continue;
       }
     }
     if (score !== null && score >= R.addScore && pct <= -R.addDip) {
-      const ratio = score >= R.strongScore && pct <= -R.strongDip ? 0.1 : 0.05;
-      const delta = roundShares(r.shares, r.marketValue * ratio / r.price);
+      const ratio = score >= R.strongScore && pct <= -R.strongDip ? strongRatio : baseRatio;
+      const delta = roundShares(r.shares, r.marketValue * ratio / r.price, ratio);
       add.push({
+        ...itemBase,
         code: r.code, name: r.name, action: 'add', rule: 'score-strong-dip',
-        shares: r.shares, targetShares: r.shares + delta, delta,
-        price: r.price, pct, pctKind: r.pctKind, navDate: r.navDate || '', weight: r.weight,
-        score, ratioPct: ratio * 100,
-        reason: `技术评分 ${score} 偏多，${src} ${pct.toFixed(2)}% 回落，建议加 ${chengText(ratio)}（分 2 批）`,
+        targetShares: r.shares + delta, delta,
+        ratioPct: ratio * 100,
+        reason: `${scoreText} 偏多，${src} ${pct.toFixed(2)}% 回落，建议加 ${chengText(ratio)}（分 2 批）`,
       });
       continue;
     }
     if (score !== null && score < R.cutScore && (pct >= R.cutRise || pct <= -R.cutDip)) {
-      const ratio = score < R.weakScore ? 0.1 : 0.05;
-      const delta = roundShares(r.shares, r.marketValue * ratio / r.price);
+      const ratio = score < R.weakScore ? strongRatio : baseRatio;
+      const delta = roundShares(r.shares, r.marketValue * ratio / r.price, ratio);
       cut.push({
-        code: r.code, name: r.name, action: 'cut', rule: score < 35 ? 'score-weak-drop' : 'score-weak',
-        shares: r.shares, targetShares: r.shares - delta, delta,
-        price: r.price, pct, pctKind: r.pctKind, navDate: r.navDate || '', weight: r.weight,
-        score, ratioPct: ratio * 100,
-        reason: score < 35
-          ? `技术评分 ${score} 弱势，${src}${pct >= 0 ? '反弹' : '继续下跌'} ${Math.abs(pct).toFixed(2)}%，建议减 ${chengText(ratio)}`
-          : `技术评分 ${score} 偏弱，${src}${pct >= 0 ? '反弹' : '下跌'} ${Math.abs(pct).toFixed(2)}%，建议减 ${chengText(ratio)}`,
+        ...itemBase,
+        code: r.code, name: r.name, action: 'cut', rule: score < R.weakScore ? 'score-weak-drop' : 'score-weak',
+        targetShares: r.shares - delta, delta,
+        ratioPct: ratio * 100,
+        reason: score < R.weakScore
+          ? `${scoreText} 弱势，${src}${pct >= 0 ? '反弹' : '继续下跌'} ${Math.abs(pct).toFixed(2)}%，建议减 ${chengText(ratio)}`
+          : `${scoreText} 偏弱，${src}${pct >= 0 ? '反弹' : '下跌'} ${Math.abs(pct).toFixed(2)}%，建议减 ${chengText(ratio)}`,
       });
       continue;
     }
     hold.push({
+      ...itemBase,
       code: r.code, name: r.name, action: 'hold', rule: 'no-signal',
-      shares: r.shares, targetShares: r.shares, delta: 0,
-      price: r.price, pct, pctKind: r.pctKind, navDate: r.navDate || '', weight: r.weight,
-      score, ratioPct: 0,
+      targetShares: r.shares, delta: 0, ratioPct: 0,
       rating: (av && av.rating && av.rating.label) || '',
       reason: av && av.rating && av.rating.label
         ? `评级「${av.rating.label}」${av.position ? `，参考仓位 ${av.position.text}` : ''}`
         : '无明确信号，保持现有仓位',
     });
   }
-  return { add, cut, hold, pending: pendingList, rows, totals };
+  return { add, cut, hold, pending: pendingList, rows, totals, marketAdj };
 }
 
 function buildStrategyReport(port, pulse, opts = {}) {
   const { rows, totals, today } = port;
   const slotTime = opts.slotTime || '14:30';
   const outlook = buildOutlook(pulse);
-  const { add, cut, hold, pending: pendingList } = classifyPortfolio(port, currentStrategyRules());
+  const market = buildMarketContext(pulse);
+  const { add, cut, hold, pending: pendingList } = classifyPortfolio(port, currentStrategyRules(), market);
 
   const line = (r, sign) => {
     const delta = sign === 0 ? 0 : sign * r.delta;
@@ -539,21 +677,28 @@ function buildStrategyReport(port, pulse, opts = {}) {
     ].join('\n');
   };
 
-  const covered = rows.filter((r) => isTodayPct(r)).length;
-  const kindCount = (k) => rows.filter((r) => r.pctKind === k).length;
+  const covered = rows.filter((r) => {
+    const dk = r.decisionKind === undefined ? r.pctKind : r.decisionKind;
+    return dk !== 'stale' && Number.isFinite(Number(r.decisionPct === undefined ? r.pct : r.decisionPct));
+  }).length;
+  const kindCount = (k) => rows.filter((r) => (r.decisionKind === undefined ? r.pctKind : r.decisionKind) === k).length;
   const summary = `市值 ${pushNum(totals.marketValue, 0)} 元 ｜ 今日 ${pushSigned(totals.portfolioPct, 2)}%（${pushSigned(totals.dayProfit, 0)} 元）${totals.profit === null ? '' : ` ｜ 累计 ${pushSigned(totals.profit, 0)} 元（${pushSigned(totals.profitPct, 2)}%）`}`;
   const caliber = [
-    kindCount('nav') ? `今日净值 ${kindCount('nav')} 只` : '',
+    kindCount('official') ? `官方估值 ${kindCount('official')} 只` : '',
     kindCount('estimate') ? `盘中估值 ${kindCount('estimate')} 只` : '',
-    kindCount('etf') || kindCount('holdings') ? `穿透估算 ${kindCount('etf') + kindCount('holdings')} 只` : '',
-    pendingList.length ? `未更新 ${pendingList.length} 只` : '',
+    kindCount('etf') || kindCount('holdings') ? `穿透估值 ${kindCount('etf') + kindCount('holdings')} 只` : '',
+    kindCount('market') ? `场内收盘 ${kindCount('market')} 只` : '',
+    pendingList.length ? `无 15:00 估值 ${pendingList.length} 只` : '',
   ].filter(Boolean).join(' ｜ ');
   const lines = [
     `## 寰球智投 · 持仓策略（${today} ${slotTime}）`,
     '',
     summary,
-    `口径：${caliber || '--'}${covered < rows.length ? '（未更新的不参与加减仓判断）' : ''}`,
+    `决策口径：${caliber || '--'}（只用 15:00 当日估值，不用收盘后公布的真实净值）${covered < rows.length ? '；没有估值的标的不参与加减仓判断' : ''}`,
     `分组：🔴 加仓 ${add.length} 只 ｜ 🟢 减仓 ${cut.length} 只 ｜ ⚪ 不变 ${hold.length} 只`,
+    market.available
+      ? `市场氛围：${market.verdict}（${market.score > 0 ? '+' : ''}${market.score}）｜ ${market.summary}${market.ext ? ` ｜ 外围 ${market.ext}` : ''}`
+      : '市场氛围：数据暂不可用，本次只按基金评级 + 当日估值判断',
     '',
     `### 🔴 加仓（${add.length}）`,
     ...(add.length ? add.map((r) => line(r, 1)) : ['- 今天没有触发加仓条件的基金']),
@@ -585,6 +730,7 @@ function buildStrategyReport(port, pulse, opts = {}) {
     count: rows.length,
     pending: pendingList.length,
     groups: { add: add.length, cut: cut.length, hold: hold.length },
+    market,
   };
 }
 
@@ -1040,6 +1186,9 @@ async function handlePushApi(req, res, url) {
     maskPushConfig,
     collectPortfolio,
     classifyPortfolio,
+    collectMarketPulse,
+    buildMarketContext,
+    collectMarketContext: async () => buildMarketContext(await collectMarketPulse()),
     buildStrategyReport,
     buildValuationReport,
     buildReportForSlot,
