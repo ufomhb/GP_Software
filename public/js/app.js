@@ -5841,7 +5841,7 @@ function resetAll() {
    视图切换 / 加载
    ========================================================= */
 function showView(view) {
-  const known = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'strategy', 'watchlist'];
+  const known = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'data', 'strategy', 'watchlist'];
   if (!known.includes(view)) view = 'dashboard';
   if (view !== 'strategy') stopTimeline();
   state.view = view;
@@ -5859,13 +5859,248 @@ function navigate(view) {
 }
 
 /* =========================================================
+   数据中心（阶段 2）
+   ---------------------------------------------------------
+   龙虎榜 / 限售解禁 / 分红送转 / 可转债 / 条件选股。
+   这些都不是「每秒一变」的行情，而是研究复盘用的数据，所以统一按需加载 +
+   切子页才拉取，不跟着自动刷新跑，避免无意义的上游请求。
+   ========================================================= */
+
+function switchDataTab(tab) {
+  const known = ['longhu', 'calendar', 'cb', 'screener'];
+  const next = known.includes(tab) ? tab : 'longhu';
+  state.dataTab = next;
+  $$('#dataTabSeg button').forEach((b) => b.classList.toggle('is-active', b.dataset.dataTab === next));
+  $$('[data-data-pane]').forEach((p) => { p.hidden = p.dataset.dataPane !== next; });
+  if (next === 'longhu' && !state.longhu) loadLonghu();
+  if (next === 'calendar' && !state.calendar) loadCalendar(state.calendarType);
+  if (next === 'cb' && !state.cb) loadConvertibles();
+}
+
+async function loadLonghu(force = false) {
+  if (!force && state.longhu && state.longhuDate === '') { renderLonghu(); return; }
+  const date = state.longhuDate;
+  const key = `longhu:${date || 'latest'}`;
+  if (!force && state.longhu && state.longhu._key === key) { renderLonghu(); return; }
+  try {
+    const data = await api(`/api/longhu?limit=60${date ? `&date=${encodeURIComponent(date)}` : ''}`, 30000);
+    state.longhu = { ...data, _key: key };
+    renderLonghu();
+  } catch (err) {
+    handleLoadError('龙虎榜', err);
+    if ($('#longhuTable')) $('#longhuTable').innerHTML = `<tbody><tr><td><div class="empty">龙虎榜加载失败：${esc(err.message)}</div></td></tr></tbody>`;
+  }
+}
+
+function renderLonghu() {
+  const table = $('#longhuTable');
+  if (!table) return;
+  const d = state.longhu;
+  if ($('#longhuMeta')) {
+    $('#longhuMeta').textContent = d
+      ? `${d.date} · ${d.count} 只 · 上榜净额合计 ${d.netTotalYi >= 0 ? '+' : ''}${nf(d.netTotalYi, 2)} 亿`
+      : '--';
+  }
+  if (!d || !(d.items || []).length) {
+    table.innerHTML = '<tbody><tr><td><div class="empty">该交易日暂无龙虎榜数据</div></td></tr></tbody>';
+    return;
+  }
+  table.innerHTML = `<thead><tr>
+    <th>股票</th><th>收盘</th><th>涨跌幅</th><th>换手</th><th>上榜净额</th><th>买入</th><th>卖出</th><th>成交占比</th><th>上榜原因</th>
+  </tr></thead><tbody>${d.items.map((x) => `<tr data-stock-secid="${esc(x.secucode.startsWith('SH') ? '1.' : '0.')}${esc(x.code)}" title="查看该股详情">
+    <td><span class="t-name">${esc(cleanName(x.name))}</span><span class="t-sub">${esc(x.code)}</span></td>
+    <td>${nf(x.close, 2)}</td>
+    <td class="${toneClass(x.pct)}">${pctFmt(x.pct)}</td>
+    <td>${nf(x.turnover, 2)}%</td>
+    <td class="${toneClass(x.netYi)}">${x.netYi === null ? '--' : `${x.netYi >= 0 ? '+' : ''}${nf(x.netYi, 2)} 亿`}</td>
+    <td>${nf(x.buyYi, 2)} 亿</td>
+    <td>${nf(x.sellYi, 2)} 亿</td>
+    <td>${nf(x.dealRatio, 1)}%</td>
+    <td class="t-sub">${esc(x.reason)}${x.seatNote ? `<span class="t-sub"> · ${esc(x.seatNote)}</span>` : ''}</td>
+  </tr>`).join('')}</tbody>`;
+}
+
+async function loadCalendar(type = 'lift') {
+  const kind = type === 'bonus' ? 'bonus' : 'lift';
+  state.calendarType = kind;
+  $$('#calendarTypeSeg button').forEach((b) => b.classList.toggle('is-active', b.dataset.calType === kind));
+  if ($('#calendarTitle')) {
+    $('#calendarTitle').textContent = kind === 'bonus' ? '分红送转（按公告日倒序）' : '限售解禁（今日及以后）';
+  }
+  if ($('#calendarTable')) $('#calendarTable').innerHTML = '<tbody><tr><td><div class="empty">加载中…</div></td></tr></tbody>';
+  try {
+    const data = await api(`/api/calendar?type=${kind}&limit=40`, 30000);
+    state.calendar = { ...data, type: kind };
+    renderCalendar();
+  } catch (err) {
+    handleLoadError(kind === 'bonus' ? '分红送转' : '限售解禁', err);
+    if ($('#calendarTable')) $('#calendarTable').innerHTML = `<tbody><tr><td><div class="empty">加载失败：${esc(err.message)}</div></td></tr></tbody>`;
+  }
+}
+
+function renderCalendar() {
+  const table = $('#calendarTable');
+  const d = state.calendar;
+  if (!table) return;
+  if ($('#calendarMeta')) {
+    $('#calendarMeta').textContent = d
+      ? (d.type === 'bonus' ? `${d.count} 条 · 最新公告 ${(d.items[0] || {}).noticeDate || '--'}` : `${d.count} 条 · 自 ${d.since || '--'} 起`)
+      : '--';
+  }
+  if ($('#calendarNote') && d && d.note) $('#calendarNote').textContent = d.note;
+  if (!d || !(d.items || []).length) {
+    table.innerHTML = '<tbody><tr><td><div class="empty">暂无数据</div></td></tr></tbody>';
+    return;
+  }
+  if (d.type === 'bonus') {
+    table.innerHTML = `<thead><tr><th>股票</th><th>方案</th><th>每10股派息</th><th>送转</th><th>进度</th><th>公告日</th><th>股权登记日</th><th>除权除息日</th></tr></thead>
+      <tbody>${d.items.map((x) => `<tr>
+        <td><span class="t-name">${esc(cleanName(x.name))}</span><span class="t-sub">${esc(x.code)}</span></td>
+        <td class="t-sub">${esc(x.plan)}</td>
+        <td>${x.cashPer10 === null ? '--' : `${nf(x.cashPer10, 2)} 元`}</td>
+        <td>${x.bonusPer10 === null ? '--' : `${nf(x.bonusPer10, 2)} 股`}</td>
+        <td class="t-sub">${esc(x.progress)}</td>
+        <td>${esc(x.noticeDate || '--')}</td>
+        <td>${esc(x.recordDate || '--')}</td>
+        <td>${esc(x.exDate || '--')}</td>
+      </tr>`).join('')}</tbody>`;
+    return;
+  }
+  table.innerHTML = `<thead><tr><th>解禁日</th><th>股票</th><th>解禁市值</th><th>解禁份额</th><th>可解禁份额</th><th>占流通比</th><th>类型</th></tr></thead>
+    <tbody>${d.items.map((x) => `<tr>
+      <td>${esc(x.date)}</td>
+      <td><span class="t-name">${esc(cleanName(x.name))}</span><span class="t-sub">${esc(x.code)}</span></td>
+      <td>${x.marketYi === null ? '--' : `${nf(x.marketYi, 2)} 亿`}</td>
+      <td>${x.sharesWan === null ? '--' : `${nf(x.sharesWan, 0)} 万股`}</td>
+      <td>${x.ableSharesWan === null ? '--' : `${nf(x.ableSharesWan, 0)} 万股`}</td>
+      <td>${nf(x.freeRatio, 4)}%</td>
+      <td class="t-sub">${esc(x.type)}</td>
+    </tr>`).join('')}</tbody>`;
+}
+
+async function loadConvertibles(force = false) {
+  if (!force && state.cb) { renderConvertibles(); return; }
+  if ($('#cbTable')) $('#cbTable').innerHTML = '<tbody><tr><td><div class="empty">加载中…</div></td></tr></tbody>';
+  try {
+    // 接口已经把数据中心的基本信息与腾讯现价合并好了，前端不用再单独取报价
+    const data = await api('/api/calendar?type=cb&limit=40', 30000);
+    state.cb = data;
+    renderConvertibles();
+  } catch (err) {
+    handleLoadError('可转债', err);
+    if ($('#cbTable')) $('#cbTable').innerHTML = `<tbody><tr><td><div class="empty">加载失败：${esc(err.message)}</div></td></tr></tbody>`;
+  }
+}
+
+function renderConvertibles() {
+  const table = $('#cbTable');
+  const d = state.cb;
+  if (!table) return;
+  if ($('#cbMeta')) {
+    $('#cbMeta').textContent = d ? `${d.count} 只 · 有行情 ${d.quoteCount || 0} 只` : '--';
+  }
+  if (!d || !(d.items || []).length) {
+    table.innerHTML = '<tbody><tr><td><div class="empty">暂无可转债数据</div></td></tr></tbody>';
+    return;
+  }
+  table.innerHTML = `<thead><tr><th>转债</th><th>现价</th><th>涨跌</th><th>正股</th><th>评级</th><th>发行规模</th><th>上市日</th><th>到期日</th></tr></thead>
+    <tbody>${d.items.map((x) => `<tr>
+      <td><span class="t-name">${esc(cleanName(x.name))}</span><span class="t-sub">${esc(x.code)}</span></td>
+      <td>${x.price === null ? '--' : nf(x.price, 3)}</td>
+      <td class="${toneClass(x.pct)}">${x.pct === null ? '--' : pctFmt(x.pct)}</td>
+      <td>${esc(x.stockCode || '--')}</td>
+      <td>${esc(x.rating || '--')}</td>
+      <td>${x.issueYi === null ? '--' : `${nf(x.issueYi, 2)} 亿`}</td>
+      <td>${esc(x.listingDate || '--')}</td>
+      <td>${esc(x.expireDate || '--')}</td>
+    </tr>`).join('')}</tbody>`;
+}
+
+function screenerParams() {
+  const v = (id) => {
+    const el = $(id);
+    if (!el) return '';
+    const s = String(el.value || '').trim();
+    return s === '' ? '' : s;
+  };
+  return {
+    pctMin: v('#scrPctMin'),
+    pctMax: v('#scrPctMax'),
+    turnoverMin: v('#scrTurnMin'),
+    amountMinYi: v('#scrAmtMin'),
+    capMinYi: v('#scrCapMin'),
+    capMaxYi: v('#scrCapMax'),
+    peMax: v('#scrPeMax'),
+    pbMax: v('#scrPbMax'),
+    priceMin: v('#scrPriceMin'),
+    board: v('#scrBoard'),
+    sort: v('#scrSort') || 'pct',
+    limit: 80,
+  };
+}
+
+async function loadScreener() {
+  if (state.screenerLoading) return;
+  state.screenerLoading = true;
+  const params = screenerParams();
+  const qs = new URLSearchParams();
+  for (const [k, val] of Object.entries(params)) if (val !== '') qs.set(k, val);
+  if ($('#screenerTable')) $('#screenerTable').innerHTML = '<tbody><tr><td><div class="empty">正在扫描全市场，约需几秒…</div></td></tr></tbody>';
+  if ($('#screenerBadge')) $('#screenerBadge').textContent = '扫描中';
+  try {
+    const data = await api(`/api/screener?${qs.toString()}`, 90000);
+    state.screener = data;
+    renderScreener();
+  } catch (err) {
+    handleLoadError('条件选股', err);
+    if ($('#screenerTable')) $('#screenerTable').innerHTML = `<tbody><tr><td><div class="empty">扫描失败：${esc(err.message)}</div></td></tr></tbody>`;
+    if ($('#screenerBadge')) $('#screenerBadge').textContent = '失败';
+  } finally {
+    state.screenerLoading = false;
+  }
+}
+
+function renderScreener() {
+  const table = $('#screenerTable');
+  const d = state.screener;
+  if (!table) return;
+  if ($('#screenerBadge')) $('#screenerBadge').textContent = d ? `${d.matched} 只命中` : '--';
+  if ($('#screenerMeta')) {
+    $('#screenerMeta').textContent = d
+      ? `样本 ${d.poolSize} 只 · 扫描 ${d.scannedPages} 页 · 命中 ${d.matched} 只`
+      : '样本池 = 新浪全市场快照';
+  }
+  if ($('#screenerNote') && d && d.note) $('#screenerNote').textContent = d.note;
+  if (!d || !(d.items || []).length) {
+    table.innerHTML = `<tbody><tr><td><div class="empty">没有符合条件的股票，放宽条件再试</div></td></tr></tbody>`;
+    return;
+  }
+  table.innerHTML = `<thead><tr><th>股票</th><th>现价</th><th>涨跌幅</th><th>换手</th><th>成交额</th><th>PE</th><th>PB</th><th>总市值</th><th>流通市值</th></tr></thead>
+    <tbody>${d.items.map((x) => `<tr data-stock-secid="${esc(x.secid)}" title="查看该股详情">
+      <td><span class="t-name">${esc(cleanName(x.name))}</span><span class="t-sub">${esc(x.code)}</span></td>
+      <td>${nf(x.price, 2)}</td>
+      <td class="${toneClass(x.pct)}">${pctFmt(x.pct)}</td>
+      <td>${nf(x.turnover, 2)}%</td>
+      <td>${nf(x.amountYi, 2)} 亿</td>
+      <td>${x.pe === null ? '--' : nf(x.pe, 1)}</td>
+      <td>${x.pb === null ? '--' : nf(x.pb, 2)}</td>
+      <td>${nf(x.mktCapYi, 1)} 亿</td>
+      <td>${nf(x.floatCapYi, 1)} 亿</td>
+    </tr>`).join('')}</tbody>`;
+}
+
+function loadDataCenter() {
+  switchDataTab(state.dataTab);
+}
+
+/* =========================================================
    详情路由
    ---------------------------------------------------------
-   视图级仍是 #dashboard 这种单段 hash；个股 / 板块 / 基金详情
-   升级为 #/stock/1.600519、#/sector/BK0475、#/fund/510300，
+   视图级仍是 #dashboard 这种单段 hash；个股 / 板块 / 基金 / 美股详情
+   升级为 #/stock/1.600519、#/sector/BK0475、#/fund/510300、#/us/AAPL，
    这样地址栏可以直接复制、收藏、新标签打开，后退键也能正常关闭弹窗。
    ========================================================= */
-const VIEWS = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'strategy', 'watchlist'];
+const VIEWS = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'data', 'strategy', 'watchlist'];
 const DETAIL_KINDS = ['stock', 'sector', 'fund', 'us'];
 const DETAIL_BASE_VIEW = { stock: 'watchlist', sector: 'sectors', fund: 'funds', us: 'us' };
 // 由 popstate / 直接打开详情路由时为 true，避免「打开详情」再压一条新历史
@@ -5960,6 +6195,9 @@ function loadView(view) {
   if (view === 'sectors') {
     renderSectorPage();
     loadSectorPage(state.sectorPageType);
+  }
+  if (view === 'data') {
+    loadDataCenter();
   }
   if (view === 'funds') {
     renderFunds();
@@ -6275,8 +6513,38 @@ function bindEvents() {
     renderUSMinutes();
   });
 
-  $('#fundSubnav') && $('#fundSubnav').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-fund-view]');
+  // 数据中心（阶段 2）：子页切换 + 龙虎榜 / 日历 / 选股控件
+  $('#dataTabSeg') && $('#dataTabSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-data-tab]');
+    if (!btn) return;
+    switchDataTab(btn.dataset.dataTab);
+  });
+  $('#longhuLoad') && $('#longhuLoad').addEventListener('click', () => {
+    state.longhuDate = ($('#longhuDate') && $('#longhuDate').value) || '';
+    loadLonghu(true);
+  });
+  $('#longhuDate') && $('#longhuDate').addEventListener('change', () => {
+    state.longhuDate = ($('#longhuDate') && $('#longhuDate').value) || '';
+    loadLonghu(true);
+  });
+  $('#calendarTypeSeg') && $('#calendarTypeSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-cal-type]');
+    if (!btn) return;
+    loadCalendar(btn.dataset.calType);
+  });
+  $('#scrRun') && $('#scrRun').addEventListener('click', () => loadScreener());
+  $('#scrReset') && $('#scrReset').addEventListener('click', () => {
+    for (const id of ['scrPctMin', 'scrPctMax', 'scrTurnMin', 'scrAmtMin', 'scrCapMin', 'scrCapMax', 'scrPeMax', 'scrPbMax', 'scrPriceMin']) {
+      const el = $(`#${id}`);
+      if (el) el.value = '';
+    }
+    const b = $('#scrBoard');
+    if (b) b.value = '';
+    const s = $('#scrSort');
+    if (s) s.value = 'pct';
+  });
+
+  $('#fundSubnav') && $('#fundSubnav').addEventListener('click', (e) => {    const btn = e.target.closest('[data-fund-view]');
     if (!btn) return;
     state.fundView = btn.dataset.fundView;
     renderFunds();
@@ -6996,5 +7264,7 @@ export {
   parseHashRoute, detailHash, normalizeAlerts, syncKlineSegs, renderAlerts,
   // 详情弹窗（v2.4.1：A 股弹窗加宽 + 美股分时详情）供回归测试直接渲染
   renderStockModal, renderUsStockModal, usPointsFor, usHotItemOf, renderUS,
+  // 数据中心（阶段 2）
+  switchDataTab, renderLonghu, renderCalendar, renderConvertibles, renderScreener,
 };
 

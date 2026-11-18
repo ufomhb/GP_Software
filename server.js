@@ -8,6 +8,8 @@ const { exec } = require('node:child_process');
 const crypto = require('node:crypto');
 
 const { computeSeries } = require('./lib/indicators');
+// 数据中心取数层（阶段 2）：龙虎榜 / 财经日历 / 可转债 / 全市场选股 / 港股 / F10
+const datacenter = require('./lib/datacenter');
 const { analyze, stockAdvice, marketAdvice, aggregateNews, shanghaiToday, nf, pctText } = require('./lib/engine');
 const {
   CAPABILITIES: SOURCE_CAPABILITIES,
@@ -7542,6 +7544,87 @@ const { createHttpRoutes } = require('./src/http/routes');
 // 部署引擎：后台「部署到 NAS」板块用。只在本机开发环境（win32）可用，
 // 在 NAS 上运行时 supported=false，接口会明确回「本机才有源文件」。
 const { createDeployToNas } = require('./src/lib/nas-deploy');
+/**
+ * 可转债看板：数据中心的基本信息 + 腾讯实时报价拼在一起。
+ * 报表本身没有行情字段，价格缺失时保留 null，由前端显示「--」，不拿发行价冒充现价。
+ */
+async function getConvertibleBoard(limit = 40) {
+  const base = await datacenter.convertibleList({ limit });
+  let quotes = {};
+  try {
+    quotes = await datacenter.convertibleQuotes(base.items.map((x) => x.code));
+  } catch {
+    quotes = {};
+  }
+  const items = base.items.map((x) => {
+    const q = quotes[x.code] || null;
+    return {
+      ...x,
+      price: q ? q.price : null,
+      pct: q ? q.pct : null,
+      prevClose: q ? q.prevClose : null,
+      amountYi: q && q.amountWan !== null ? round(q.amountWan / 1e4, 2) : null,
+    };
+  });
+  items.sort((a, b) => {
+    const av = a.price === null ? -Infinity : a.price;
+    const bv = b.price === null ? -Infinity : b.price;
+    return bv - av;
+  });
+  return {
+    items,
+    count: items.length,
+    quoteCount: items.filter((x) => x.price !== null).length,
+    note: base.note,
+    updatedAt: Date.now(),
+  };
+}
+
+/**
+ * 条件选股：基于新浪全市场快照（东财 clist 在本机被拒，见 datacenter 注释），
+ * 扫描全市场后按条件过滤。结果缓存 10 分钟，避免每次点都重新扫 70 页。
+ */
+async function getScreener(params = {}) {
+  const stocks = await datacenter.sinaAllStocks({ maxPages: Math.min(80, Number(params.pages) || 70) });
+  const conds = {
+    pctMin: params.pctMin, pctMax: params.pctMax,
+    turnoverMin: params.turnoverMin, turnoverMax: params.turnoverMax,
+    amountMinYi: params.amountMinYi, amountMaxYi: params.amountMaxYi,
+    capMinYi: params.capMinYi, capMaxYi: params.capMaxYi,
+    floatCapMinYi: params.floatCapMinYi, floatCapMaxYi: params.floatCapMaxYi,
+    peMin: params.peMin, peMax: params.peMax,
+    pbMin: params.pbMin, pbMax: params.pbMax,
+    priceMin: params.priceMin, priceMax: params.priceMax,
+    board: params.board || '',
+    excludeSt: params.excludeSt !== false && params.excludeSt !== '0',
+    sort: params.sort || 'pct',
+    sortDir: params.sortDir === 'asc' ? 'asc' : 'desc',
+  };
+  const hit = datacenter.screenStocks(stocks, conds);
+  const limit = Math.min(200, Math.max(1, Number(params.limit) || 60));
+  return {
+    items: hit.slice(0, limit).map((x) => ({
+      code: x.code,
+      secid: `${x.symbol.startsWith('sh') ? '1' : '0'}.${x.code}`,
+      name: x.name,
+      price: x.price,
+      pct: x.pct,
+      turnover: x.turnover,
+      amountYi: x.amountYi,
+      pe: x.pe,
+      pb: x.pb,
+      mktCapYi: x.mktCapYi,
+      floatCapYi: x.floatCapYi,
+    })),
+    matched: hit.length,
+    poolSize: stocks.length,
+    scannedPages: Math.min(80, Number(params.pages) || 70),
+    conds,
+    note: '样本为新浪全市场快照（约 5000 只，指数与停牌股除外）；PE/PB 为负（亏损）时视为无法评估，需要 PE/PB 区间时会被剔除。',
+    updatedAt: Date.now(),
+  };
+}
+
 const deployToNas = createDeployToNas({ rootDir: __dirname, version: VERSION });
 
 const httpRoutes = createHttpRoutes({
@@ -7566,6 +7649,7 @@ const httpRoutes = createHttpRoutes({
   crypto,
   currentUser,
   dataStore,
+  datacenter,
   deployToNas,
   dropSession,
   estimateFundDayPctBatch,
@@ -7577,6 +7661,7 @@ const httpRoutes = createHttpRoutes({
   getBattle,
   getChangelog,
   getChinaDistribution,
+  getConvertibleBoard,
   getCsi300FundRatio,
   getDailyProxyBoard,
   getEtfFlow,
@@ -7601,6 +7686,7 @@ const httpRoutes = createHttpRoutes({
   getOpenFundFlow,
   getOverview,
   getRank,
+  getScreener,
   getSearch,
   getSectorConfirm,
   getSectorExport,

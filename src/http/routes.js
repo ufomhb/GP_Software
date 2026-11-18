@@ -31,6 +31,7 @@ function createHttpRoutes(deps) {
     crypto,
     currentUser,
     dataStore,
+    datacenter,
     deployToNas,
     dropSession,
     estimateFundDayPctBatch,
@@ -42,6 +43,7 @@ function createHttpRoutes(deps) {
     getBattle,
     getChangelog,
     getChinaDistribution,
+    getConvertibleBoard,
     getCsi300FundRatio,
     getDailyProxyBoard,
     getEtfFlow,
@@ -66,6 +68,7 @@ function createHttpRoutes(deps) {
     getOpenFundFlow,
     getOverview,
     getRank,
+    getScreener,
     getSearch,
     getSectorConfirm,
     getSectorExport,
@@ -828,6 +831,66 @@ async function handleApi(req, res, url) {
   }
   if (p === '/api/news') {
     return getNews(Math.min(50, Number(q.get('limit') || 40)));
+  }
+  /* ---------------------------------------------------------
+     数据中心（阶段 2/3）
+     龙虎榜 / 财经日历 / 可转债 / 条件选股 / 港股 / F10
+     --------------------------------------------------------- */
+  if (p === '/api/longhu') {
+    return datacenter.longhuBoard({
+      date: q.get('date') || undefined,
+      limit: Number(q.get('limit') || 40),
+    });
+  }
+  if (p === '/api/longhu/stock') {
+    const code = q.get('code');
+    if (!code) throw new Error('缺少股票代码');
+    return datacenter.longhuStock(code, { limit: Number(q.get('limit') || 12) });
+  }
+  if (p === '/api/calendar') {
+    const kind = q.get('type') === 'bonus' ? 'bonus' : q.get('type') === 'cb' ? 'cb' : 'lift';
+    const limit = Number(q.get('limit') || 30);
+    if (kind === 'bonus') return datacenter.calendarBonus({ limit });
+    if (kind === 'cb') return getConvertibleBoard(limit);
+    return datacenter.calendarLift({ limit, since: q.get('since') || undefined });
+  }
+  if (p === '/api/screener') {
+    const keys = [
+      'pctMin', 'pctMax', 'turnoverMin', 'turnoverMax', 'amountMinYi', 'amountMaxYi',
+      'capMinYi', 'capMaxYi', 'floatCapMinYi', 'floatCapMaxYi', 'peMin', 'peMax',
+      'pbMin', 'pbMax', 'priceMin', 'priceMax', 'board', 'sort', 'sortDir', 'pages', 'limit',
+    ];
+    const params = {};
+    for (const k of keys) {
+      const v = q.get(k);
+      if (v !== null) params[k] = v;
+    }
+    if (q.get('excludeSt') === '0') params.excludeSt = false;
+    return getScreener(params);
+  }
+  if (p === '/api/hk/quote') {
+    const code = q.get('code');
+    if (!code) throw new Error('缺少港股代码');
+    return datacenter.hkQuote(code);
+  }
+  if (p === '/api/hk/kline') {
+    const code = q.get('code');
+    if (!code) throw new Error('缺少港股代码');
+    return datacenter.hkKline(code, {
+      limit: Number(q.get('limit') || 160),
+      fqt: [0, 1, 2].includes(Number(q.get('fqt'))) ? Number(q.get('fqt')) : 1,
+    });
+  }
+  if (p === '/api/hk/minute') {
+    const code = q.get('code');
+    if (!code) throw new Error('缺少港股代码');
+    return datacenter.hkMinute(code);
+  }
+  if (p === '/api/f10') {
+    const secid = q.get('secid') || '';
+    const code = q.get('code') || '';
+    if (!code && !secid) throw new Error('缺少股票代码');
+    return datacenter.f10(secid, code);
   }
   if (p === '/api/search') return getSearch(q.get('q'));
   if (p === '/api/flow') {

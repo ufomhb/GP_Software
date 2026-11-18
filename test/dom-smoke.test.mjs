@@ -788,3 +788,100 @@ test('DOM：美股热度表每行都能点开详情（带 data-us-stock）', () 
   assert.equal(rows[0].getAttribute('data-us-stock'), 'NVDA');
   app.state.usData = null;
 });
+
+/* ---------------------------------------------------------
+   v2.5.0：数据中心（龙虎榜 / 财经日历 / 可转债 / 条件选股）
+   --------------------------------------------------------- */
+test('DOM：数据中心四个子页都存在，切换时只有当前页可见', () => {
+  assert.ok(document.querySelector('#view-data'), '缺少数据中心视图');
+  const tabs = [...document.querySelectorAll('#dataTabSeg [data-data-tab]')].map((b) => b.dataset.dataTab);
+  assert.deepEqual(tabs, ['longhu', 'calendar', 'cb', 'screener'], '四个子页顺序固定');
+  assert.equal(document.querySelectorAll('[data-data-pane]').length, 4, '应有四个子页面板');
+
+  app.switchDataTab('cb');
+  const vis = [...document.querySelectorAll('[data-data-pane]')].filter((p) => !p.hidden).map((p) => p.dataset.dataPane);
+  assert.deepEqual(vis, ['cb'], '切到可转债后只显示该页');
+  assert.equal(document.querySelector('#dataTabSeg [data-data-tab="cb"]').classList.contains('is-active'), true);
+  app.switchDataTab('longhu');
+});
+
+test('DOM：龙虎榜表格渲染字段并跳过缺失值，股票名被转义', () => {
+  app.state.longhu = {
+    date: '2026-11-18', count: 2, netTotalYi: 3.21,
+    items: [
+      { date: '2026-11-18', code: '002463', secucode: '002463.SZ', name: '<b>沪电股份</b>', close: 80.19, pct: 10, turnover: 5.42, buyYi: 16.18, sellYi: 13.79, netYi: 2.39, dealYi: 30, dealRatio: 41.07, reason: '日涨幅偏离值达7%', seatNote: '机构买入' },
+      { date: '2026-11-18', code: '301396', secucode: '301396.SZ', name: '宏景科技', close: 114.6, pct: 20, turnover: null, buyYi: 4.2, sellYi: 4.1, netYi: null, dealRatio: null, reason: '', seatNote: '' },
+    ],
+  };
+  app.renderLonghu();
+  const table = document.querySelector('#longhuTable');
+  assert.equal(table.querySelectorAll('tbody tr').length, 2, '两条记录都要渲染');
+  assert.equal(table.querySelectorAll('b').length, 0, '股票名里的 <b> 必须被转义');
+  assert.match(table.textContent, /沪电股份/);
+  assert.match(table.textContent, /日涨幅偏离值达7%/);
+  assert.match(table.textContent, /41\.1%/, '成交占比要显示');
+  const first = table.querySelector('tbody tr');
+  assert.equal(first.getAttribute('data-stock-secid'), '0.002463', '应能点开个股详情');
+  assert.match(document.querySelector('#longhuMeta').textContent, /2026-11-18/);
+  assert.match(document.querySelector('#longhuMeta').textContent, /3\.21/, '应显示上榜净额合计');
+});
+
+test('DOM：财经日历「解禁」与「分红」两种表头不串', () => {
+  app.state.calendar = {
+    type: 'lift', count: 1, since: '2026-11-18',
+    items: [{ code: '002340', name: '格林美', date: '2026-11-18', marketYi: 278.29, sharesWan: 507834.76, ableSharesWan: 236.57, freeRatio: 0.0004, type: '股权激励限售股份' }],
+  };
+  app.renderCalendar();
+  let table = document.querySelector('#calendarTable');
+  assert.match(table.textContent, /解禁日/, '解禁表头');
+  assert.match(table.textContent, /278\.29 亿/);
+  assert.match(document.querySelector('#calendarTitle').textContent, /限售解禁/);
+
+  app.state.calendar = {
+    type: 'bonus', count: 1,
+    items: [{ code: '000001', name: '平安银行', plan: '10送4.00派3.00元', cashPer10: 3, bonusPer10: 4, progress: '实施分配', noticeDate: '2026-11-01', recordDate: '2026-11-10', exDate: '2026-11-11' }],
+  };
+  app.renderCalendar();
+  table = document.querySelector('#calendarTable');
+  assert.match(table.textContent, /每10股派息/, '分红表头');
+  assert.match(table.textContent, /10送4\.00派3\.00元/);
+});
+
+test('DOM：可转债表把缺失行情显示成 -- 而不是 0 或发行价', () => {
+  app.state.cb = {
+    count: 2, quoteCount: 1,
+    items: [
+      { code: '118078', name: '航亚转债', price: 133.9, pct: -6.32, stockCode: '688510', rating: 'AAsti', issueYi: 6, listingDate: '2026-11-16', expireDate: '2032-10-21' },
+      { code: '123001', name: '暂无行情转债', price: null, pct: null, stockCode: '000001', rating: '', issueYi: 3, listingDate: '', expireDate: '' },
+    ],
+  };
+  app.renderConvertibles();
+  const table = document.querySelector('#cbTable');
+  assert.equal(table.querySelectorAll('tbody tr').length, 2);
+  const rows = [...table.querySelectorAll('tbody tr')];
+  assert.match(rows[0].textContent, /133\.900/, '有行情时显示三位小数');
+  assert.match(rows[0].textContent, /-6\.32%/, '涨跌要带符号');
+  assert.match(rows[1].textContent, /--/, '没有行情时必须是 --');
+  assert.doesNotMatch(rows[1].textContent, /0\.000/, '不能拿 0 冒充价格');
+  assert.match(document.querySelector('#cbMeta').textContent, /有行情 1 只/);
+});
+
+test('DOM：选股结果表渲染指标，命中数为 0 时给出提示', () => {
+  app.state.screener = {
+    matched: 1, poolSize: 5000, scannedPages: 70,
+    items: [{ code: '300308', secid: '0.300308', name: '中际旭创', price: 396.3, pct: 0.84, turnover: 3.75, amountYi: 164.39, pe: 40.44, pb: 4.95, mktCapYi: 46000, floatCapYi: 39000 }],
+    note: '样本为新浪全市场快照',
+  };
+  app.renderScreener();
+  let table = document.querySelector('#screenerTable');
+  assert.match(table.textContent, /中际旭创/);
+  assert.match(table.textContent, /40\.4/, 'PE 应显示');
+  assert.match(document.querySelector('#screenerMeta').textContent, /样本 5000 只/);
+  assert.match(document.querySelector('#screenerBadge').textContent, /1 只命中/);
+  assert.equal(table.querySelector('tbody tr').getAttribute('data-stock-secid'), '0.300308');
+
+  app.state.screener = { matched: 0, poolSize: 5000, scannedPages: 70, items: [] };
+  app.renderScreener();
+  table = document.querySelector('#screenerTable');
+  assert.match(table.textContent, /没有符合条件的股票/, '空结果要有明确提示');
+});

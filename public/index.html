@@ -117,6 +117,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 18 9 8l5 6 6-10"></path><path d="M4 21h16"></path></svg>
         <span>智能策略</span>
       </button>
+      <button class="nav-tab" data-view="data">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="6" rx="8" ry="3"></ellipse><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"></path><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"></path></svg>
+        <span>数据中心</span>
+      </button>
       <button class="nav-tab" data-view="watchlist">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9L12 3Z"></path></svg>
         <span>自选·预警</span>
@@ -1160,6 +1164,125 @@
         </div>
 
         <article class="panel" id="riskPanel"><div class="empty">加载中…</div></article>
+      </div>
+    </section>
+
+    <!-- ===================== 数据中心 ===================== -->
+    <section class="view" id="view-data">
+      <div class="view-head">
+        <div>
+          <div class="eyebrow">DATA CENTER</div>
+          <h1>数据中心</h1>
+          <p>龙虎榜、限售解禁、分红送转、可转债与条件选股</p>
+        </div>
+        <div class="head-actions">
+          <div class="seg" id="dataTabSeg">
+            <button class="is-active" data-data-tab="longhu">龙虎榜</button>
+            <button data-data-tab="calendar">财经日历</button>
+            <button data-data-tab="cb">可转债</button>
+            <button data-data-tab="screener">条件选股</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="data-pane" data-data-pane="longhu">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">BILLBOARD</div>
+              <h3>每日龙虎榜</h3>
+              <span class="muted small" id="longhuMeta">--</span>
+            </div>
+            <div class="table-tools">
+              <input id="longhuDate" type="date" title="按交易日查看，留空取最近交易日">
+              <button class="btn small" id="longhuLoad">查看</button>
+            </div>
+          </div>
+          <div class="table-scroll tall-table">
+            <table class="table" id="longhuTable"></table>
+          </div>
+          <p class="muted small mt12" id="longhuNote">龙虎榜为交易所公开的席位成交披露；买卖金额是上榜席位合计，不等于全部成交。</p>
+        </article>
+      </div>
+
+      <div class="data-pane" data-data-pane="calendar" hidden>
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">CALENDAR</div>
+              <h3 id="calendarTitle">限售解禁（今日及以后）</h3>
+              <span class="muted small" id="calendarMeta">--</span>
+            </div>
+            <div class="seg" id="calendarTypeSeg">
+              <button class="is-active" data-cal-type="lift">限售解禁</button>
+              <button data-cal-type="bonus">分红送转</button>
+            </div>
+          </div>
+          <div class="table-scroll tall-table">
+            <table class="table" id="calendarTable"></table>
+          </div>
+          <p class="muted small mt12" id="calendarNote">解禁市值按「解禁份额 × 最新价」估算；能解禁的份额与全部份额不同。</p>
+        </article>
+      </div>
+
+      <div class="data-pane" data-data-pane="cb" hidden>
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">CONVERTIBLE BONDS</div>
+              <h3>可转债</h3>
+              <span class="muted small" id="cbMeta">--</span>
+            </div>
+            <span class="badge">沪深挂牌 · 已剔除退市债</span>
+          </div>
+          <div class="table-scroll tall-table">
+            <table class="table" id="cbTable"></table>
+          </div>
+          <p class="muted small mt12">价格为腾讯行情补全的现价；报表不提供实时行情，取不到时显示「--」而不是拿发行价冒充现价。</p>
+        </article>
+      </div>
+
+      <div class="data-pane" data-data-pane="screener" hidden>
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">SCREENER</div>
+              <h3>条件选股</h3>
+              <span class="muted small" id="screenerMeta">样本池 = 新浪全市场快照</span>
+            </div>
+            <span class="badge" id="screenerBadge">--</span>
+          </div>
+          <div class="screener-form" id="screenerForm">
+            <label>涨跌幅 ≥<input id="scrPctMin" type="number" step="0.1" placeholder="如 3"></label>
+            <label>≤<input id="scrPctMax" type="number" step="0.1" placeholder="如 9.8"></label>
+            <label>换手率 ≥<input id="scrTurnMin" type="number" step="0.1" placeholder="%"></label>
+            <label>成交额 ≥<input id="scrAmtMin" type="number" step="0.1" placeholder="亿"></label>
+            <label>总市值 ≥<input id="scrCapMin" type="number" step="1" placeholder="亿"></label>
+            <label>≤<input id="scrCapMax" type="number" step="1" placeholder="亿"></label>
+            <label>PE ≤<input id="scrPeMax" type="number" step="1" placeholder="如 30"></label>
+            <label>PB ≤<input id="scrPbMax" type="number" step="0.1" placeholder="如 5"></label>
+            <label>价格 ≥<input id="scrPriceMin" type="number" step="0.1" placeholder="元"></label>
+            <label>板块<select id="scrBoard">
+              <option value="">全部</option>
+              <option value="60">沪市主板(60)</option>
+              <option value="00">深市主板(00)</option>
+              <option value="30">创业板(30)</option>
+              <option value="68">科创板(68)</option>
+            </select></label>
+            <label>排序<select id="scrSort">
+              <option value="pct">按涨跌幅</option>
+              <option value="amount">按成交额</option>
+              <option value="turnover">按换手率</option>
+              <option value="cap">按总市值</option>
+            </select></label>
+            <button class="btn primary small" id="scrRun">开始筛选</button>
+            <button class="text-link" id="scrReset">清空条件</button>
+          </div>
+          <div class="table-scroll tall-table mt12">
+            <table class="table" id="screenerTable"></table>
+          </div>
+          <p class="muted small mt12" id="screenerNote">样本为新浪全市场快照（约 5000 只）；PE/PB 为负或缺失时视为无法评估。</p>
+        </article>
       </div>
     </section>
 

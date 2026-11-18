@@ -2877,3 +2877,53 @@ button[hidden] { display: none !important; }
   .us-sess-row .usr-pct { grid-column: 2; }
 }
 
+
+/* ============ v2.5.0：数据中心（龙虎榜 / 日历 / 转债 / 选股器） ============ */
+.data-pane[hidden] { display: none; }
+.screener-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px 12px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.018);
+}
+.screener-form label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #8fa2bb;
+  font-size: 10px;
+  min-width: 0;
+}
+.screener-form label input,
+.screener-form label select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #0d1726;
+  color: var(--text-2);
+  font-size: 10px;
+  outline: none;
+}
+.screener-form label input:focus,
+.screener-form label select:focus { border-color: rgba(56, 189, 248, 0.5); }
+#longhuDate {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #0d1726;
+  color: var(--text-2);
+  font-size: 10px;
+}
+.table .t-sub { display: block; margin-top: 1px; color: #5e6d84; font-size: 9px; }
+@media (max-width: 780px) {
+  .screener-form { grid-template-columns: 1fr 1fr; gap: 6px 8px; }
+}
+

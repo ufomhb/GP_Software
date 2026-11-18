@@ -187,6 +187,17 @@ const state = {
   battleTenDayLimit: 30,
   battlePoller: null,
   monitorSectors: [],
+  // 数据中心（阶段 2）：当前子页与各子页数据
+  dataTab: 'longhu',
+  longhu: null,
+  longhuDate: '',
+  calendarType: 'lift',
+  calendar: null,
+  cb: null,
+  screener: null,
+  screenerLoading: false,
+  hk: null,
+  hkDetail: null,
   tl: { events: [], playing: false, speed: 120, pos: 565, raf: null, last: 0, lastChart: 0 },
 };
 
