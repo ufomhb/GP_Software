@@ -3601,6 +3601,26 @@ async function fetchFundHoldingsProfile(code) {
   });
 }
 
+/* 「当日估值」走哪种算法：只看持仓结构，与「今日净值是否已出」无关（两列口径必须解耦）。
+   - etf：目标 ETF 联接 / 发起式联接。这类基金净值的绝大部分压在目标 ETF 上
+     （FundMNAssetAllocationNew 里的 JJ = 基金投资占净值比，实测可达 90%+），
+     直接披露的个股只是零头。注意坑：有的联接基金会把这些标的股票也披露成 0.x% 的小权重，
+     于是「fundStocks 非空」并不等于能用重仓法——例如 024418（华夏上证科创板半导体材料设备
+     主题ETF发起式联接C）直持个股合计只有 1.87%，重仓法永远过不了 15% 的门槛，
+     估值就一直算不出来（当日估值显示 --）。判定必须按「直持个股合计」而不是「有没有个股」。
+   - holdings：普通主动/指数基金，直接持股合计有份量，按前十大重仓加权。
+   - qdii：净值滞后一交易日，不做盘中估算。
+   - none：没有目标 ETF 也没有可用持仓（货币 / 纯债等），老实留空。 */
+const FUND_DIRECT_STOCK_MAX = 15; // 直持个股合计低于此值 ⇒ 认定净值主要压在目标 ETF 上
+
+function fundEstimateRoute({ stockWeight, etfCode, etfName, name }) {
+  if (isQdiiFund(name) || isQdiiFund(etfName)) return 'qdii';
+  const w = Number(stockWeight) || 0;
+  if (etfCode && w < FUND_DIRECT_STOCK_MAX) return 'etf';
+  if (w > 0) return 'holdings';
+  return 'none';
+}
+
 // 批量估算：一次性把需要的美股/港股/A股重仓行情取回来，避免每只基金单独打接口。
 async function estimateFundDayPctBatch(list) {
   const out = new Map();
@@ -3613,13 +3633,23 @@ async function estimateFundDayPctBatch(list) {
       return { ...f, profile: null };
     }
   });
+  // 先按持仓结构定路由，再只取这条路由真正要用的行情（联接基金不必再取那份用不上的个股行情）。
+  const plans = profiles.map((f) => {
+    const p = f.profile;
+    const stockWeight = p ? round(p.stocks.reduce((s, x) => s + (Number(x.weight) || 0), 0), 2) : 0;
+    const route = p
+      ? fundEstimateRoute({ stockWeight, etfCode: p.etfCode, etfName: p.etfName, name: f.name || '' })
+      : 'none';
+    return { ...f, stockWeight, route };
+  });
   const wantSecids = [];
-  for (const f of profiles) {
+  for (const f of plans) {
     const p = f.profile;
     if (!p) continue;
-    if (!p.stocks.length && p.etfCode) {
+    if (f.route === 'etf' && p.etfCode) {
       const secid = fundSecid(p.etfCode);
       if (secid) wantSecids.push(secid);
+      continue;
     }
     for (const s of p.stocks) {
       if (s.market === '0' || s.market === '1' || s.market === '105' || s.market === '106' || s.market === '107' || s.market === '116') {
@@ -3636,34 +3666,41 @@ async function estimateFundDayPctBatch(list) {
   }
   const allocMap = new Map(
     await mapLimit(
-      profiles.filter((f) => f.profile && f.profile.stocks.length),
+      plans.filter((f) => f.profile && f.profile.stocks.length),
       4,
       async (f) => [f.code, await fetchFundStockRatio(f.code).catch(() => null)],
     ),
   );
-  for (const f of profiles) {
+  for (const f of plans) {
     const p = f.profile;
-    const base = { asOf: shanghaiToday(), kind: null, pct: null, covered: 0, weight: 0, stockRatio: null, note: '' };
+    const base = { asOf: shanghaiToday(), kind: null, pct: null, covered: 0, weight: 0, stockRatio: null, route: f.route, note: '' };
     if (!p) { out.set(f.code, { ...base, note: '重仓数据不可用' }); continue; }
-    if (isQdiiFund(f.name) || isQdiiFund(p.etfName)) {
+    if (f.route === 'qdii') {
       out.set(f.code, { ...base, note: 'QDII 净值滞后一交易日，不做盘中估算' });
       continue;
     }
-    // ETF 联接基金：直接看目标 ETF 的场内涨跌
-    if (!p.stocks.length && p.etfCode) {
+    // ETF 联接 / 发起式联接：直接看目标 ETF 的场内涨跌（直持个股只是零头，不单独加权）
+    if (f.route === 'etf') {
       const q = qmap.get(p.etfCode);
       if (q && Number.isFinite(q.pct)) {
+        const extra = p.stocks.length
+          ? `（该基金直持个股合计 ${f.stockWeight}%，低于 ${FUND_DIRECT_STOCK_MAX}% 的重仓法门槛，改按目标 ETF 穿透）`
+          : '';
         out.set(f.code, {
           ...base,
           pct: q.pct,
           kind: 'etf',
           covered: 1,
           weight: 100,
-          note: `按目标 ETF ${p.etfName || p.etfCode}（${p.etfCode}）场内涨跌穿透`,
+          note: `按目标 ETF ${p.etfName || p.etfCode}（${p.etfCode}）场内涨跌穿透${extra}`,
         });
       } else {
         out.set(f.code, { ...base, note: `目标 ETF ${p.etfCode} 行情不可用` });
       }
+      continue;
+    }
+    if (f.route === 'none') {
+      out.set(f.code, { ...base, note: '未披露持仓，无法穿透估算' });
       continue;
     }
     // 普通场外基金：重仓股权重 × 个股当日涨跌，再按股票仓位缩放

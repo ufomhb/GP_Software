@@ -21,6 +21,7 @@ function slice(startMark, endMark) {
 
 const isQdiiText = slice('function isQdiiFund(', 'async function fetchFundStockRatio(');
 const viewText = slice('function fundNavLagTradingDays(', 'function resolveFundTodayPct(');
+const routeText = slice('const FUND_DIRECT_STOCK_MAX', '// 批量估算：');
 
 let CLOCK = { weekday: 2, minutes: 125 };
 let FROZEN = {};
@@ -43,6 +44,43 @@ function build() {
 }
 
 const TODAY = '2026-11-17'; // 周二
+
+/* ---------------- 估值算法路由（2026-11-18 修复 024418 当日估值为 --） ---------------- */
+
+function buildRoute() {
+  return new Function(`${isQdiiText}\n${routeText}\nreturn { fundEstimateRoute, FUND_DIRECT_STOCK_MAX };`)();
+}
+
+test('ETF 联接基金即使披露了零星个股，也按目标 ETF 穿透（024418 的形态）', () => {
+  // 实测 024418：ETFCODE=588170，fundStocks 有 10 只但 JZBL 合计只有 1.87%
+  const r = buildRoute().fundEstimateRoute({
+    stockWeight: 1.87,
+    etfCode: '588170',
+    etfName: '科创半导体ETF华夏',
+    name: '华夏上证科创板半导体材料设备主题ETF发起式联接C',
+  });
+  assert.equal(r, 'etf', '直持个股合计低于门槛时必须走目标 ETF，不能因为 fundStocks 非空就判成重仓法');
+});
+
+test('没有个股的纯联接基金同样走目标 ETF', () => {
+  assert.equal(buildRoute().fundEstimateRoute({ stockWeight: 0, etfCode: '515700', etfName: '新能车ETF', name: '某ETF联接C' }), 'etf');
+});
+
+test('有目标 ETF 但直持个股够份量：仍按重仓法（不误伤混合型基金）', () => {
+  assert.equal(buildRoute().fundEstimateRoute({ stockWeight: 42, etfCode: '588170', etfName: '', name: '某混合C' }), 'holdings');
+});
+
+test('普通主动基金按前十大重仓加权', () => {
+  assert.equal(buildRoute().fundEstimateRoute({ stockWeight: 45.5, etfCode: '', etfName: '', name: '华夏成长混合' }), 'holdings');
+});
+
+test('QDII 不做盘中估算（优先级高于 ETF 分支）', () => {
+  assert.equal(buildRoute().fundEstimateRoute({ stockWeight: 0, etfCode: '513100', etfName: '纳指ETF', name: '纳指ETF联接(QDII)' }), 'qdii');
+});
+
+test('既无目标 ETF 也无持仓：不硬算', () => {
+  assert.equal(buildRoute().fundEstimateRoute({ stockWeight: 0, etfCode: '', etfName: '', name: '某某短债C' }), 'none');
+});
 
 /* ---------------- 当日涨跌 ---------------- */
 
