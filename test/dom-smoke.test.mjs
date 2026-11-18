@@ -472,3 +472,191 @@ test('DOM：涨跌榜与资金榜各自合并为一张左右对照卡', () => {
   app.renderRanks();
   assert.equal(document.querySelectorAll('.rank-split .mini-row').length, 4, '四个榜单各渲染一行');
 });
+
+
+/* ---------------------------------------------------------
+   v2.4.0：K 线指标 / 复权控件、详情路由、条件预警
+   --------------------------------------------------------- */
+test('DOM：K 线指标与复权控件存在，syncKlineSegs 跟随已保存设置', () => {
+  for (const id of ['cnIndSeg', 'cnFqtSeg']) {
+    assert.ok(document.querySelector(`#${id}`), `缺少控件 #${id}`);
+  }
+  assert.ok(document.querySelectorAll('[data-ind]').length >= 4, '指标按钮应至少有 4 个');
+  assert.ok(document.querySelectorAll('[data-fqt]').length >= 3, '复权按钮应至少有 3 个');
+
+  const ind0 = document.querySelector('#cnIndSeg [data-ind="kdj"]');
+  const fqt0 = document.querySelector('#cnFqtSeg [data-fqt="2"]');
+  assert.equal(ind0.classList.contains('is-active'), false, '默认指标不是 KDJ');
+  assert.equal(fqt0.classList.contains('is-active'), false, '默认复权不是后复权');
+
+  app.state.settings.indicator = 'kdj';
+  app.state.settings.fqt = 2;
+  app.syncKlineSegs();
+  assert.equal(document.querySelector('#cnIndSeg [data-ind="kdj"]').classList.contains('is-active'), true, 'KDJ 应被点亮');
+  assert.equal(document.querySelector('#cnFqtSeg [data-fqt="2"]').classList.contains('is-active'), true, '后复权应被点亮');
+  assert.equal(document.querySelector('#cnIndSeg [data-ind="macd"]').classList.contains('is-active'), false, 'MACD 应熄灭');
+
+  // 复位，避免影响后续用例
+  app.state.settings.indicator = 'macd';
+  app.state.settings.fqt = 0;
+  app.syncKlineSegs();
+});
+
+test('DOM：指标 / 复权取值对非法输入做回落，不会让图表用错口径', () => {
+  app.state.settings.indicator = 'rsi';
+  app.state.settings.fqt = 'abc';
+  assert.equal(app.currentIndicator(), 'macd', '未知指标应回落 macd');
+  assert.equal(app.currentFqt(), 0, '非法复权应回落不复权');
+
+  app.state.settings.indicator = 'none';
+  app.state.settings.fqt = '2';
+  assert.equal(app.currentIndicator(), 'none', 'none 是合法值（关闭副图）');
+  assert.equal(app.currentFqt(), 2, '字符串数字也要认');
+
+  app.state.settings.indicator = 'macd';
+  app.state.settings.fqt = 0;
+});
+
+test('DOM：详情路由能拼出可分享地址，旧视图路由仍然兼容', () => {
+  assert.equal(app.detailHash('stock', '1.600519'), '#/stock/1.600519');
+  assert.equal(app.detailHash('sector', 'BK0475'), '#/sector/BK0475');
+  assert.equal(app.detailHash('fund', '510300'), '#/fund/510300');
+  // 特殊字符必须被编码，不能破坏 hash 结构
+  assert.match(app.detailHash('sector', 'BK 1/2'), /%20|%2F/);
+
+  window.location.hash = '#/stock/1.600519';
+  const detail = app.parseHashRoute();
+  assert.deepEqual(detail.detail, { kind: 'stock', key: '1.600519' });
+  assert.equal(detail.view, undefined, '详情路由不应同时带视图');
+
+  window.location.hash = '#china';
+  assert.deepEqual(app.parseHashRoute(), { view: 'china' });
+
+  window.location.hash = '#nonsense';
+  assert.deepEqual(app.parseHashRoute(), { view: 'dashboard' }, '未知视图回落全景');
+
+  window.location.hash = '#/unknown/x';
+  assert.deepEqual(app.parseHashRoute(), { view: 'dashboard' }, '未知详情类型回落全景');
+  window.location.hash = '';
+});
+
+test('DOM：价格 / 涨跌幅预警按快照判定，方向和阈值都对', () => {
+  const q = { price: 12, pct: 3.5 };
+  const above = { kind: 'price', op: 'above', value: 11 };
+  const below = { kind: 'price', op: 'below', value: 13 };
+
+  assert.equal(app.evalAlertRule(above, q, null).hit, true, '12 >= 11 应命中');
+  assert.equal(app.evalAlertRule(above, { price: 10 }, null).hit, false, '10 < 11 不命中');
+  assert.equal(app.evalAlertRule(below, q, null).hit, true, '12 <= 13 应命中');
+  assert.equal(app.evalAlertRule({ kind: 'price', op: 'below', value: 11 }, q, null).hit, false);
+
+  assert.equal(app.evalAlertRule({ kind: 'pct', op: 'above', value: 3 }, q, null).hit, true);
+  assert.equal(app.evalAlertRule({ kind: 'pct', op: 'above', value: 4 }, q, null).hit, false);
+  assert.equal(app.evalAlertRule({ kind: 'pct', op: 'below', value: -2 }, { pct: -3 }, null).hit, true);
+
+  // 没有报价时任何比较都不该触发，避免误报
+  assert.equal(app.evalAlertRule(above, null, null).hit, false);
+});
+
+test('DOM：量比预警用当日成交量对比前 5 日均量', () => {
+  const kline = {
+    candles: [
+      { v: 100 }, { v: 100 }, { v: 100 }, { v: 100 }, { v: 100 }, { v: 500 },
+    ],
+    series: {},
+    };
+  const hitBig = app.evalAlertRule({ kind: 'volume', op: 'above', value: 2 }, { price: 10 }, kline);
+  assert.equal(hitBig.hit, true, '量比 5 倍应命中「放量 2 倍」');
+  assert.match(hitBig.note, /5\.00/, '触发说明应带出量比数值');
+
+  const hitSmall = app.evalAlertRule({ kind: 'volume', op: 'below', value: 2 }, { price: 10 }, kline);
+  assert.equal(hitSmall.hit, false, '量比 5 不会命中「缩量 2 倍」');
+
+  // 样本不足 6 根时不动
+  assert.equal(app.evalAlertRule({ kind: 'volume', op: 'above', value: 1 }, { price: 10 }, { candles: [{ v: 10 }] }).hit, false);
+});
+
+test('DOM：均线与 MACD 交叉只在「穿越那一根」触发', () => {
+  const maGolden = {
+    candles: [{ c: 9 }, { c: 11 }],
+    series: { ma20: [10, 10] },
+  };
+  assert.equal(app.evalAlertRule({ kind: 'ma', op: 'golden' }, { price: 11 }, maGolden).hit, true, '9<10 且 11>10 应判金叉');
+  assert.equal(app.evalAlertRule({ kind: 'ma', op: 'dead' }, { price: 11 }, maGolden).hit, false, '同一根不是死叉');
+
+  const maDead = {
+    candles: [{ c: 11 }, { c: 9 }],
+    series: { ma20: [10, 10] },
+  };
+  assert.equal(app.evalAlertRule({ kind: 'ma', op: 'dead' }, { price: 9 }, maDead).hit, true, '11>10 且 9<10 应判死叉');
+
+  const macdGolden = { candles: [], series: { dif: [-0.2, 0.1], dea: [0, 0] } };
+  assert.equal(app.evalAlertRule({ kind: 'macd', op: 'golden' }, null, macdGolden).hit, true);
+  assert.equal(app.evalAlertRule({ kind: 'macd', op: 'dead' }, null, macdGolden).hit, false);
+
+  const macdDead = { candles: [], series: { dif: [0.2, -0.1], dea: [0, 0] } };
+  assert.equal(app.evalAlertRule({ kind: 'macd', op: 'dead' }, null, macdDead).hit, true);
+
+  // 已经在上方持续多根（不是刚穿越）不该算金叉
+  const already = { candles: [{ c: 11 }, { c: 12 }], series: { ma20: [10, 10] } };
+  assert.equal(app.evalAlertRule({ kind: 'ma', op: 'golden' }, { price: 12 }, already).hit, false, '持续在上方不算新金叉');
+});
+
+test('DOM：预警条件文案按类型给出单位，趋势类不显示数值', () => {
+  assert.match(app.alertConditionText({ kind: 'price', op: 'above', value: 12 }), /价格 .*12\.00/);
+  assert.match(app.alertConditionText({ kind: 'pct', op: 'below', value: -3 }), /-3\.00%/);
+  assert.match(app.alertConditionText({ kind: 'volume', op: 'above', value: 2 }), /2\.00 倍/);
+  assert.match(app.alertConditionText({ kind: 'ma', op: 'golden' }), /金叉/);
+  assert.doesNotMatch(app.alertConditionText({ kind: 'ma', op: 'golden' }), /\.00/, '趋势类不带数值');
+});
+
+test('DOM：v1 价格预警自动迁移成 v2 结构，坏数据被丢弃', () => {
+  const legacy = [{ id: 'a1', secid: '1.600519', code: '600519', name: '贵州茅台', type: 'below', price: 1500, active: false, createdAt: 1 }];
+  const out = app.normalizeAlerts(legacy);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].kind, 'price', 'type 应映射成 kind=price');
+  assert.equal(out[0].op, 'below', '跌破要保留');
+  assert.equal(out[0].value, 1500, 'price 应映射成 value');
+  assert.equal(out[0].active, false, '已触发状态要保留');
+
+  // 新结构原样保留；价格非法 / 缺 secid 的都丢掉
+  const mixed = [
+    { secid: '1.600519', kind: 'macd', op: 'golden' },
+    { secid: '0.000001', kind: 'price', op: 'above', value: 'abc' },
+    { kind: 'price', op: 'above', value: 5 },
+  ];
+  const out2 = app.normalizeAlerts(mixed);
+  assert.equal(out2.length, 1, '只应保留合法的一条');
+  assert.equal(out2[0].kind, 'macd');
+  assert.equal(out2[0].value, null, '趋势类没有数值');
+});
+
+test('DOM：预警面板显示类型标签与「已触发」，恶意名称不注入', () => {
+  app.state.alerts = app.normalizeAlerts([
+    { id: 'x1', secid: '1.600519', code: '600519', name: '<b>茅台</b>', kind: 'pct', op: 'above', value: 5, active: true },
+    {
+      id: 'x2', secid: '0.000001', code: '000001', name: '平安银行',
+      kind: 'price', op: 'below', value: 11, active: false, triggeredAt: Date.now(), triggerNote: '最新价 10.80',
+    },
+  ]);
+  app.renderAlerts();
+  const box = document.querySelector('#alertsPanel');
+  assert.ok(box, '缺少 #alertsPanel');
+  assert.equal(box.querySelectorAll('b').length, 0, '股票名里的 <b> 必须被转义');
+  assert.equal(box.querySelectorAll('[onerror]').length, 0);
+  assert.match(box.textContent, /涨跌幅/, '应显示预警类型标签');
+  assert.match(box.textContent, /已触发/, '触发过的要标已触发');
+  assert.match(box.textContent, /监控中/, '还在盯的要标监控中');
+  assert.match(box.textContent, /1 条监控中/, '计数应只算 active');
+});
+test('DOM：沪深300基金占比已迁入基金页，A 股页不再有该模块', () => {
+  assert.ok(document.querySelector('#fundSectorView #csi300RatioPanel'), '基金页板块资金子页应有该面板');
+  assert.equal(document.querySelector('#view-china #csi300RatioPanel'), null, 'A 股页不应再保留该面板');
+});
+
+test('DOM：板块资金与基金页互相跳转的入口都在', () => {
+  const toFunds = document.querySelector('#view-sectors [data-fund-pane="sector"][data-goto="funds"]');
+  assert.ok(toFunds, '板块资金页应有「基金视角」跳转');
+  const toSectors = document.querySelector('#fundSectorView [data-goto="sectors"]');
+  assert.ok(toSectors, '基金板块资金子页应有回到全市场板块资金的入口');
+});

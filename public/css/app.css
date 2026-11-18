@@ -2776,3 +2776,56 @@ button[hidden] { display: none !important; }
   color: var(--text-2);
 }
 
+
+/* ============ v2.4.0：K 线指标 / 复权切换与条件预警表单 ============ */
+.modal-kline-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 2px 10px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--line);
+}
+.modal-kline-tools .seg { flex: none; }
+.modal-kline-tools .muted.small { margin-left: auto; }
+
+.alert-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.alert-form[hidden] { display: none; }
+.alert-form select {
+  flex: 0 0 auto;
+  min-width: 84px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font-size: 11px;
+  outline: none;
+}
+.alert-form select:focus { border-color: rgba(56, 189, 248, 0.5); }
+.alert-form .seg { flex: none; }
+.alert-form .input-wrap { flex: 1 1 96px; min-width: 0; }
+
+.alert-kind {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 4px;
+  color: #7dd3fc;
+  font-size: 8.5px;
+  letter-spacing: 0.02em;
+}
+
+/* 移动端：指标 / 复权分段在窄屏下允许换行，不挤压标题 */
+@media (max-width: 780px) {
+  .modal-kline-tools { gap: 6px; }
+  .modal-kline-tools .muted.small { margin-left: 0; width: 100%; }
+  .alert-form select { flex: 1 1 92px; }
+}
+

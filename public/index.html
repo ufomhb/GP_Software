@@ -13,7 +13,7 @@
   <meta name="description" content="寰球智投：A股、全球指数、期货、黄金白银实时行情，板块资金流向与规则化策略终端。">
   <title>寰球智投 · 全球行情与智能策略终端</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.3.1">
+  <link rel="stylesheet" href="/css/app.css?v=2.4.0">
 </head>
 <body>
   <div class="ambient" aria-hidden="true">
@@ -307,17 +307,6 @@
         <aside class="panel breadth-panel" id="breadthPanel"></aside>
       </div>
 
-      <article class="panel csi300-ratio-panel" id="csi300RatioPanel">
-        <div class="panel-head">
-          <div><div class="eyebrow">CSI 300 FUNDS · 6 MONTHS</div><h3>头部沪深300基金 / 流通市值</h3><span class="muted small" id="csi300RatioMeta">--</span></div>
-          <span class="badge">近半年</span>
-        </div>
-        <div class="csi300-ratio-body">
-          <div id="csi300RatioLine" class="csi300-ratio-line"></div>
-          <div id="csi300RatioFunds" class="csi300-fund-list"></div>
-        </div>
-      </article>
-
       <div class="rank-grid">
         <article class="panel rank-panel">
           <div class="panel-head"><h3>涨幅榜 / 跌幅榜</h3><span class="muted small">各 TOP 8 · 左右对照</span></div>
@@ -587,6 +576,7 @@
           <p>主力净流入、涨跌幅与成交额的三维观察</p>
         </div>
         <div class="head-actions">
+          <button class="text-link" data-goto="funds" data-fund-pane="sector" title="同一批资金的 ETF / 基金口径">基金视角 →</button>
           <div class="seg" id="sectorPageSeg">
             <button class="is-active" data-sector-page="industry">行业板块</button>
             <button data-sector-page="concept">概念板块</button>
@@ -691,6 +681,7 @@
             <button data-sector-sort="month">按近1月</button>
           </div>
           <span class="muted small" id="fundSectorMeta">--</span>
+          <button class="text-link" data-goto="sectors" title="全市场行业 / 概念板块的主力净流入">全市场板块资金 →</button>
         </div>
         <div class="fund-summary-grid" id="fundSectorSummary"></div>
         <div class="fund-sector-layout">
@@ -717,6 +708,17 @@
           <div class="table-scroll tall-table">
             <table class="table" id="fundSectorTable"></table>
           </div>
+        </article>
+        <article class="panel csi300-ratio-panel" id="csi300RatioPanel">
+          <div class="panel-head">
+            <div><div class="eyebrow">CSI 300 FUNDS · 6 MONTHS</div><h3>头部沪深300基金 / 流通市值</h3><span class="muted small" id="csi300RatioMeta">--</span></div>
+            <span class="badge">近半年</span>
+          </div>
+          <div class="csi300-ratio-body">
+            <div id="csi300RatioLine" class="csi300-ratio-line"></div>
+            <div id="csi300RatioFunds" class="csi300-fund-list"></div>
+          </div>
+          <p class="muted small mt12">统计名称匹配的纯沪深300 ETF 规模合计占沪深300流通市值的比例；基金规模为最新披露的资产净值，不是盘中实时规模。</p>
         </article>
       </div>
 
@@ -1207,6 +1209,6 @@
   <div id="toastRoot" class="toasts" aria-live="polite"></div>
 
   <script src="/vendor/echarts.min.js"></script>
-  <script type="module" src="/js/app.js?v=2.3.1"></script>
+  <script type="module" src="/js/app.js?v=2.4.0"></script>
 </body>
 </html>

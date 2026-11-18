@@ -19,7 +19,7 @@ import {
   sectorCompareBar,
   usSectorFlowBar,
   COLORS,
-} from './charts.js?v=2.2.0';
+} from './charts.js?v=2.4.0';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -37,11 +37,11 @@ import {
   esc,
   safeUrl,
   timeText,
-} from './util.js?v=2.2.0';
+} from './util.js?v=2.4.0';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.2.0';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.2.0';
+import { $, $$, toast, debounce } from './dom.js?v=2.4.0';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.4.0';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -6091,9 +6091,7 @@ function loadView(view) {
   if (view === 'china') {
     renderChinaHeader();
     renderBreadth();
-    renderCsi300Ratio();
     renderIndexCompare();
-    loadCsi300Ratio();
     loadIndexCompare();
     loadChinaStock();
     loadChinaChart();
@@ -6126,7 +6124,11 @@ function loadView(view) {
   }
   if (view === 'funds') {
     renderFunds();
-    if (state.fundView === 'sector' && !state.fundSectorData) loadFundSectorFlow();
+    if (state.fundView === 'sector') {
+      if (!state.fundSectorData) loadFundSectorFlow();
+      // 「头部沪深300基金 / 流通市值」已从 A 股页迁入基金板块资金子页
+      loadCsi300Ratio();
+    }
     if (state.fundView === 'openflow' && !state.openFlowData) loadOpenFlow();
     if (state.fundView === 'proxy' && !state.proxyData) loadProxy();
     if (state.fundView === 'flow' && !state.fundFlow) loadFundFlow();
@@ -6297,6 +6299,8 @@ function bindEvents() {
     if (goto) {
       e.preventDefault();
       if (goto.hasAttribute('data-close')) closeOverlay();
+      // 带 data-fund-pane 的跳转要同时切到基金页指定子页（板块资金 ↔ 基金板块资金互相跳）
+      if (goto.dataset.fundPane) state.fundView = goto.dataset.fundPane;
       navigate(goto.dataset.goto);
       return;
     }
@@ -6431,7 +6435,10 @@ function bindEvents() {
     if (!btn) return;
     state.fundView = btn.dataset.fundView;
     renderFunds();
-    if (state.fundView === 'sector' && !state.fundSectorData) loadFundSectorFlow();
+    if (state.fundView === 'sector') {
+      if (!state.fundSectorData) loadFundSectorFlow();
+      loadCsi300Ratio();
+    }
     if (state.fundView === 'openflow' && !state.openFlowData) loadOpenFlow();
     if (state.fundView === 'proxy' && !state.proxyData) loadProxy();
     if (state.fundView === 'flow' && !state.fundFlow) loadFundFlow();
@@ -7083,6 +7090,7 @@ async function init() {
   syncRiskSeg();
   bindEvents();
   bindBattleEvents();
+  syncKlineSegs();
   renderAlerts();
   renderWatchTips();
   renderClock();
@@ -7091,8 +7099,11 @@ async function init() {
   startTimers();
   loadSourceStatus();
 
-  const hash = (location.hash || '#dashboard').slice(1);
-  const initial = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'strategy', 'watchlist'].includes(hash) ? hash : 'dashboard';
+  // 首屏路由：既支持 #china 这类视图，也支持 #/stock/1.600519 这类详情深链
+  const bootRoute = parseHashRoute();
+  const initial = bootRoute.detail
+    ? (DETAIL_BASE_VIEW[bootRoute.detail.kind] || 'dashboard')
+    : bootRoute.view;
   state.view = initial;
   $$('.nav-tab').forEach((tab) => tab.classList.toggle('is-active', tab.dataset.view === initial));
   $$('.view').forEach((section) => section.classList.toggle('is-active', section.id === `view-${initial}`));
@@ -7112,6 +7123,8 @@ async function init() {
   if (params.get('stock')) setTimeout(() => openStock(params.get('stock')), 1800);
   if (params.get('sector')) setTimeout(() => openSector(params.get('sector')), 1800);
   if (params.get('fund')) setTimeout(() => openStockFund(params.get('fund')), 1800);
+  // 详情深链（#/stock/1.600519 等）：等首屏数据就绪后再打开弹窗
+  if (bootRoute.detail) setTimeout(() => openDetailRoute(bootRoute.detail), 1200);
 }
 
 // 测试开关：设置 globalThis.__GP_NO_AUTOBOOT__ 后只加载模块（供 test/dom-smoke 直接调渲染函数）
@@ -7133,5 +7146,8 @@ export {
   renderFundHoldSummary, renderFundHoldTable, renderFundSummary,
   fundEstimateCell, fundDayPctCell,
   renderPortfolioAdvice,
+  // 预警 / K 线选项的纯逻辑，供 dom-smoke 与单元测试直接调用
+  evalAlertRule, alertConditionText, currentIndicator, currentFqt,
+  parseHashRoute, detailHash, normalizeAlerts, syncKlineSegs, renderAlerts,
 };
 
