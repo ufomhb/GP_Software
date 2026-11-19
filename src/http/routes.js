@@ -39,10 +39,13 @@ function createHttpRoutes(deps) {
     getAlertBox,
     saveAlertBox,
     getPaper,
+    getPaperAdminOverview,
+    getPaperConfig,
     getPaperRanking,
     getFundPnlSeries,
     paperTrade,
     resetPaper,
+    savePaperConfig,
     fetchQuoteList,
     flushStats,
     fs,
@@ -178,8 +181,12 @@ function handleAuth(req, res, url) {
     saveUsers(store);
     // 主账号沿用推送配置里的持仓；其它账号从空白开始。
     if (!user.primary) savePortfolio(user, { funds: [], holdings: {}, watchlist: [] });
-    issueSession(req, res, user);
-    recordLoginEvent(req, { user, ok: true, action: 'register' });
+    // v2.9.0：注册也支持「7 天免登录」（同一次请求里勾选）
+    const rememberRegister = body.remember === true || body.remember === '1';
+    issueSession(req, res, user, { remember: rememberRegister });
+    recordLoginEvent(req, {
+      user, ok: true, action: 'register', reason: rememberRegister ? '7 天免登录' : '',
+    });
     return { ok: true, user: publicUser(user) };
   }
   if (p === '/api/auth/login') {
@@ -209,8 +216,11 @@ function handleAuth(req, res, url) {
     user.lastLoginIp = ip;
     user.loginCount = (Number(user.loginCount) || 0) + 1;
     saveUsers(store);
-    issueSession(req, res, user);
-    recordLoginEvent(req, { user, ok: true, action: 'login' });
+    // v2.9.0：勾选「7 天免登录」→ 会话跳过每日 0 点失效，Cookie 7 天；
+    // 后台登录记录仍照常落一条（说明列标「7 天免登录」），便于审计。
+    const remember = body.remember === true || body.remember === '1';
+    issueSession(req, res, user, { remember });
+    recordLoginEvent(req, { user, ok: true, action: 'login', reason: remember ? '7 天免登录' : '' });
     return { ok: true, user: publicUser(user) };
   }
   // 登录页的「修改密码」：校验旧密码后重设，并让该账号所有旧会话失效。
@@ -370,6 +380,42 @@ async function handleAdmin(req, res, url) {
     const changed = invalidateUserSessions(target.id);
     recordLoginEvent(req, { user: actor, ok: true, action: 'kick', reason: `强制下线 ${target.username}` });
     return { ok: true, username: target.username, sessions: changed };
+  }
+
+  /* ---------------------------------------------------------
+     模拟交易控制（v2.9.0）
+     - GET  /api/admin/paper          全部用户模拟盘 + 全局配置
+     - POST /api/admin/paper/config   初始资金 / 排行榜黑名单
+     - POST /api/admin/paper/reset    重置某个用户的模拟盘（可指定初始资金）
+     --------------------------------------------------------- */
+  if (p === '/api/admin/paper' && req.method === 'GET') {
+    return getPaperAdminOverview();
+  }
+  if (p === '/api/admin/paper/config' && req.method === 'POST') {
+    const body = req.body || {};
+    const patch = {};
+    if (body.initial !== undefined) patch.initial = body.initial;
+    if (body.hiddenUserIds !== undefined) patch.hiddenUserIds = body.hiddenUserIds;
+    const before = getPaperConfig();
+    const config = savePaperConfig(patch);
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'paper',
+      reason: `模拟盘配置：初始资金 ${before.initial} → ${config.initial}，隐藏 ${config.hiddenUserIds.length} 人`,
+    });
+    return { ok: true, config };
+  }
+  if (p === '/api/admin/paper/reset' && req.method === 'POST') {
+    const body = req.body || {};
+    const id = String(body.id || '');
+    const target = loadUsers().users.find((u) => u.id === id);
+    if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
+    const res = resetPaper(target, body.initial);
+    recordLoginEvent(req, {
+      user: actor, ok: true, action: 'paper', reason: `重置 ${target.username} 的模拟盘（初始 ${res.initial}）`,
+    });
+    return { ok: true, id: target.id, username: target.username, initial: res.initial };
   }
 
   // 概览：今日汇总 + 最近 N 天曲线 + 当前在线 + 最近登录事件
@@ -567,7 +613,10 @@ async function handleAdmin(req, res, url) {
      - POST config：保存策略规则参数（推送与记录立即生效）
      --------------------------------------------------------- */
   if (p === '/api/admin/strategy' && req.method === 'GET') {
-    const snap = strategyLog.snapshot();
+    const snap = strategyLog.snapshot({
+      limit: Number(q.get('limit') || 60),
+      source: q.get('source') || 'all',
+    });
     // 实时市场氛围：页面打开时给出当前的 A 股 + 外围快照，记录里也会存一份当时快照。
     // 行情不可用时返回 null，不影响其它字段。
     try {
@@ -597,6 +646,24 @@ async function handleAdmin(req, res, url) {
   if (p === '/api/admin/strategy/evaluate' && req.method === 'POST') {
     const res = await strategyLog.evaluateNow();
     return res;
+  }
+
+  /* ---------------------------------------------------------
+     历史回测（v2.9.0）：按现有规则逐日重建 15:00 估值，
+     给出当天建议 + 次日判定；回测记录同时进命中率与自动调参。
+     --------------------------------------------------------- */
+  if (p === '/api/admin/strategy/backfill' && req.method === 'POST') {
+    const body = req.body || {};
+    const days = Math.max(30, Math.min(180, Math.trunc(Number(body.days) || 130)));
+    const startedAt = Date.now();
+    const res = await strategyLog.backfillNow({ days, force: body.force === true });
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'strategy',
+      reason: `历史回测（近 ${days} 个交易日）：${res.records || 0} 条记录，${res.from || '--'} → ${res.to || '--'}`,
+    });
+    return { ...res, days, seconds: Math.round((Date.now() - startedAt) / 100) / 10 };
   }
 
   if (p === '/api/admin/strategy/config' && req.method === 'POST') {

@@ -206,6 +206,10 @@ const state = {
   fundPnlRange: 'year',
   paperRank: null,
   paperRankSort: 'total',
+  // v2.9.0：排行榜默认收起（用户要求「默认不显示，点按钮再展开」）
+  paperRankOpen: false,
+  // v2.9.0：模拟买卖弹窗的当前标的与报价（打开弹窗时重置）
+  paperTrade: null,
   tl: { events: [], playing: false, speed: 120, pos: 565, raf: null, last: 0, lastChart: 0 },
 };
 

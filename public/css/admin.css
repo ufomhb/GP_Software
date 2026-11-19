@@ -67,6 +67,18 @@
   outline: none;
 }
 .admin-field input:focus { border-color: rgba(56, 189, 248, 0.62); box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12); }
+/* v2.9.0：登录框「7 天免登录」复选框 */
+.admin-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 14px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.admin-check input { width: 15px; height: 15px; margin: 0; accent-color: #38bdf8; cursor: pointer; }
 .admin-login-btn {
   width: 100%;
   margin-top: 6px;

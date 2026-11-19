@@ -11,6 +11,8 @@ const { computeSeries } = require('./lib/indicators');
 // 数据中心取数层（阶段 2）：龙虎榜 / 财经日历 / 可转债 / 全市场选股 / 港股 / F10
 const datacenter = require('./lib/datacenter');
 const { analyze, stockAdvice, marketAdvice, aggregateNews, shanghaiToday, nf, pctText } = require('./lib/engine');
+// 场外基金「当日估值」的重仓穿透公式（实盘与历史回测共用，v2.9.0 抽出）
+const { estimateFromProfile } = require('./src/services/fund-estimate');
 const {
   CAPABILITIES: SOURCE_CAPABILITIES,
   register: registerSource,
@@ -3844,65 +3846,147 @@ async function estimateFundDayPctBatch(list) {
       async (f) => [f.code, await fetchFundStockRatio(f.code).catch(() => null)],
     ),
   );
+  const asOf = shanghaiToday();
+  // 个股/目标 ETF 的「当日涨跌」按代码查；估值公式本身在 src/services/fund-estimate.js，
+  // 历史回测（estimateFundHistPctBatch）用同一个函数、把实时行情换成历史日线。
+  const pctByCode = new Map();
+  for (const [code, q] of qmap) {
+    if (q && Number.isFinite(Number(q.pct))) pctByCode.set(String(code), Number(q.pct));
+  }
   for (const f of plans) {
     const p = f.profile;
-    const base = { asOf: shanghaiToday(), kind: null, pct: null, covered: 0, weight: 0, stockRatio: null, route: f.route, note: '' };
-    if (!p) { out.set(f.code, { ...base, note: '重仓数据不可用' }); continue; }
-    if (f.route === 'qdii') {
-      out.set(f.code, { ...base, note: 'QDII 净值滞后一交易日，不做盘中估算' });
-      continue;
-    }
-    // ETF 联接 / 发起式联接：直接看目标 ETF 的场内涨跌（直持个股只是零头，不单独加权）
-    if (f.route === 'etf') {
-      const q = qmap.get(p.etfCode);
-      if (q && Number.isFinite(q.pct)) {
-        const extra = p.stocks.length
-          ? `（该基金直持个股合计 ${f.stockWeight}%，低于 ${FUND_DIRECT_STOCK_MAX}% 的重仓法门槛，改按目标 ETF 穿透）`
-          : '';
-        out.set(f.code, {
-          ...base,
-          pct: q.pct,
-          kind: 'etf',
-          covered: 1,
-          weight: 100,
-          note: `按目标 ETF ${p.etfName || p.etfCode}（${p.etfCode}）场内涨跌穿透${extra}`,
-        });
-      } else {
-        out.set(f.code, { ...base, note: `目标 ETF ${p.etfCode} 行情不可用` });
-      }
-      continue;
-    }
-    if (f.route === 'none') {
-      out.set(f.code, { ...base, note: '未披露持仓，无法穿透估算' });
-      continue;
-    }
-    // 普通场外基金：重仓股权重 × 个股当日涨跌，再按股票仓位缩放
-    let weight = 0;
-    let contrib = 0;
-    let covered = 0;
-    for (const s of p.stocks) {
-      const q = qmap.get(s.code);
-      if (!q || !Number.isFinite(q.pct)) continue;
-      weight += s.weight;
-      contrib += (s.weight * q.pct) / 100;
-      covered += 1;
-    }
-    if (covered < 4 || weight < 15) {
-      out.set(f.code, { ...base, covered, weight, note: '重仓覆盖率不足，无法穿透估算' });
-      continue;
-    }
-    let alloc = allocMap.get(f.code) || null;
-    const stockRatio = alloc && Number.isFinite(alloc.stockRatio) && alloc.stockRatio > 20 ? alloc.stockRatio : null;
-    const scale = stockRatio ? stockRatio / weight : 1;
-    out.set(f.code, {
-      ...base,
-      pct: round(contrib * scale, 2),
-      kind: 'holdings',
-      covered,
-      weight: round(weight, 2),
-      stockRatio,
-      note: `前 ${covered} 大重仓（合计 ${round(weight, 2)}%）${stockRatio ? `按股票仓位 ${stockRatio}% 缩放` : '未取到股票仓位，直接按权重加总'}${alloc && alloc.date ? `，仓位数据 ${alloc.date}` : ''}`,
+    const alloc = allocMap.get(f.code) || null;
+    const gatedRatio = alloc && Number.isFinite(alloc.stockRatio) && alloc.stockRatio > 20 ? alloc.stockRatio : null;
+    const est = estimateFromProfile({
+      route: f.route,
+      profile: p,
+      stockRatio: f.route === 'holdings' ? gatedRatio : null,
+      pctByCode,
     });
+    out.set(f.code, {
+      asOf,
+      route: f.route,
+      kind: est.kind,
+      pct: est.pct,
+      covered: est.covered,
+      weight: est.weight,
+      stockRatio: est.stockRatio,
+      note: est.note,
+    });
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------
+   历史「当日估值」批量重建（v2.9.0，持仓策略回测用）
+   与实盘 estimateFundDayPctBatch 同一套规则，只把输入换掉：
+   - 重仓股 / 目标 ETF 的「当日涨跌」来自历史日线（前复权收盘价涨跌）；
+   - 股票仓位仍取最新季报（历史仓位接口不可得），这一点页面会写明。
+   返回 Map<基金代码, Map<日期, { pct, kind, note, covered, weight, stockRatio }>>
+   --------------------------------------------------------- */
+async function estimateFundHistPctBatch({ funds = [], dates = [] } = {}) {
+  const out = new Map();
+  const list = (funds || []).filter((f) => f && f.code);
+  const dayList = [...new Set((dates || []).map((d) => String(d || '').slice(0, 10)).filter(Boolean))].sort();
+  if (!list.length || !dayList.length) return out;
+  const limit = Math.max(60, Math.min(2000, dayList.length + 60));
+
+  const profiles = await mapLimit(list, 4, async (f) => {
+    try {
+      return { ...f, profile: await fetchFundHoldingsProfile(f.code) };
+    } catch {
+      return { ...f, profile: null };
+    }
+  });
+  const plans = profiles.map((f) => {
+    const p = f.profile;
+    const stockWeight = p ? round(p.stocks.reduce((s, x) => s + (Number(x.weight) || 0), 0), 2) : 0;
+    const route = p
+      ? fundEstimateRoute({ stockWeight, etfCode: p.etfCode, etfName: p.etfName, name: f.name || '' })
+      : 'none';
+    return { ...f, stockWeight, route };
+  });
+
+  const wantSecids = new Set();
+  for (const f of plans) {
+    const p = f.profile;
+    if (!p) continue;
+    if (f.route === 'etf' && p.etfCode) {
+      const secid = fundSecid(p.etfCode);
+      if (secid) wantSecids.add(secid);
+      continue;
+    }
+    if (f.route !== 'holdings') continue;
+    for (const s of p.stocks) {
+      if (['0', '1', '105', '106', '107', '116'].includes(String(s.market))) wantSecids.add(`${s.market}.${s.code}`);
+    }
+  }
+  const pctBySecid = new Map();
+  await mapLimit([...wantSecids], 4, async (secid) => {
+    try {
+      const kline = await getKline(secid, 101, limit);
+      const candles = (kline && kline.candles) || [];
+      const m = new Map();
+      for (let i = 1; i < candles.length; i += 1) {
+        const c = num(candles[i].c);
+        const prev = num(candles[i - 1].c);
+        if (!(c > 0) || !(prev > 0)) continue;
+        m.set(String(candles[i].d).slice(0, 10), round(((c - prev) / prev) * 10000) / 100);
+      }
+      pctBySecid.set(secid, m);
+    } catch { /* 取不到就按未覆盖处理 */ }
+  });
+  // 港美股与 A 股不同步：取「该日及之前最近一个有行情的交易日」
+  const makeLookup = (secid) => {
+    const rows = [...((pctBySecid.get(secid) || new Map()).entries())].sort((a, b) => a[0].localeCompare(b[0]));
+    let cursor = -1;
+    return (date) => {
+      while (cursor + 1 < rows.length && rows[cursor + 1][0] <= date) cursor += 1;
+      return cursor >= 0 ? rows[cursor][1] : null;
+    };
+  };
+
+  const allocMap = new Map(
+    await mapLimit(
+      plans.filter((f) => f.profile && f.profile.stocks.length),
+      4,
+      async (f) => [f.code, await fetchFundStockRatio(f.code).catch(() => null)],
+    ),
+  );
+
+  for (const f of plans) {
+    const p = f.profile;
+    const series = new Map();
+    const alloc = allocMap.get(f.code) || null;
+    const gatedRatio = alloc && Number.isFinite(alloc.stockRatio) && alloc.stockRatio > 20 ? alloc.stockRatio : null;
+    if (p && f.route === 'etf') {
+      const secid = fundSecid(p.etfCode);
+      const look = makeLookup(secid);
+      for (const d of dayList) {
+        const v = look(d);
+        if (v === null) {
+          series.set(d, { pct: null, kind: null, covered: 0, weight: 0, stockRatio: null, note: `目标 ETF ${p.etfCode} 当日行情不可用` });
+        } else {
+          series.set(d, estimateFromProfile({ route: 'etf', profile: p, pctByCode: new Map([[p.etfCode, v]]) }));
+        }
+      }
+    } else if (p && f.route === 'holdings') {
+      const looks = p.stocks.map((s) => ({ code: String(s.code), look: makeLookup(`${s.market}.${s.code}`) }));
+      for (const d of dayList) {
+        const pctByCode = new Map();
+        for (const item of looks) {
+          const v = item.look(d);
+          if (v !== null) pctByCode.set(item.code, v);
+        }
+        series.set(d, estimateFromProfile({ route: 'holdings', profile: p, stockRatio: gatedRatio, pctByCode }));
+      }
+    } else {
+      const note = p ? (f.route === 'qdii' ? 'QDII 净值滞后一交易日，不做盘中估算' : '未披露持仓，无法穿透估算') : '重仓数据不可用';
+      for (const d of dayList) {
+        series.set(d, { pct: null, kind: null, covered: 0, weight: 0, stockRatio: null, note });
+      }
+    }
+    out.set(f.code, series);
   }
   return out;
 }
@@ -7150,6 +7234,14 @@ const strategyLog = createStrategyLog({
   getFrozenEstimate: (code, date) => frozenFundEstimateOn(date, code),
   // 市场氛围：A 股指数/涨跌家数/成交/主力 + 隔夜外围，用于多维评分
   collectMarketContext: pushService.collectMarketContext,
+  // 历史回测（v2.9.0）：净值序列 / 逐日 15:00 估值重建 / ETF 日线 / 技术评分 / 市场氛围
+  getFundPnlSeries,
+  estimateFundHistPctBatch,
+  getKline,
+  stockAdvice,
+  buildMarketContext: pushService.buildMarketContext,
+  isEtfLike,
+  fundSecid,
 });
 strategyLogRef = strategyLog;
 
@@ -7260,11 +7352,14 @@ function currentUser(req) {
     saveSessions(sessions);
     return null;
   }
-  const loginDay = shanghaiDayOf(session.createdAt);
-  if (!loginDay || loginDay !== zonedParts('Asia/Shanghai').date) {
-    delete sessions[sessionKey(token)];
-    saveSessions(sessions);
-    return null;
+  // v2.9.0：勾选「7 天免登录」的会话跳过跨日失效，靠 expiresAt 兜底（7 天）。
+  if (!session.remember) {
+    const loginDay = shanghaiDayOf(session.createdAt);
+    if (!loginDay || loginDay !== zonedParts('Asia/Shanghai').date) {
+      delete sessions[sessionKey(token)];
+      saveSessions(sessions);
+      return null;
+    }
   }
   const user = loadUsers().users.find((u) => u.id === session.userId);
   return user || null;
@@ -7312,22 +7407,33 @@ function invalidateUserSessions(userId) {
   return changed;
 }
 
-function issueSession(req, res, user) {
+const REMEMBER_DAYS = 7;
+const REMEMBER_TTL = REMEMBER_DAYS * 24 * 3600 * 1000;
+
+/**
+ * 建会话。
+ * - 默认（v2.8.0 口径）：到下一个上海 0 点就失效，第二天必须重新登录，
+ *   这样后台「登录记录」才是真实的每日登录。
+ * - remember（v2.9.0）：勾选「7 天免登录」，跳过 0 点失效、Cookie 给 7 天；
+ *   改密 / 强制下线仍会让它立刻失效（invalidateUserSessions）。
+ */
+function issueSession(req, res, user, { remember = false } = {}) {
   const token = crypto.randomBytes(32).toString('hex');
   const sessions = loadSessions();
   const now = Date.now();
-  // v2.8.0：到下一个上海 0 点就失效，第二天必须重新登录（登录记录才有真实每日登录）
   const toMidnight = secondsToShanghaiMidnight();
   for (const [k, v] of Object.entries(sessions)) {
     if (!v || !(Number(v.expiresAt) > now)) delete sessions[k];
   }
+  const ttlSec = remember ? REMEMBER_DAYS * 86400 : toMidnight;
   sessions[sessionKey(token)] = {
     userId: user.id,
-    expiresAt: Math.min(now + SESSION_TTL, now + toMidnight * 1000),
+    expiresAt: remember ? now + REMEMBER_TTL : Math.min(now + SESSION_TTL, now + toMidnight * 1000),
     createdAt: now,
+    ...(remember ? { remember: true } : {}),
   };
   saveSessions(sessions);
-  res.setHeader('Set-Cookie', sessionCookie(req, token, toMidnight));
+  res.setHeader('Set-Cookie', sessionCookie(req, token, ttlSec));
 }
 
 function dropSession(req, res) {
@@ -7931,10 +8037,61 @@ const PAPER_FEE_RATE = 0.00025; // 佣金万 2.5
 const PAPER_FEE_MIN = 5;        // 最低 5 元
 const PAPER_TAX_RATE = 0.0005;  // 卖出印花税万 5
 
+/* ---------------------------------------------------------
+   模拟盘全局配置（v2.9.0，data/paper-config.json）
+   - initial：新账号与「重置」用的初始资金（已有账户保留自己的 initial，
+     不然一改全局就会把所有人的历史盈亏抹平）
+   - hiddenUserIds：不进排行榜的用户（管理员黑名单，用户自己仍可正常交易）
+   --------------------------------------------------------- */
+const PAPER_CONFIG_FILE = path.join(__dirname, 'data', 'paper-config.json');
+const PAPER_INITIAL_MIN = 10000;
+const PAPER_INITIAL_MAX = 100000000;
+let paperConfigCache = { at: 0, val: null };
+
+function sanitizePaperInitial(v) {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n)) return PAPER_INITIAL;
+  return Math.min(PAPER_INITIAL_MAX, Math.max(PAPER_INITIAL_MIN, n));
+}
+
+function normalizePaperConfig(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const hidden = Array.isArray(src.hiddenUserIds)
+    ? [...new Set(src.hiddenUserIds.map((x) => String(x || '').trim()).filter(Boolean))].slice(0, 500)
+    : [];
+  return {
+    initial: sanitizePaperInitial(src.initial),
+    hiddenUserIds: hidden,
+    updatedAt: Number(src.updatedAt) || 0,
+  };
+}
+
+/** 读全局模拟盘配置（5 秒进程内缓存；管理员保存后立刻刷新） */
+function loadPaperConfig(force = false) {
+  const now = Date.now();
+  if (!force && paperConfigCache.val && now - paperConfigCache.at < 5000) return paperConfigCache.val;
+  const val = normalizePaperConfig(readJsonSafe(PAPER_CONFIG_FILE, { initial: PAPER_INITIAL, hiddenUserIds: [] }));
+  paperConfigCache = { at: now, val };
+  return val;
+}
+
+function savePaperConfig(patch = {}) {
+  const cur = loadPaperConfig(true);
+  const next = normalizePaperConfig({
+    initial: patch.initial === undefined ? cur.initial : patch.initial,
+    hiddenUserIds: patch.hiddenUserIds === undefined ? cur.hiddenUserIds : patch.hiddenUserIds,
+  });
+  next.updatedAt = Date.now();
+  writeJsonSafe(PAPER_CONFIG_FILE, next);
+  paperConfigCache = { at: Date.now(), val: next };
+  return next;
+}
+
 function getPaperAccount(user) {
+  const baseInitial = loadPaperConfig().initial;
   const empty = {
-    initial: PAPER_INITIAL,
-    cash: PAPER_INITIAL,
+    initial: baseInitial,
+    cash: baseInitial,
     positions: {},
     trades: [],
     updatedAt: null,
@@ -7943,8 +8100,8 @@ function getPaperAccount(user) {
   const raw = dataStore.loadUserExtra(user.id, 'paper', null);
   if (!raw || typeof raw !== 'object') return empty;
   return {
-    initial: Number(raw.initial) || PAPER_INITIAL,
-    cash: Number.isFinite(Number(raw.cash)) ? Number(raw.cash) : PAPER_INITIAL,
+    initial: Number(raw.initial) || baseInitial,
+    cash: Number.isFinite(Number(raw.cash)) ? Number(raw.cash) : Number(raw.initial) || baseInitial,
     positions: raw.positions && typeof raw.positions === 'object' ? raw.positions : {},
     trades: Array.isArray(raw.trades) ? raw.trades.slice(-200) : [],
     updatedAt: Number(raw.updatedAt) || null,
@@ -7954,7 +8111,7 @@ function getPaperAccount(user) {
 function savePaperAccount(user, account) {
   if (!user) return null;
   const payload = {
-    initial: Number(account.initial) || PAPER_INITIAL,
+    initial: Number(account.initial) || loadPaperConfig().initial,
     cash: Math.round(Number(account.cash) * 100) / 100,
     positions: account.positions || {},
     trades: (account.trades || []).slice(-200),
@@ -8014,18 +8171,31 @@ async function getPaper(user) {
   };
 }
 
-/** 下单：buy / sell，按最新价成交 */
+/** 下单：buy / sell，按最新价成交；股数可用 shares，也可用 ratio（0~1，按可用资金/持仓比例） */
 async function paperTrade(user, payload = {}) {
   const bad = (m) => Object.assign(new Error(m), { status: 400 });
   if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
   const secid = String(payload.secid || '');
   if (!/^\d+\.[0-9A-Za-z]+$/.test(secid)) throw bad('标的不合法');
   const side = payload.side === 'sell' ? 'sell' : 'buy';
-  const shares = Math.floor(Number(payload.shares));
-  if (!Number.isFinite(shares) || shares <= 0) throw bad('股数必须是正整数');
-  if (shares > 1000000) throw bad('单笔股数过大');
-  // A 股（0./1. 前缀的 6 位代码）要求 100 股整数倍
-  if (/^[01]\.\d{6}$/.test(secid) && shares % 100 !== 0) throw bad('A 股买入必须是 100 股的整数倍');
+  // v2.9.0：比例下单（1/4、1/3、1/2、全部）与股数二选一；比例必须落在 (0,1]
+  const ratioRaw = payload.ratio === undefined || payload.ratio === null || payload.ratio === ''
+    ? null
+    : Number(payload.ratio);
+  const useRatio = ratioRaw !== null && Number.isFinite(ratioRaw);
+  if (useRatio && !(ratioRaw > 0 && ratioRaw <= 1)) throw bad('买入/卖出比例需在 0~1 之间');
+  let shares = Math.floor(Number(payload.shares));
+  if (!useRatio) {
+    if (!Number.isFinite(shares) || shares <= 0) throw bad('股数必须是正整数');
+    if (shares > 1000000) throw bad('单笔股数过大');
+  }
+  // A 股（0./1. 前缀的 6 位代码）按 100 股整手；卖出「全部」允许带零股清仓
+  const lot = /^[01]\.\d{6}$/.test(secid) ? 100 : 1;
+  if (!useRatio && lot === 100 && shares % 100 !== 0) {
+    if (side === 'buy') throw bad('A 股买入必须是 100 股的整数倍');
+    const heldNow = getPaperAccount(user).positions[secid];
+    if (!heldNow || Number(heldNow.shares) !== shares) throw bad('A 股卖出必须是 100 股的整数倍');
+  }
 
   const quotes = await fetchQuoteList([secid], 'stock');
   const quote = (quotes || [])[0];
@@ -8033,10 +8203,27 @@ async function paperTrade(user, payload = {}) {
     throw bad('取不到最新价，稍后再试');
   }
   const price = Number(quote.price);
+  const account = getPaperAccount(user);
+  if (useRatio) {
+    if (side === 'buy') {
+      // 留出佣金后再按整手向下取整，宁可少买一手也不让「全部」因为价格抖动而失败
+      const budget = Math.max(0, Number(account.cash) * ratioRaw);
+      let want = Math.floor(budget / (price * (1 + PAPER_FEE_RATE)) / lot) * lot;
+      const costOf = (n) => price * n + Math.max(PAPER_FEE_MIN, price * n * PAPER_FEE_RATE);
+      while (want > 0 && costOf(want) > Number(account.cash) + 0.005) want -= lot;
+      if (want <= 0) throw bad(`可用资金不足一手（现价 ${nf(price, 3)} 元，每手约 ${nf(price * lot, 0)} 元）`);
+      shares = Math.min(want, 1000000);
+    } else {
+      const held = Number((account.positions[secid] || {}).shares) || 0;
+      if (held <= 0) throw bad('当前没有该标的的持仓');
+      const want = ratioRaw >= 1 ? held : Math.floor((held * ratioRaw) / lot) * lot;
+      if (want <= 0) throw bad('持仓不足一手，可直接点「全部」卖出');
+      shares = Math.min(want, held);
+    }
+  }
   const amount = price * shares;
   const fee = Math.max(PAPER_FEE_MIN, amount * PAPER_FEE_RATE);
 
-  const account = getPaperAccount(user);
   const positions = { ...account.positions };
   const pos = positions[secid] ? { ...positions[secid] } : null;
 
@@ -8087,6 +8274,7 @@ async function paperTrade(user, payload = {}) {
     amount: Math.round(amount * 100) / 100,
     fee: Math.round((fee + (side === 'sell' ? amount * PAPER_TAX_RATE : 0)) * 100) / 100,
     note: String(payload.note || '').slice(0, 80),
+    ...(useRatio ? { ratio: ratioRaw } : {}),
     signal,
   };
 
@@ -8099,10 +8287,14 @@ async function paperTrade(user, payload = {}) {
   return { trade, account: await getPaper(user) };
 }
 
-function resetPaper(user) {
+function resetPaper(user, initial) {
   if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
-  savePaperAccount(user, { initial: PAPER_INITIAL, cash: PAPER_INITIAL, positions: {}, trades: [] });
-  return { ok: true, initial: PAPER_INITIAL };
+  // 管理员可指定该用户的初始资金；普通重置用全局配置值
+  const amount = initial === undefined || initial === null || initial === ''
+    ? loadPaperConfig().initial
+    : sanitizePaperInitial(initial);
+  savePaperAccount(user, { initial: amount, cash: amount, positions: {}, trades: [] });
+  return { ok: true, initial: amount };
 }
 
 /* =========================================================
@@ -8115,9 +8307,13 @@ function resetPaper(user) {
 const PAPER_RANK_MAX_USERS = 200;
 
 async function getPaperRanking() {
-  return cached('paperrank:v1', 30000, async () => {
+  // 配置（初始资金 / 排行榜黑名单）变了就换缓存键，管理端保存后立刻生效
+  const config = loadPaperConfig();
+  return cached(`paperrank:v2:${config.updatedAt}`, 30000, async () => {
     const users = loadUsers().users || [];
-    const rows = users.slice(0, PAPER_RANK_MAX_USERS).map((u) => ({ user: u, account: getPaperAccount(u) }));
+    const hiddenSet = new Set(config.hiddenUserIds);
+    const visible = users.filter((u) => !hiddenSet.has(u.id));
+    const rows = visible.slice(0, PAPER_RANK_MAX_USERS).map((u) => ({ user: u, account: getPaperAccount(u) }));
     const secids = [...new Set(rows.flatMap((r) => Object.keys(r.account.positions || {})))].slice(0, 200);
     let qmap = new Map();
     if (secids.length) {
@@ -8172,11 +8368,97 @@ async function getPaperRanking() {
       ok: true,
       items,
       count: items.length,
-      truncated: users.length > PAPER_RANK_MAX_USERS,
+      hidden: users.length - visible.length,
+      truncated: visible.length > PAPER_RANK_MAX_USERS,
       estimated,
+      initial: config.initial,
       updatedAt: Date.now(),
     };
   });
+}
+
+/* ---------------------------------------------------------
+   管理端：全部用户的模拟盘总览（含黑名单用户与逐笔持仓）
+   v2.9.0 —— 一次批量取价，避免按用户各打一次行情接口。
+   --------------------------------------------------------- */
+async function getPaperAdminOverview() {
+  const config = loadPaperConfig();
+  const hiddenSet = new Set(config.hiddenUserIds);
+  const users = (loadUsers().users || []).slice(0, PAPER_RANK_MAX_USERS);
+  const accounts = users.map((u) => ({ user: u, account: getPaperAccount(u) }));
+  const secids = [...new Set(accounts.flatMap((r) => Object.keys(r.account.positions || {})))].slice(0, 200);
+  let qmap = new Map();
+  let estimated = false;
+  if (secids.length) {
+    try {
+      const quotes = await fetchQuoteList(secids, 'stock');
+      qmap = new Map((quotes || []).map((q) => [q.secid, q]));
+    } catch {
+      qmap = new Map();
+    }
+  }
+  const rows = accounts.map(({ user, account }) => {
+    let marketValue = 0;
+    let costValue = 0;
+    const positions = Object.entries(account.positions || {}).map(([secid, p]) => {
+      const q = qmap.get(secid) || null;
+      const shares = Number(p.shares) || 0;
+      const cost = Number(p.cost) || 0;
+      let price = q && Number.isFinite(Number(q.price)) ? Number(q.price) : cost;
+      if (!q) estimated = true;
+      if (!Number.isFinite(price) || price <= 0) price = cost;
+      const mv = price * shares;
+      const cv = cost * shares;
+      marketValue += mv;
+      costValue += cv;
+      return {
+        secid,
+        code: String(p.code || secid.split('.')[1] || ''),
+        name: String(p.name || ''),
+        shares,
+        cost,
+        price: Math.round(price * 1000) / 1000,
+        pct: q ? Number(q.pct) : null,
+        marketValue: Math.round(mv * 100) / 100,
+        costValue: Math.round(cv * 100) / 100,
+        profit: Math.round((mv - cv) * 100) / 100,
+        profitPct: cv > 0 ? Math.round(((mv - cv) / cv) * 10000) / 100 : null,
+      };
+    }).sort((a, b) => b.marketValue - a.marketValue);
+    const total = Math.round((account.cash + marketValue) * 100) / 100;
+    const profit = Math.round((total - account.initial) * 100) / 100;
+    return {
+      id: user.id,
+      username: user.username,
+      role: roleOf(user),
+      primary: !!user.primary,
+      hidden: hiddenSet.has(user.id),
+      initial: account.initial,
+      cash: Math.round(account.cash * 100) / 100,
+      marketValue: Math.round(marketValue * 100) / 100,
+      costValue: Math.round(costValue * 100) / 100,
+      total,
+      profit,
+      profitPct: account.initial ? Math.round((profit / account.initial) * 10000) / 100 : 0,
+      positionCount: positions.length,
+      positions,
+      trades: account.trades.slice(-10).reverse(),
+      updatedAt: account.updatedAt,
+    };
+  });
+  rows.sort((a, b) => b.total - a.total || String(a.username).localeCompare(String(b.username)));
+  return {
+    ok: true,
+    config,
+    users: rows,
+    totals: {
+      users: rows.length,
+      traded: rows.filter((r) => r.positionCount > 0 || r.updatedAt).length,
+      hidden: rows.filter((r) => r.hidden).length,
+    },
+    estimated,
+    updatedAt: Date.now(),
+  };
 }
 
 /* =========================================================
@@ -8298,7 +8580,10 @@ const httpRoutes = createHttpRoutes({
   getAlertBox,
   saveAlertBox,
   getPaper,
+  getPaperAdminOverview,
   getPaperRanking,
+  getPaperConfig: loadPaperConfig,
+  savePaperConfig,
   getFundPnlSeries,
   paperTrade,
   resetPaper,

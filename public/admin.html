@@ -27,6 +27,10 @@
           <span>密码</span>
           <input id="adminPassword" name="password" type="password" maxlength="64" autocomplete="current-password" placeholder="登录密码" required>
         </label>
+        <label class="admin-check">
+          <input type="checkbox" id="adminRemember" value="1">
+          <span>7 天内免登录（这台设备）</span>
+        </label>
         <button type="submit" class="admin-login-btn" id="adminLoginBtn">登录后台</button>
         <div class="admin-msg" id="adminLoginMsg" role="alert" aria-live="polite"></div>
       </form>
