@@ -3802,6 +3802,10 @@ function renderPaperRanking() {
     const held = (item.positions || []).slice(0, 3)
       .map((p) => `${esc(cleanName(p.name) || p.code)} <span class="t-sub">${nf(p.shares, 0)} 股</span>`)
       .join('<br>') || '<span class="muted">空仓</span>';
+    // 前 3 只看不下时，悬浮能看到这一户的全部标的（服务端最多给 10 只）
+    const heldTitle = (item.positions || [])
+      .map((p) => `${cleanName(p.name) || p.code} ${nf(p.shares, 0)} 股 · 市值 ${nf(p.marketValue, 2)}`)
+      .join('\n');
     const more = (item.positionCount || 0) > 3 ? `<div class="t-sub">等 ${item.positionCount} 只</div>` : '';
     // 0 收益不标正负号，避免 -0 显示成 +0.00%
     const pctVal = Number(item.profitPct) || 0;
@@ -3812,7 +3816,7 @@ function renderPaperRanking() {
       <td class="t-price">${nf(item.total, 2)}</td>
       <td class="t-chg ${toneClass(item.profit)}">${signedFmt(item.profit, 2)}</td>
       <td class="t-chg ${toneClass(pctVal)}">${pctText}</td>
-      <td>${held}${more}</td>
+      <td title="${esc(heldTitle)}">${held}${more}</td>
       <td class="t-dim">${item.updatedAt ? esc(timeText(item.updatedAt)) : '<span class="muted">未交易</span>'}</td>
     </tr>`;
   }).join('');
@@ -5211,6 +5215,8 @@ function saveFundHolding(code, shares, cost) {
   renderFundHoldSummary();
   renderFundWatchTable();
   renderFundHoldTable();
+  // v2.8.0：持仓变化后盈亏曲线要跟着变（份额变了但净值序列可以复用）
+  loadFundPnl(true);
 }
 
 
@@ -5308,6 +5314,7 @@ async function adoptServerPortfolio({ silent = false } = {}) {
   renderFundHoldSummary();
   renderFundHoldTable();
   loadFundWatch();
+  loadFundPnl(true);
   loadWatchData(true).catch(() => {});
   if (!silent) {
     toast(
