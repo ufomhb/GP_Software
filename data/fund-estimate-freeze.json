@@ -134,5 +134,67 @@
       "nav": null,
       "kind": "etf"
     }
+  },
+  "2026-11-19": {
+    "025209": {
+      "pct": -0.55,
+      "at": "",
+      "nav": null,
+      "kind": "holdings"
+    },
+    "021277": {
+      "pct": 0.95,
+      "at": "",
+      "nav": null,
+      "kind": "holdings"
+    },
+    "000960": {
+      "pct": -1.79,
+      "at": "",
+      "nav": null,
+      "kind": "holdings"
+    },
+    "016371": {
+      "pct": 0.83,
+      "at": "",
+      "nav": null,
+      "kind": "holdings"
+    },
+    "012349": {
+      "pct": -1.84,
+      "at": "",
+      "nav": null,
+      "kind": "etf"
+    },
+    "016531": {
+      "pct": -4.2,
+      "at": "",
+      "nav": null,
+      "kind": "holdings"
+    },
+    "017811": {
+      "pct": 2.83,
+      "at": "",
+      "nav": null,
+      "kind": "holdings"
+    },
+    "012863": {
+      "pct": -2,
+      "at": "",
+      "nav": null,
+      "kind": "etf"
+    },
+    "015790": {
+      "pct": -2.14,
+      "at": "",
+      "nav": null,
+      "kind": "holdings"
+    },
+    "002963": {
+      "pct": -1.38,
+      "at": "",
+      "nav": null,
+      "kind": "etf"
+    }
   }
 }
