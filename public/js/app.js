@@ -3994,12 +3994,15 @@ async function loadPaperQuote(secid) {
     const data = intraRes.value || {};
     const candles = data.candles || [];
     if (candles.length >= 2) {
+      chart.classList.remove('is-empty');
       intradayChart(chart, { candles, preClose: Number(data.preClose), fullSession: true });
       t.intraday = data;
     } else {
+      chart.classList.add('is-empty');
       chart.innerHTML = `<div class="empty small">暂无分时（未开盘或休市）${data.periodLabel ? ` · ${esc(data.periodLabel)}` : ''}</div>`;
     }
   } else if (chart) {
+    chart.classList.add('is-empty');
     chart.innerHTML = '<div class="empty small">分时暂不可用，价格仍可正常成交</div>';
   }
   renderPaperQuote();
@@ -4052,7 +4055,7 @@ function openPaperTrade(side = 'buy', preset = {}) {
       <form id="paperForm" class="pw-form" autocomplete="off">
         <div class="paper-symbol-wrap">
           <label class="input-wrap">
-            <span>标的（输入代码或名称）</span>
+            <span>标的</span>
             <input id="paperSymbol" type="search" placeholder="${isSell ? '输入持仓标的代码或名称，如 600519' : '输入股票代码或名称，如 600519 / 贵州茅台'}" autocomplete="off">
           </label>
           <div id="paperSymbolPop" class="search-pop paper-symbol-pop" hidden></div>

@@ -528,7 +528,11 @@ function createStrategyLog(deps) {
       if (series) {
         for (const d of allowed) {
           const row = series.get(d);
-          if (row && Number.isFinite(Number(row.pct))) { hit = { d, pct: Number(row.pct) }; break; }
+          // Number(null) === 0：序列首日没有前一交易日，pct 是 null，不能算成 0%
+          if (row && row.pct !== null && row.pct !== undefined && Number.isFinite(Number(row.pct))) {
+            hit = { d, pct: Number(row.pct) };
+            break;
+          }
         }
       }
       if (!hit) {
@@ -778,7 +782,11 @@ function createStrategyLog(deps) {
           const prev = prevOf(code, date);
           if (!prev) { skipped += 1; continue; }
           const est = estMap && estMap.get ? (estMap.get(code) || new Map()).get(date) : null;
-          const estPct = est && Number.isFinite(Number(est.pct)) ? Number(est.pct) : null;
+          // 注意 Number(null) === 0：缺估值必须显式判空，不能把 null 当成 0% 估值
+          const estPct = est && est.pct !== null && est.pct !== undefined && est.pct !== ''
+            && Number.isFinite(Number(est.pct))
+            ? Number(est.pct)
+            : null;
           const estKind = est && est.kind ? String(est.kind) : '';
           navDate = prev.d;
           navPct = prev.pct;

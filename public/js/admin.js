@@ -1947,14 +1947,13 @@ function renderPaperAdmin(data) {
       { label: '模拟账户', value: n(totals.users), sub: `已交易 ${n(totals.traded)} 个` },
       { label: '排行榜隐藏', value: n(totals.hidden), sub: '黑名单（仍可自己交易）' },
       { label: '全局初始资金', value: n(cfg.initial).toLocaleString('zh-CN'), sub: '新账号 / 重置用', tone: 'accent' },
-      { label: '持仓取价', value: data.estimated ? '部分按成本估算' : '实时', sub: data.estimated ? '个别标的取不到实时价' : '全部取到实时价' },
     ]);
   }
   const initialInput = $('#paperInitial');
   if (initialInput && document.activeElement !== initialInput) initialInput.value = String(n(cfg.initial));
   const meta = $('#paperMeta');
   if (meta) {
-    meta.textContent = `${users.length} 个用户 · 隐藏 ${n(totals.hidden)} 个 · 初始资金 ${n(cfg.initial).toLocaleString('zh-CN')} 元`;
+    meta.textContent = `${users.length} 个用户 · 隐藏 ${n(totals.hidden)} 个 · 初始资金 ${n(cfg.initial).toLocaleString('zh-CN')} 元 · 持仓取价：${data.estimated ? '部分按成本估算' : '实时'}`;
   }
   const rows = users.map((u) => {
     const profit = Number(u.profit) || 0;
