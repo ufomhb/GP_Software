@@ -12,7 +12,11 @@
     "strongRatio": 20,
     "marketWeight": 1,
     "concentrationPct": 40,
-    "concentrationTargetPct": 30
+    "concentrationTargetPct": 30,
+    "addTrendConfirm": true,
+    "cutMaxDip": 3,
+    "maxActionsPerDay": 3,
+    "volNormalize": false
   },
   "bands": {
     "addBand": 0.3,
@@ -39322,6 +39326,201 @@
       ],
       "pending": [],
       "eval": null
+    },
+    {
+      "date": "2026-11-20",
+      "slotTime": "14:30",
+      "source": "manual",
+      "late": false,
+      "decisionBasis": "estimate",
+      "createdAt": 1795111244322,
+      "rules": {
+        "addScore": 75,
+        "addDip": 1.2,
+        "strongScore": 80,
+        "strongDip": 2,
+        "cutScore": 45,
+        "cutRise": 0.8,
+        "cutDip": 1.2,
+        "weakScore": 35,
+        "baseRatio": 10,
+        "strongRatio": 20,
+        "marketWeight": 1,
+        "concentrationPct": 40,
+        "concentrationTargetPct": 30,
+        "addTrendConfirm": true,
+        "cutMaxDip": 3,
+        "maxActionsPerDay": 3,
+        "volNormalize": false
+      },
+      "bands": {
+        "addBand": 0.3,
+        "cutBand": 0.3,
+        "holdBand": 0.8,
+        "evalWindow": 3
+      },
+      "market": {
+        "available": true,
+        "verdict": "偏空",
+        "score": -3,
+        "cnScore": -4,
+        "extScore": -1.7,
+        "summary": "上证 -0.28% ｜ 创业板 -0.79% ｜ 涨跌 658:4938 ｜ 两市成交 13051 亿 ｜ 主力 -400 亿",
+        "ext": "纳指 -1.21% ｜ 标普 -1.28% ｜ 恒生 -1.95% ｜ 美元指数 103.87(+0.07%) ｜ 伦敦金 -1.24%",
+        "lines": [
+          "- 今日盘面：上证 3577.62（-0.28%） ｜ 深证 -0.71% ｜ 创业板 -0.79% ｜ 科创50 +1.83% ｜ 涨跌 658:4938 ｜ 两市成交 13051 亿 ｜ 主力 -400 亿",
+          "- 外围隔夜：纳指 -1.21% ｜ 标普 -1.28% ｜ 道指 -1.68% ｜ 恒生 -1.95% ｜ 日经 +0.71% ｜ 美元指数 103.87(+0.07%) ｜ 伦敦金 -1.24% ｜ 原油 +1.15% ｜ 离岸人民币 6.6924",
+          "- 倾向：🟩 **偏空**（强度 -3）",
+          "- 关注：1) 涨跌家数 658:4938，赚钱效应差，反弹需要成交量配合；2) 上证 位于 20 日线（3644.38），反弹仍受压制；当日区间 3547.94~3584.28",
+          "- 仓位建议：总仓位压到 5~6 成以下，减仓优先执行，反弹再减、不追跌",
+          "- 与今日动作的配合：今天触发的加仓只做第一批（一半），剩余等明天确认；减仓按建议执行。"
+        ]
+      },
+      "snapshot": {
+        "today": "2026-11-20",
+        "marketValue": 108947.11819999998,
+        "portfolioPct": -1.4277718526043963,
+        "dayProfit": -1149.0269429579685,
+        "profit": -18750.208100000003,
+        "marketVerdict": "偏空",
+        "marketScore": -3,
+        "counts": {
+          "add": 0,
+          "cut": 3,
+          "hold": 1,
+          "pending": 1,
+          "observe": 3
+        }
+      },
+      "items": [
+        {
+          "code": "012349",
+          "name": "天弘恒生科技ETF联接C",
+          "action": "cut",
+          "rule": "score-weak-drop",
+          "shares": 17969,
+          "targetShares": 13969,
+          "delta": 4000,
+          "price": 0.4828,
+          "pct": -1.84,
+          "pctKind": "etf",
+          "navPct": -1.84,
+          "decisionBasis": "etf",
+          "navDate": "2026-11-19",
+          "weight": 7.96,
+          "score": 17,
+          "fundScore": 21,
+          "marketAdj": -4,
+          "atrPct": 1.7185750182306614,
+          "holdBandUsed": null,
+          "reason": "技术评分 17（基金 21，市场氛围 -4） 弱势，穿透估算·ETF继续下跌 1.84%，建议减 2 成"
+        },
+        {
+          "code": "012863",
+          "name": "汇添富中证电池主题ETF发起式联接C",
+          "action": "cut",
+          "rule": "score-weak-drop",
+          "shares": 16488,
+          "targetShares": 12988,
+          "delta": 3500,
+          "price": 0.5234,
+          "pct": -2,
+          "pctKind": "etf",
+          "navPct": -2,
+          "decisionBasis": "etf",
+          "navDate": "2026-11-19",
+          "weight": 7.92,
+          "score": 12,
+          "fundScore": 16,
+          "marketAdj": -4,
+          "atrPct": 1.8787891306595899,
+          "holdBandUsed": null,
+          "reason": "技术评分 12（基金 16，市场氛围 -4） 弱势，穿透估算·ETF继续下跌 2.00%，建议减 2 成"
+        },
+        {
+          "code": "015790",
+          "name": "永赢高端装备智选混合发起C",
+          "action": "cut",
+          "rule": "score-weak-drop",
+          "shares": 10396,
+          "targetShares": 7896,
+          "delta": 2500,
+          "price": 0.7833,
+          "pct": -2.14,
+          "pctKind": "holdings",
+          "navPct": -2.14,
+          "decisionBasis": "holdings",
+          "navDate": "2026-11-19",
+          "weight": 7.47,
+          "score": 12,
+          "fundScore": 16,
+          "marketAdj": -4,
+          "atrPct": 3.313284625256453,
+          "holdBandUsed": null,
+          "reason": "技术评分 12（基金 16，市场氛围 -4） 弱势，穿透估算·重仓继续下跌 2.14%，建议减 2 成"
+        },
+        {
+          "code": "017811",
+          "name": "东方人工智能主题混合C",
+          "action": "hold",
+          "rule": "no-signal",
+          "shares": 4137,
+          "targetShares": 4137,
+          "delta": 0,
+          "price": 2.5304,
+          "pct": 2.83,
+          "pctKind": "holdings",
+          "navPct": 2.83,
+          "decisionBasis": "holdings",
+          "navDate": "2026-11-19",
+          "weight": 9.61,
+          "score": 63,
+          "fundScore": 67,
+          "marketAdj": -4,
+          "atrPct": 2.9803602619431553,
+          "holdBandUsed": 1.64,
+          "reason": "评级「偏多」，参考仓位 4-6 成"
+        }
+      ],
+      "pending": [
+        {
+          "code": "021277",
+          "name": "广发全球精选股票(QDII)人民币C",
+          "navDate": "2026-11-18",
+          "navPct": 0.5,
+          "note": "没有 15:00 估值，不参与本次决策"
+        }
+      ],
+      "observe": [
+        {
+          "code": "016531",
+          "name": "鹏华碳中和主题混合C",
+          "action": "cut",
+          "rule": "cut-max-dip",
+          "pct": -4.2,
+          "score": 28,
+          "reason": "技术评分 28（基金 32，市场氛围 -4） 偏弱，但当日已跌 4.20%（≥ 3%），不追跌减仓，等反弹或次日确认"
+        },
+        {
+          "code": "000960",
+          "name": "招商医药健康产业股票",
+          "action": "cut",
+          "rule": "daily-cap",
+          "pct": -1.79,
+          "score": 12,
+          "reason": "信号成立，但已到每日调仓上限 3 只（本只排第 4），顺延到下一交易日"
+        },
+        {
+          "code": "002963",
+          "name": "易方达黄金ETF联接C",
+          "action": "cut",
+          "rule": "daily-cap",
+          "pct": -1.38,
+          "score": 17,
+          "reason": "信号成立，但已到每日调仓上限 3 只（本只排第 5），顺延到下一交易日"
+        }
+      ],
+      "eval": null
     }
   ],
   "tunes": [
@@ -39461,10 +39660,13 @@
   ],
   "autoTune": {
     "enabled": true,
-    "minSamples": 5,
+    "minSamples": 20,
     "minHitRate": 0.5,
     "step": 5,
+    "minDelta": 0.03,
+    "foldRatio": 0.7,
+    "maxChanges": 2,
     "lastTuneDate": "2026-11-20"
   },
-  "updatedAt": 1795107810809
+  "updatedAt": 1795111258825
 }
