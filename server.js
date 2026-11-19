@@ -319,6 +319,44 @@ function zonedParts(timeZone) {
   };
 }
 
+/* =========================================================
+   会话按「上海自然日」失效（v2.8.0）
+   ---------------------------------------------------------
+   需求：每天 0 点后必须重新登录，登录记录才能反映真实登录。
+   做法：会话创建日 !== 今天 → 立即失效；Cookie Max-Age 设成「距下个 0 点」，
+   浏览器到点自动丢 Cookie，服务端校验兜底（老会话用持久化的 createdAt 推导，
+   json 与 sqlite 两种存储都有该字段，不需要 schema 迁移）。
+   ========================================================= */
+function shanghaiDayOf(ts) {
+  const d = new Date(Number(ts));
+  if (!Number.isFinite(d.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const get = (type) => (parts.find((p) => p.type === type) || {}).value || '';
+  const year = get('year');
+  const month = get('month');
+  const day = get('day');
+  return year && month && day ? `${year}-${month}-${day}` : '';
+}
+
+/** 距下一个上海 0 点的秒数（最小 60 秒，避免刚过 0 点拿到 0 或负数） */
+function secondsToShanghaiMidnight() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date());
+  const get = (type) => Number((parts.find((p) => p.type === type) || {}).value || 0);
+  const elapsed = get('hour') * 3600 + get('minute') * 60 + get('second');
+  return Math.max(60, 86400 - elapsed);
+}
+
 function sessionStatus(timeZone, segments) {
   const p = zonedParts(timeZone);
   if (p.weekday === 0 || p.weekday === 6) {
@@ -7210,6 +7248,7 @@ function parseCookies(req) {
 }
 
 // 没有任何会话令牌时返回 null；过期会话顺手清掉。
+// v2.8.0：除 expiresAt 外，还要求「会话创建日 === 今天（上海时区）」，跨 0 点即失效。
 function currentUser(req) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token) return null;
@@ -7217,6 +7256,12 @@ function currentUser(req) {
   const session = sessions[sessionKey(token)];
   if (!session || !session.userId) return null;
   if (!(Number(session.expiresAt) > Date.now())) {
+    delete sessions[sessionKey(token)];
+    saveSessions(sessions);
+    return null;
+  }
+  const loginDay = shanghaiDayOf(session.createdAt);
+  if (!loginDay || loginDay !== zonedParts('Asia/Shanghai').date) {
     delete sessions[sessionKey(token)];
     saveSessions(sessions);
     return null;
@@ -7271,12 +7316,18 @@ function issueSession(req, res, user) {
   const token = crypto.randomBytes(32).toString('hex');
   const sessions = loadSessions();
   const now = Date.now();
+  // v2.8.0：到下一个上海 0 点就失效，第二天必须重新登录（登录记录才有真实每日登录）
+  const toMidnight = secondsToShanghaiMidnight();
   for (const [k, v] of Object.entries(sessions)) {
     if (!v || !(Number(v.expiresAt) > now)) delete sessions[k];
   }
-  sessions[sessionKey(token)] = { userId: user.id, expiresAt: now + SESSION_TTL, createdAt: now };
+  sessions[sessionKey(token)] = {
+    userId: user.id,
+    expiresAt: Math.min(now + SESSION_TTL, now + toMidnight * 1000),
+    createdAt: now,
+  };
   saveSessions(sessions);
-  res.setHeader('Set-Cookie', sessionCookie(req, token, Math.floor(SESSION_TTL / 1000)));
+  res.setHeader('Set-Cookie', sessionCookie(req, token, toMidnight));
 }
 
 function dropSession(req, res) {
@@ -8054,6 +8105,167 @@ function resetPaper(user) {
   return { ok: true, initial: PAPER_INITIAL };
 }
 
+/* =========================================================
+   模拟账户排行榜（v2.8.0）
+   ---------------------------------------------------------
+   用户明确要求：本系统所有登录用户都能看到彼此模拟账户的
+   标的与总资产。只暴露用户名 + 模拟盘数据，不返回 userId/IP/角色。
+   取价失败时按成本价估算，避免整块接口失败。
+   ========================================================= */
+const PAPER_RANK_MAX_USERS = 200;
+
+async function getPaperRanking() {
+  return cached('paperrank:v1', 30000, async () => {
+    const users = loadUsers().users || [];
+    const rows = users.slice(0, PAPER_RANK_MAX_USERS).map((u) => ({ user: u, account: getPaperAccount(u) }));
+    const secids = [...new Set(rows.flatMap((r) => Object.keys(r.account.positions || {})))].slice(0, 200);
+    let qmap = new Map();
+    if (secids.length) {
+      try {
+        const quotes = await fetchQuoteList(secids, 'stock');
+        qmap = new Map((quotes || []).map((q) => [q.secid, q]));
+      } catch {
+        qmap = new Map();
+      }
+    }
+    let estimated = false;
+    const items = rows.map(({ user, account }) => {
+      let marketValue = 0;
+      let costValue = 0;
+      const positions = Object.entries(account.positions || {}).map(([secid, p]) => {
+        const q = qmap.get(secid) || null;
+        const shares = Number(p.shares) || 0;
+        const cost = Number(p.cost) || 0;
+        let price = q && Number.isFinite(Number(q.price)) ? Number(q.price) : cost;
+        if (!q) estimated = true;
+        if (!Number.isFinite(price) || price <= 0) price = cost;
+        const mv = price * shares;
+        marketValue += mv;
+        costValue += cost * shares;
+        return {
+          code: String(p.code || secid.split('.')[1] || ''),
+          name: String(p.name || ''),
+          shares,
+          price: Math.round(price * 1000) / 1000,
+          marketValue: Math.round(mv * 100) / 100,
+          profitPct: cost > 0 ? Math.round(((price - cost) / cost) * 10000) / 100 : null,
+        };
+      }).sort((a, b) => b.marketValue - a.marketValue);
+      const total = Math.round((account.cash + marketValue) * 100) / 100;
+      const profit = Math.round((total - account.initial) * 100) / 100;
+      return {
+        username: user.username,
+        total,
+        cash: Math.round(account.cash * 100) / 100,
+        marketValue: Math.round(marketValue * 100) / 100,
+        costValue: Math.round(costValue * 100) / 100,
+        profit,
+        profitPct: account.initial ? Math.round((profit / account.initial) * 10000) / 100 : 0,
+        positionCount: positions.length,
+        positions: positions.slice(0, 10),
+        updatedAt: account.updatedAt,
+      };
+    });
+    items.sort((a, b) => b.total - a.total || b.profitPct - a.profitPct);
+    items.forEach((item, i) => { item.rank = i + 1; });
+    return {
+      ok: true,
+      items,
+      count: items.length,
+      truncated: users.length > PAPER_RANK_MAX_USERS,
+      estimated,
+      updatedAt: Date.now(),
+    };
+  });
+}
+
+/* =========================================================
+   自选基金盈亏曲线：净值/收盘价序列（v2.8.0）
+   ---------------------------------------------------------
+   前端只把「有持仓的基金」传进来（最多 12 只），服务端按
+   code 缓存 6 小时；单只失败进 missing，不影响其它基金。
+   ========================================================= */
+const FUND_PNL_MAX = 12;
+
+/** 序列 → 近1日 / 近1月 / 今年至今 / 近1年 涨跌幅（%），日期以序列最后一个净值为基准 */
+function periodReturnsFromSeries(points) {
+  const rows = (points || []).filter(
+    (p) => p && /^\d{4}-\d{2}-\d{2}/.test(String(p.d)) && Number.isFinite(Number(p.c)) && Number(p.c) > 0,
+  );
+  if (!rows.length) return { d1: null, m1: null, ytd: null, y1: null };
+  const at = (p) => new Date(`${String(p.d).slice(0, 10)}T00:00:00+08:00`).getTime();
+  const last = rows[rows.length - 1];
+  const lastDate = at(last);
+  const prev = rows.length > 1 ? rows[rows.length - 2] : null;
+  const pickBefore = (target) => {
+    let pick = null;
+    for (const p of rows) {
+      if (at(p) <= target) pick = p;
+      else break;
+    }
+    return pick;
+  };
+  const pct = (base) => (base && Number(base.c) > 0
+    ? Math.round(((Number(last.c) - Number(base.c)) / Number(base.c)) * 10000) / 100
+    : null);
+  const monthAgo = new Date(lastDate);
+  monthAgo.setMonth(monthAgo.getMonth() - 1);
+  const yearAgo = new Date(lastDate);
+  yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+  const yearStart = new Date(`${String(last.d).slice(0, 4)}-01-01T00:00:00+08:00`).getTime();
+  return {
+    d1: pct(prev),
+    m1: pct(pickBefore(monthAgo.getTime())),
+    ytd: pct(pickBefore(yearStart)),
+    y1: pct(pickBefore(yearAgo.getTime())),
+  };
+}
+
+async function getFundPnlSeries(codes, days = 400) {
+  const list = [...new Set((Array.isArray(codes) ? codes : []).map((c) => String(c || '').trim()).filter(Boolean))];
+  if (list.length > FUND_PNL_MAX) {
+    throw Object.assign(new Error(`一次最多统计 ${FUND_PNL_MAX} 只基金`), { status: 400 });
+  }
+  if (!list.length) return { ok: true, items: [], missing: [], updatedAt: Date.now() };
+  const span = Math.max(30, Math.min(500, Number(days) || 400));
+  const results = await mapLimit(list, 2, async (code) => {
+    try {
+      const type = isEtfLike(code, '') ? 'etf' : 'open';
+      const row = await cached(`fundpnl:${type}:${code}:${span}`, 6 * 3600 * 1000, async () => {
+        if (type === 'etf') {
+          const secid = fundSecid(code);
+          if (!secid) return null;
+          const kline = await getKline(secid, 101, Math.min(400, span + 40));
+          const candles = (kline && kline.candles) || [];
+          const points = candles
+            .map((c) => ({ d: String(c.d).slice(0, 10), c: num(c.c) }))
+            .filter((x) => Number.isFinite(x.c) && x.c > 0);
+          return points.length ? { code, type, name: (kline && kline.name) || '', points } : null;
+        }
+        const pages = Math.min(26, Math.max(2, Math.ceil((span + 20) / 20)));
+        const navRows = await fetchFundNav(code, pages);
+        const points = navRows
+          .slice()
+          .reverse()
+          .map((r) => ({ d: String(r.FSRQ || ''), c: num(r.DWJZ) }))
+          .filter((x) => Number.isFinite(x.c) && x.c > 0);
+        return points.length ? { code, type, name: '', points } : null;
+      });
+      return row && Array.isArray(row.points) && row.points.length ? row : null;
+    } catch {
+      return null;
+    }
+  });
+  const items = [];
+  const missing = [];
+  list.forEach((code, i) => {
+    const row = results[i];
+    if (!row) { missing.push(code); return; }
+    items.push({ ...row, periods: periodReturnsFromSeries(row.points) });
+  });
+  return { ok: true, items, missing, updatedAt: Date.now() };
+}
+
 const deployToNas = createDeployToNas({ rootDir: __dirname, version: VERSION });
 
 const httpRoutes = createHttpRoutes({
@@ -8086,6 +8298,8 @@ const httpRoutes = createHttpRoutes({
   getAlertBox,
   saveAlertBox,
   getPaper,
+  getPaperRanking,
+  getFundPnlSeries,
   paperTrade,
   resetPaper,
   fetchQuoteList,

@@ -39,6 +39,8 @@ function createHttpRoutes(deps) {
     getAlertBox,
     saveAlertBox,
     getPaper,
+    getPaperRanking,
+    getFundPnlSeries,
     paperTrade,
     resetPaper,
     fetchQuoteList,
@@ -935,6 +937,12 @@ async function handleApi(req, res, url) {
     if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
     return getPaper(user);
   }
+  // v2.8.0：全员模拟账户排行榜（所有登录用户可见彼此的模拟持仓与总资产）
+  if (p === '/api/paper/ranking') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return getPaperRanking();
+  }
   if (p === '/api/paper/trade' && req.method === 'POST') {
     const user = currentUser(req);
     if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
@@ -1016,6 +1024,13 @@ async function handleApi(req, res, url) {
     const code = q.get('code');
     if (!code) throw new Error('缺少基金代码');
     return getFundMetrics(code, q.get('type'));
+  }
+  // v2.8.0：自选基金盈亏曲线（只给有持仓的基金拉净值序列，最多 12 只）
+  if (p === '/api/funds/pnl-series') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    const codes = (q.get('codes') || '').split(',').map((s) => s.trim()).filter(Boolean);
+    return getFundPnlSeries(codes, Number(q.get('days') || 400));
   }
   if (p === '/api/funds/stock-rank') {
     const ft = STOCK_FUND_TYPES[q.get('type')] ? q.get('type') : 'gp';
