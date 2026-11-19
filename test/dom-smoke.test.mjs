@@ -1237,8 +1237,7 @@ test('DOM：模拟账户排行榜默认收起，点按钮才展开并请求', ()
   app.state.paperRankOpen = prevOpen;
 });
 
-test('DOM：模拟买卖按比例估算股数（买入按可用资金、卖出按持仓）', () => {
-  // 买入：10 万可用、价格 10 元、1/4 → 25000 / (10×1.00025) ≈ 2499 股 → 向下取整到 2400 股
+test('DOM：模拟买卖按比例估算股数（买入按可用资金、卖出按持仓）', () => {  // 买入：10 万可用、价格 10 元、1/4 → 25000 / (10×1.00025) ≈ 2499 股 → 向下取整到 2400 股
   assert.equal(app.paperRatioShares({ side: 'buy', ratio: 0.25, price: 10, cash: 100000, lot: 100 }), 2400);
   // 1/3、1/2 同理按整手取整
   assert.equal(app.paperRatioShares({ side: 'buy', ratio: 0.3333, price: 10, cash: 100000, lot: 100 }), 3300);
@@ -1255,8 +1254,7 @@ test('DOM：模拟买卖按比例估算股数（买入按可用资金、卖出�
   assert.equal(app.paperRatioShares({ side: 'sell', ratio: 0.5, price: 10, held: 0, lot: 100 }), 0);
 });
 
-test('DOM：模拟买卖弹窗显示报价、预计金额与费用', () => {
-  const prevPaper = app.state.paper;
+test('DOM：模拟买卖弹窗显示报价、预计金额与费用', () => {  const prevPaper = app.state.paper;
   app.state.paper = {
     initial: 1000000, cash: 100000, marketValue: 0, total: 100000,
     profit: 0, profitPct: 0, positions: [], trades: [], rules: {},
@@ -1320,4 +1318,46 @@ test('DOM：盈亏统计与我的持仓用同一口径（今日盈亏 / 累计�
   app.state.fundHoldings = prevHold;
   app.state.fundWatchData = prevLive;
   app.state.fundPnl = prevPnl;
+});
+
+/* ---------------------------------------------------------
+   v2.9.1：模拟买入被 HTML step 校验拦住（100 股非法）+ 股数校验提示
+   --------------------------------------------------------- */
+
+test('DOM：模拟买卖股数输入不再用 step 原生校验，100 股可直接提交', () => {
+  const prevPaper = app.state.paper;
+  app.state.paper = {
+    initial: 1000000, cash: 1000000, marketValue: 0, total: 1000000,
+    profit: 0, profitPct: 0, positions: [], trades: [], rules: {},
+  };
+  app.openPaperTrade('buy');
+  const form = document.querySelector('#paperForm');
+  const input = document.querySelector('#paperShares');
+  assert.ok(form && input);
+  assert.equal(form.hasAttribute('novalidate'), true, '表单要关掉浏览器原生校验');
+  assert.equal(input.getAttribute('step'), '1', 'step 必须是 1（step=100 + min=1 会让 100 非法）');
+  input.value = '100';
+  assert.equal(form.checkValidity(), true, '100 股必须是合法值');
+
+  // 纯校验函数：整手 / 非整手 / 资金不足 / 持仓不足 / 零股清仓
+  assert.equal(app.paperValidateShares({ side: 'buy', shares: 100, secid: '1.600519', price: 10, cash: 100000 }).ok, true);
+  assert.equal(app.paperValidateShares({ side: 'buy', shares: 200, secid: '1.600519', price: 10, cash: 100000 }).ok, true);
+  const bad = app.paperValidateShares({ side: 'buy', shares: 150, secid: '1.600519', price: 10, cash: 100000 });
+  assert.equal(bad.ok, false);
+  assert.match(bad.message, /100 股整数倍/);
+  assert.match(bad.message, /100 或 200/, '要给出可改的具体数字');
+  const poor = app.paperValidateShares({ side: 'buy', shares: 200, secid: '1.600519', price: 1000, cash: 100000 });
+  assert.equal(poor.ok, false);
+  assert.match(poor.message, /可用资金不足/);
+  // 卖出：部分卖出必须整手；全仓允许零股
+  assert.equal(app.paperValidateShares({ side: 'sell', shares: 150, secid: '1.600519', held: 150 }).ok, true);
+  const partial = app.paperValidateShares({ side: 'sell', shares: 150, secid: '1.600519', held: 400 });
+  assert.equal(partial.ok, false);
+  assert.match(partial.message, /全部/);
+  assert.equal(app.paperValidateShares({ side: 'sell', shares: 500, secid: '1.600519', held: 400 }).ok, false);
+  // 非 A 股（港股/美股）不按 100 股
+  assert.equal(app.paperValidateShares({ side: 'buy', shares: 15, secid: '116.00700', price: 300, cash: 100000 }).ok, true);
+
+  app.closeOverlay();
+  app.state.paper = prevPaper;
 });

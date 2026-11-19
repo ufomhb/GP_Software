@@ -8,8 +8,8 @@
   <meta name="robots" content="noindex,nofollow">
   <title>寰球智投 · 后台管理</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.9.0">
-  <link rel="stylesheet" href="/css/admin.css?v=2.9.0">
+  <link rel="stylesheet" href="/css/app.css?v=2.9.1">
+  <link rel="stylesheet" href="/css/admin.css?v=2.9.1">
 </head>
 <body class="admin-body">
   <!-- 登录 -->
@@ -290,6 +290,16 @@
           <p class="admin-note" id="stBfNote">—</p>
         </article>
 
+        <article class="admin-card" id="stCheckCard">
+          <div class="admin-card-head"><h2>参数体检</h2><span class="muted small" id="stCheckMeta">基于近 130 个交易日重放</span></div>
+          <div class="admin-actions">
+            <button type="button" class="admin-btn primary" id="stCheckRun">体检一次（历史重放）</button>
+            <button type="button" class="admin-btn" id="stCheckApply" disabled>采纳建议</button>
+          </div>
+          <div id="stCheckBody" class="admin-table-wrap"><div class="admin-empty">点「体检一次」用历史数据对比参数，不会改任何设置</div></div>
+          <p class="admin-note" id="stCheckNote">目标函数 = 方向性命中率 × √覆盖率；前 70% 训练选参、后 30% 验证确认，验证改善不足就不建议改。</p>
+        </article>
+
         <article class="admin-card">
           <div class="admin-card-head">
             <h2>历史记录</h2>
@@ -486,6 +496,6 @@
     </div>
   </div>
 
-  <script src="/js/admin.js?v=2.9.0"></script>
+  <script src="/js/admin.js?v=2.9.1"></script>
 </body>
 </html>

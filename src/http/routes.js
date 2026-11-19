@@ -682,12 +682,15 @@ async function handleAdmin(req, res, url) {
     const body = req.body || {};
     // 只改自动调参的开关/门槛时不用跑；显式 run=true 才立刻执行一次
     if (body.run === true) {
-      const res = strategyLog.runAutoTune({ force: body.force === true });
+      // v2.9.1：改为「历史回放 + 前后验证」，历史取不到时内部退回记录口径
+      const res = await strategyLog.runAutoTuneV2({ force: body.force === true });
       recordLoginEvent(req, {
         user: actor,
         ok: true,
         action: 'strategy',
-        reason: res.tuned ? `手动执行自动调参（改 ${res.tune.changes.length} 项）` : `自动调参未变更（${res.reason || '样本不足'}）`,
+        reason: res.tuned
+          ? `手动执行自动调参（${res.mode === 'records' ? '记录口径' : '历史重放'}，改 ${res.tune.changes.length} 项）`
+          : `自动调参未变更（${res.reason || '样本不足'}）`,
       });
       return res;
     }
@@ -698,6 +701,43 @@ async function handleAdmin(req, res, url) {
       action: 'strategy',
       reason: `自动调参设置（${res.autoTune.enabled ? '开' : '关'}）`,
     });
+    return res;
+  }
+
+  /* ---------------------------------------------------------
+     参数体检（v2.9.1）：历史回放 + 坐标搜索 + 前后验证
+     - POST tune/search：只出建议（当前 vs 建议，训练/验证指标），不改参数
+     - POST tune/apply：采纳最近一次体检推荐的那一档参数
+     --------------------------------------------------------- */
+  if (p === '/api/admin/strategy/tune/search' && req.method === 'POST') {
+    const body = req.body || {};
+    const days = Math.max(30, Math.min(180, Math.trunc(Number(body.days) || 130)));
+    const startedAt = Date.now();
+    const res = await strategyLog.tuneSearch({ days, refresh: body.refresh === true });
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'strategy',
+      reason: `参数体检（近 ${days} 个交易日）：${res.best ? `建议 ${res.best.field} ${res.best.from}→${res.best.to}` : '未找到更优参数'}`,
+    });
+    return { ...res, seconds: Math.round((Date.now() - startedAt) / 100) / 10 };
+  }
+  if (p === '/api/admin/strategy/tune/apply' && req.method === 'POST') {
+    const body = req.body || {};
+    const res = strategyLog.applyTuneCandidate({ field: body.field, to: body.to });
+    recordLoginEvent(req, {
+      user: actor,
+      ok: Boolean(res.ok),
+      action: 'strategy',
+      reason: res.ok
+        ? `采纳参数体检建议（${res.tune.changes.map((c) => `${c.field} ${c.from}→${c.to}`).join('，')}）`
+        : `采纳参数建议失败（${res.message || res.reason || '未知'}）`,
+    });
+    if (!res.ok) {
+      const err = new Error(res.message || '采纳失败');
+      err.status = 400;
+      throw err;
+    }
     return res;
   }
 

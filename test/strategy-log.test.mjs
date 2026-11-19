@@ -25,7 +25,14 @@ function row(overrides) {
   return {
     code: '110022', name: '测试基金', held: true, shares: 1000, price: 1.5,
     marketValue: 1500, weight: 20, pct: -1.5, pctKind: 'nav', navDate: '2026-11-13',
-    navPct: -1.5, pctStale: false, advice: { score: 70, rating: { label: '偏多' }, position: { text: '3 成' } },
+    navPct: -1.5, pctStale: false,
+    advice: {
+      score: 70,
+      rating: { label: '偏多' },
+      position: { text: '3 成' },
+      levels: { close: 1.5, ma20: 1.45 },
+      analysis: { trend: 'up', atrPct: 2.2 },
+    },
     ...overrides,
   };
 }
@@ -210,7 +217,7 @@ test('建议：加仓命中率过低时给出提高门槛的具体建议', () =>
 /* ---------------- 自动调参 ---------------- */
 
 test('自动调参：命中率过低时上调加仓门槛并留痕', () => {
-  const harness = makeHarness({ today: '2026-11-16' });
+  const harness = makeHarness({ today: '2026-11-16', autoTune: { minSamples: 5 } });
   // 加仓 6 条里只对 1 条，减仓正常
   seedEvaluated(harness, '2026-11-13', [
     { action: 'add', verdict: 'right', score: 70 },
@@ -270,7 +277,7 @@ test('自动调参：关闭后不执行', () => {
 });
 
 test('自动调参：同一天只自动调一次', () => {
-  const harness = makeHarness({ today: '2026-11-16' });
+  const harness = makeHarness({ today: '2026-11-16', autoTune: { minSamples: 5 } });
   seedEvaluated(harness, '2026-11-13', new Array(6).fill({ action: 'add', verdict: 'wrong', score: 70 }));
   const first = harness.log.runAutoTune({ force: false });
   assert.equal(first.tuned, true);
@@ -280,7 +287,7 @@ test('自动调参：同一天只自动调一次', () => {
 });
 
 test('自动调参：可回滚到上一次之前的值', () => {
-  const harness = makeHarness({ today: '2026-11-16' });
+  const harness = makeHarness({ today: '2026-11-16', autoTune: { minSamples: 5 } });
   seedEvaluated(harness, '2026-11-13', new Array(6).fill({ action: 'add', verdict: 'wrong', score: 70 }));
   const tuned = harness.log.runAutoTune({ force: true });
   const tunedTo = tuned.tune.changes[0].to;
@@ -500,7 +507,7 @@ test('回测记录：用重建的 15:00 估值出动作，结构与实盘一致'
   assert.equal(rec.source, 'backfill');
   assert.equal(rec.backfill, true);
   assert.equal(rec.decisionBasis, 'estimate-replay', '口径必须是「估值重放」，不是净值');
-  assert.deepEqual(rec.snapshot.counts, { add: 1, cut: 1, hold: 1, pending: 0 });
+  assert.deepEqual(rec.snapshot.counts, { add: 1, cut: 1, hold: 1, pending: 0, observe: 0 });
   const byCode = Object.fromEntries(rec.items.map((it) => [it.code, it]));
   assert.equal(byCode.A001.action, 'add');
   assert.equal(byCode.B002.action, 'cut');
@@ -616,7 +623,7 @@ test('回测编排：逐日生成建议 + 次日判定，不覆盖实盘记录',
 });
 
 test('统计口径：实盘 / 回测分开统计，自动调参用合计样本', () => {
-  const harness = makeHarness({ today: '2026-11-13' });
+  const harness = makeHarness({ today: '2026-11-13', autoTune: { minSamples: 5 } });
   // 实盘：2 对 0 错；回测：0 对 6 错（故意让合计命中率 < 50%，触发调参）
   seedEvaluated(harness, '2026-11-05', [
     { code: 'A', action: 'add', verdict: 'right' },
@@ -650,4 +657,153 @@ test('统计口径：实盘 / 回测分开统计，自动调参用合计样本',
   const rolled = harness.log.rollbackLastTune();
   assert.equal(rolled.ok, true);
   assert.equal(rolled.rules.addScore, change.from);
+});
+
+/* =========================================================
+   v2.9.1：自适应判定口径、趋势确认 / 不追跌 / 每日上限、
+   重放引擎（replay）与参数体检（tuneSearch）
+   ========================================================= */
+
+test('判定：不变的自适应阈值（ATR 校准）按记录里的值复现', () => {
+  const { log } = makeHarness();
+  // 波动小的基金：ATR 0.5% → 夹到 1.2%
+  assert.equal(log.holdBandFor(0.5, DEFAULT_BANDS), 1.2);
+  // 典型股基：ATR 2.2% → 0.55 × 2.2 = 1.21
+  assert.equal(log.holdBandFor(2.2, DEFAULT_BANDS), 1.21);
+  // 高波动：ATR 10% → 夹到 3%
+  assert.equal(log.holdBandFor(10, DEFAULT_BANDS), 3);
+  // 没有 ATR：回落 bands.holdBand
+  assert.equal(log.holdBandFor(null, { ...DEFAULT_BANDS, holdBand: 1.8 }), 1.8);
+
+  // 判定时用记录里的 holdBandUsed：2% 波动在 1.2% 口径下算中性，在 2.5% 口径下算对
+  assert.equal(log.judge('hold', 2, DEFAULT_BANDS, 1.2).verdict, 'flat');
+  assert.equal(log.judge('hold', 2, DEFAULT_BANDS, 2.5).verdict, 'right');
+  // 没有存阈值时用 bands.holdBand（默认 1.5）
+  assert.equal(log.judge('hold', 2, DEFAULT_BANDS, null).verdict, 'flat');
+  assert.equal(log.judge('hold', 1, DEFAULT_BANDS, null).verdict, 'right');
+});
+
+test('加仓趋势确认：跌破 MA20 / 趋势向下时不加仓，进「观察」', () => {
+  const base = () => makePort([
+    row({
+      code: 'A001', name: '跌破均线', shares: 6000, marketValue: 9000, price: 1.5,
+      pct: -2, pctKind: 'holdings', decisionPct: -2, decisionKind: 'holdings',
+      advice: { score: 70, levels: { close: 1.5, ma20: 1.6 }, analysis: { trend: 'up', atrPct: 2.2 } },
+    }),
+  ]);
+  const down = pushService.classifyPortfolio(base(), pushService.DEFAULT_STRATEGY_RULES, null);
+  assert.equal(down.add.length, 0, '跌破 MA20 不加仓');
+  assert.equal(down.observe.length, 1);
+  assert.equal(down.observe[0].rule, 'add-trend-blocked');
+  assert.match(down.observe[0].reason, /MA20/);
+
+  const trendDown = pushService.classifyPortfolio(makePort([
+    row({
+      code: 'A001', shares: 6000, marketValue: 9000, price: 1.5,
+      pct: -2, pctKind: 'holdings', decisionPct: -2, decisionKind: 'holdings',
+      advice: { score: 70, levels: { close: 1.5, ma20: 1.4 }, analysis: { trend: 'down', atrPct: 2.2 } },
+    }),
+  ]), pushService.DEFAULT_STRATEGY_RULES, null);
+  assert.equal(trendDown.add.length, 0, '趋势向下不加仓');
+  assert.equal(trendDown.observe[0].rule, 'add-trend-blocked');
+
+  // 关掉趋势确认就恢复原逻辑
+  const off = pushService.classifyPortfolio(base(), { ...pushService.DEFAULT_STRATEGY_RULES, addTrendConfirm: false }, null);
+  assert.equal(off.add.length, 1);
+  assert.equal(off.observe.length, 0);
+});
+
+test('减仓不追跌：当日跌幅 ≥ cutMaxDip 时不减仓，进「观察」', () => {
+  const port = makePort([
+    row({
+      code: 'B002', shares: 6000, marketValue: 9000, price: 1.5,
+      pct: -4, pctKind: 'holdings', decisionPct: -4, decisionKind: 'holdings',
+      advice: { score: 30 },
+    }),
+  ]);
+  const res = pushService.classifyPortfolio(port, pushService.DEFAULT_STRATEGY_RULES, null);
+  assert.equal(res.cut.length, 0, '跌幅 4% ≥ 上限 3%，不追跌');
+  assert.equal(res.observe.length, 1);
+  assert.equal(res.observe[0].rule, 'cut-max-dip');
+  assert.match(res.observe[0].reason, /不追跌/);
+
+  // 温和回落（-1.5%）仍按原逻辑减仓
+  const mild = pushService.classifyPortfolio(makePort([
+    row({
+      code: 'B002', shares: 6000, marketValue: 9000, price: 1.5,
+      pct: -1.5, pctKind: 'holdings', decisionPct: -1.5, decisionKind: 'holdings',
+      advice: { score: 30 },
+    }),
+  ]), pushService.DEFAULT_STRATEGY_RULES, null);
+  assert.equal(mild.cut.length, 1);
+
+  // 把上限放宽到 10% 就允许减仓（参数可调）
+  const loose = pushService.classifyPortfolio(port, { ...pushService.DEFAULT_STRATEGY_RULES, cutMaxDip: 10 }, null);
+  assert.equal(loose.cut.length, 1);
+});
+
+test('每日调仓上限：按信号强度取前 N，其余顺延；集中度强减仓不被砍', () => {
+  const rows = [
+    row({ code: 'A1', name: '跌1.3', shares: 1000, marketValue: 1500, price: 1.5, decisionPct: -1.3, pct: -1.3, pctKind: 'holdings', decisionKind: 'holdings', advice: { score: 70 } }),
+    row({ code: 'A2', name: '跌2.0', shares: 1000, marketValue: 1500, price: 1.5, decisionPct: -2.0, pct: -2.0, pctKind: 'holdings', decisionKind: 'holdings', advice: { score: 70 } }),
+    row({ code: 'A3', name: '跌2.5', shares: 1000, marketValue: 1500, price: 1.5, decisionPct: -2.5, pct: -2.5, pctKind: 'holdings', decisionKind: 'holdings', advice: { score: 70 } }),
+  ];
+  const port = makePort(rows);
+  port.totals = { marketValue: 4500, portfolioPct: -2, dayProfit: -90, profit: 0, profitPct: 0 };
+  const res = pushService.classifyPortfolio(port, { ...pushService.DEFAULT_STRATEGY_RULES, maxActionsPerDay: 1, concentrationPct: 90 }, null);
+  assert.equal(res.add.length, 1, '每天最多 1 只');
+  assert.equal(res.add[0].code, 'A3', '信号最强（跌 2.5%）的优先');
+  assert.equal(res.observe.filter((x) => x.rule === 'daily-cap').length, 2);
+});
+
+/** 造一份最小可用历史（不联网），用于 replay / tuneSearch */
+function makeHistoryFixture() {
+  const dates = ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13'];
+  const rowsByDate = new Map();
+  const markets = new Map();
+  const navByCode = new Map();
+  const pctByDate = { '2026-11-10': 1.5, '2026-11-11': -2, '2026-11-12': 0.4, '2026-11-13': -1.2 };
+  const m = new Map();
+  dates.forEach((d) => m.set(d, { nav: 1.5, pct: pctByDate[d] === undefined ? null : pctByDate[d] }));
+  navByCode.set('A001', m);
+  for (const d of dates) {
+    rowsByDate.set(d, [row({
+      code: 'A001', name: '样本', shares: 1000, marketValue: 1500, price: 1.5,
+      pct: -1.5, pctKind: 'holdings', decisionPct: -1.5, decisionKind: 'holdings',
+      advice: { score: 70, levels: { close: 1.5, ma20: 1.45 }, analysis: { trend: 'up', atrPct: 2.2 } },
+      weight: 100,
+    })]);
+    markets.set(d, null);
+  }
+  return {
+    days: 5, from: dates[0], to: dates[dates.length - 1], until: dates[dates.length - 1],
+    dates, rowsByDate, markets, navByCode, etfSet: [], codes: ['A001'],
+    missing: [], skipped: 0, estimateKinds: new Map(),
+  };
+}
+
+test('回放引擎：给定历史行，replay 能按参数产出记录与次日判定', () => {
+  const { log } = makeHarness({ today: '2026-11-13' });
+  const history = makeHistoryFixture();
+  const res = log.replay(history, pushService.DEFAULT_STRATEGY_RULES, DEFAULT_BANDS);
+  assert.ok(res.records.length >= 3, `应有记录，实际 ${res.records.length}`);
+  for (const rec of res.records) {
+    assert.equal(rec.source, 'backfill');
+    assert.ok(Array.isArray(rec.items));
+    assert.ok(rec.eval && rec.eval.items.length === rec.items.length);
+  }
+  // 加仓门槛调到 100 后，这批样本里不可能再有加仓
+  const strict = log.replay(history, { ...pushService.DEFAULT_STRATEGY_RULES, addScore: 100 }, DEFAULT_BANDS);
+  assert.ok(strict.records.every((r) => !r.items.some((it) => it.action === 'add')), '高门槛下不应出加仓');
+});
+
+test('参数体检：没有体检结果时拒绝采纳，objective 有样本下限', () => {
+  const { log } = makeHarness();
+  const denied = log.applyTuneCandidate({ field: 'addScore', to: 70 });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.reason, 'no-search');
+
+  assert.equal(log.objectiveOf({ decided: 3, hitRate: 0.9, coverageRate: 0.9 }, 20), null, '样本不足返回 null');
+  const obj = log.objectiveOf({ decided: 40, hitRate: 0.6, coverageRate: 0.49 }, 20);
+  assert.equal(obj, 0.42, '0.6 × sqrt(0.49) = 0.42');
 });

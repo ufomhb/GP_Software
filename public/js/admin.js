@@ -1468,7 +1468,7 @@ function renderStrategyToday(data) {
     : '今天还没记录']);
   if (rec) {
     const c = (rec.snapshot && rec.snapshot.counts) || {};
-    rows.push(['建议分布', `<span class="st-tag add">加 ${n(c.add)}</span> <span class="st-tag cut">减 ${n(c.cut)}</span> <span class="st-tag hold">不变 ${n(c.hold)}</span>${c.pending ? ` <span class="st-tag skip">未更新 ${n(c.pending)}</span>` : ''}`]);
+    rows.push(['建议分布', `<span class="st-tag add">加 ${n(c.add)}</span> <span class="st-tag cut">减 ${n(c.cut)}</span> <span class="st-tag hold">不变 ${n(c.hold)}</span>${c.observe ? ` <span class="st-tag skip">观察 ${n(c.observe)}</span>` : ''}${c.pending ? ` <span class="st-tag skip">未更新 ${n(c.pending)}</span>` : ''}`]);
     const mv = rec.snapshot && rec.snapshot.marketValue;
     if (mv) rows.push(['当时市值', `${n(mv).toLocaleString('zh-CN')} 元 · 当日 ${rec.snapshot.portfolioPct === null ? '—' : `${Number(rec.snapshot.portfolioPct).toFixed(2)}%`}`]);
   }
@@ -1493,15 +1493,23 @@ function renderStrategyStats(data) {
     ? `${n(stats.days)} 个交易日 · ${n(stats.items)} 条建议（实盘 ${liveDays} 天 / 回测 ${bfDays} 天）`
     : '还没有可评价的记录';
 
-  // 主 KPI：只显示含中性口径（对 / 全部条数）；严格口径只留给自动调参，不再出现百分比
+  // v2.9.1：三列并列——方向性命中率（严格）、覆盖率、中性率。
+  // 「不变」中性多不代表策略差，主指标改为方向性命中率，中性率单独展示。
+  const strictRate = ov.decided > 0 ? `${((ov.right / ov.decided) * 100).toFixed(0)}%` : '--';
+  const coverage = ov.total > 0 ? `${((ov.decided / ov.total) * 100).toFixed(0)}%` : '--';
+  const neutral = ov.total > 0 ? `${((ov.flat / ov.total) * 100).toFixed(0)}%` : '--';
   const kpiTip = stTipRegister('kpi',
-    '<b>口径说明</b>：主指标为含中性命中率（对/全部条数，中性、未评都算分母、不算对）。'
-    + '<br>系统自动调参仍按严格口径（对/(对+错)）计算，不在本卡显示。');
+    '<b>口径说明</b>：方向性命中率 = 对/(对+错)，是策略真实的方向判断力；'
+    + '覆盖率 = 可判定/全部；中性率 = 中性/全部（「不变」遇到大波动会记中性，中性多不等于错）。'
+    + '<br>自动调参用的是「方向性命中率 × √覆盖率」，并做前后验证。');
   $('#stStats').innerHTML = `<div class="st-kpi"${kpiTip}>
-      <span class="st-kpi-label">含中性命中率</span>
-      <b class="st-kpi-value">${stCoverRate(ov.right, ov.total)}</b>
+      <span class="st-kpi-label">方向性命中率</span>
+      <b class="st-kpi-value">${strictRate}</b>
     </div>
-    <div class="st-kpi-sub">对 ${ov.right} · 错 ${ov.wrong} · 中性 ${ov.flat} · 未评 ${ov.skipped} · 共 ${ov.total} · 可判定 ${ov.decided} 条</div>`;
+    <div class="st-kpi-sub">
+      覆盖率 <b>${coverage}</b> · 中性率 <b>${neutral}</b> · 对 ${ov.right} / 错 ${ov.wrong} / 中性 ${ov.flat} / 未评 ${ov.skipped} · 共 ${ov.total} 条（可判定 ${ov.decided}）
+    </div>
+    <div class="st-kpi-sub">含中性命中率（对/全部） ${stCoverRate(ov.right, ov.total)}</div>`;
 
   // 按动作表：最后一列 = 对/条数（含中性口径）
   const actionRows = ST_ACTION_ORDER.map((action) => {
@@ -1524,11 +1532,11 @@ function renderStrategyStats(data) {
   const addBand = stBandVal(data.bands, 'addBand');
   const cutBand = stBandVal(data.bands, 'cutBand');
   const holdBand = stBandVal(data.bands, 'holdBand');
-  $('#stHitNote').innerHTML = '含中性命中率 = <b>对 / 全部条数</b>（中性、未评都算进分母，不算对）。<br>'
+  $('#stHitNote').innerHTML = '方向性命中率 = <b>对 / (对 + 错)</b>；覆盖率 = 可判定/全部；中性率 = 中性/全部。<br>'
     + `判定：加仓 次日涨过 <b>+${addBand}%</b> 算对、跌过 <b>-${addBand}%</b> 算错；`
     + `减仓反之（次日跌过 <b>-${cutBand}%</b> 算对）；`
-    + `不变 次日 |涨跌| ≤ <b>${holdBand}%</b> 算对，超出记中性。<br>`
-    + `样本 = <b>实盘记录 + 回测记录</b>（自动调参也用这个合计口径）；回测单独的统计见下方「近半年回测」。<br>`
+    + `不变 次日 |涨跌| ≤ <b>按基金自身波动自适应</b>（ATR14% × 0.55，夹在 1.2%~3.0%，没有 ATR 时用 ${holdBand}%）算对，超出记中性。<br>`
+    + `样本 = <b>实盘记录 + 回测记录</b>；自动调参用「方向性命中率 × √覆盖率」，前 70% 训练、后 30% 验证，验证不改善不采纳。<br>`
     + `可判定样本不足 ${ST_MIN_SAMPLES} 条的评分区间 / 市场氛围行显示「样本不足」；鼠标停在任意一行可看具体明细。`;
 
   // 按评分区间（折叠区，仅统计加仓/减仓建议）
@@ -1629,12 +1637,18 @@ function renderStrategyHistory(data) {
     }).join('');
 
     const tipAttr = stTipRegister(`hist:${rec.date}`, stHistoryTipHtml(rec));
+    const observeRows = (rec.observe || []).map((it) => `<tr>
+        <td>${esc(it.name)}<div class="t-sub muted">${esc(it.code)}</div></td>
+        <td><span class="st-tag ${esc(it.action)}">${ST_ACTION_LABEL[it.action] || esc(it.action)}</span></td>
+        <td class="st-reason">${esc(it.reason || '')}</td>
+      </tr>`).join('');
     return `<article class="st-day">
       <header class="st-day-head"${tipAttr}>
         <b>${esc(rec.date)}</b>${rec.backfill ? ' <span class="st-tag skip">回测</span>' : ''}${stBasisBadge(rec)}
         <span class="st-tag add">加 ${n(c.add)}</span>
         <span class="st-tag cut">减 ${n(c.cut)}</span>
         <span class="st-tag hold">不变 ${n(c.hold)}</span>
+        ${c.observe ? `<span class="st-tag skip">观察 ${n(c.observe)}</span>` : ''}
         ${c.pending ? `<span class="st-tag skip">未更新 ${n(c.pending)}</span>` : ''}
         <span class="st-day-hit">${hitText}</span>
         <button type="button" class="admin-link" data-st-toggle="${esc(rec.date)}">明细</button>
@@ -1644,6 +1658,11 @@ function renderStrategyHistory(data) {
           <thead><tr><th>基金</th><th>建议</th><th>份额</th><th>决策日涨跌</th><th>次日净值</th><th>判定</th><th>说明</th></tr></thead>
           <tbody>${detail || '<tr><td colspan="7" class="muted">当天没有可给出动作的持仓</td></tr>'}</tbody>
         </table>
+        ${observeRows ? `<div class="st-block-head" style="margin-top:8px">观察（有信号但被过滤，未计入命中率）</div>
+        <table class="admin-table st-table">
+          <thead><tr><th>基金</th><th>原信号</th><th>过滤器说明</th></tr></thead>
+          <tbody>${observeRows}</tbody>
+        </table>` : ''}
       </div>
     </article>`;
   }).join('');
@@ -1709,6 +1728,96 @@ async function stBackfill() {
   }
 }
 
+/* ---- 参数体检（v2.9.1）：历史重放 + 坐标搜索 + 前后验证 ---- */
+
+function stCheckRow(c) {
+  const fmt = (v) => (v === null || v === undefined ? '--' : `${(Number(v) * 100).toFixed(1)}%`);
+  const obj = (v) => (v === null || v === undefined ? '--' : Number(v).toFixed(2));
+  return `<tr class="${c.isBest ? 'st-check-best' : ''}">
+    <td><code>${esc(c.field)}</code> ${esc(String(c.from))} → <b>${esc(String(c.to))}</b></td>
+    <td class="num">${obj(c.train.objective)}</td>
+    <td class="num">${fmt(c.train.hitRate)}<div class="t-sub">${n(c.train.decided)} 条</div></td>
+    <td class="num">${obj(c.validate.objective)}</td>
+    <td class="num">${fmt(c.validate.hitRate)}<div class="t-sub">${n(c.validate.decided)} 条</div></td>
+  </tr>`;
+}
+
+function renderStrategyCheck(data) {
+  const box = $('#stCheckBody');
+  if (!box) return;
+  if (!data) {
+    box.innerHTML = '<div class="admin-empty">点「体检一次」用历史数据对比参数，不会改任何设置</div>';
+    const applyBtn = $('#stCheckApply');
+    if (applyBtn) applyBtn.disabled = true;
+    return;
+  }
+  const base = data.baseline || {};
+  const best = data.best || null;
+  const candidates = (data.candidates || []).slice(0, 6).map((c) => ({
+    ...c,
+    isBest: best && c.field === best.field && String(c.to) === String(best.to),
+  }));
+  const meta = $('#stCheckMeta');
+  if (meta) {
+    const s = data.sample || {};
+    meta.textContent = `${s.from || '--'} → ${s.to || '--'} · ${n(s.records)} 天记录 · ${n(s.codes)} 只 · 目标 = 方向性命中率 × √覆盖率`;
+  }
+  const baseObj = (v) => (v === null || v === undefined ? '--' : Number(v).toFixed(2));
+  box.innerHTML = `<div class="admin-kv-list">
+      <div class="admin-kv"><span>当前参数（训练 / 验证）</span><b>${baseObj(base.train && base.train.objective)} / ${baseObj(base.validate && base.validate.objective)}</b></div>
+      <div class="admin-kv"><span>训练段</span><b>${n(base.train && base.train.decided)} 条可判定 · 方向性命中率 ${base.train && base.train.hitRate !== null ? `${(base.train.hitRate * 100).toFixed(0)}%` : '--'}</b></div>
+      <div class="admin-kv"><span>验证段</span><b>${n(base.validate && base.validate.decided)} 条可判定 · 方向性命中率 ${base.validate && base.validate.hitRate !== null ? `${(base.validate.hitRate * 100).toFixed(0)}%` : '--'}</b></div>
+    </div>
+    ${candidates.length
+      ? `<table class="admin-table st-table mt10"><thead><tr><th>候选参数</th><th>训练目标</th><th>训练命中率</th><th>验证目标</th><th>验证命中率</th></tr></thead><tbody>${candidates.map(stCheckRow).join('')}</tbody></table>`
+      : '<div class="admin-empty">没有可比较的候选参数</div>'}
+    <p class="admin-note">${best
+      ? `建议：<b>${esc(best.field)} ${esc(String(best.from))} → ${esc(String(best.to))}</b>（验证段目标 ${baseObj(base.validate && base.validate.objective)} → ${baseObj(best.validate.objective)}，验证命中率 ${best.validate.hitRate !== null ? `${(best.validate.hitRate * 100).toFixed(0)}%` : '--'}）。采纳后会自动记入调参历史，可回滚。`
+      : `没有找到「训练与验证同时改善 ≥ ${((data.minDelta || 0.03) * 100).toFixed(0)}%」的参数，说明当前参数在这段历史上已经是较优解；可以等积累更多样本再体检。`}</p>`;
+  const applyBtn = $('#stCheckApply');
+  if (applyBtn) applyBtn.disabled = !best;
+}
+
+async function stCheckRun() {
+  const btn = $('#stCheckRun');
+  if (!btn) return;
+  btn.disabled = true;
+  const oldText = btn.textContent;
+  btn.textContent = '体检中（重放历史，约 20~40 秒）…';
+  try {
+    const data = await apiPost('/api/admin/strategy/tune/search', { days: 130 }, 180000);
+    state.strategyCheck = data;
+    renderStrategyCheck(data);
+    toast(data.best
+      ? `体检完成：建议 ${data.best.field} ${data.best.from} → ${data.best.to}`
+      : '体检完成：当前参数在训练与验证上都已较优，暂不建议改', data.best ? 'ok' : 'info', 8000);
+  } catch (err) {
+    toast(`体检失败：${err.message}`, 'err', 8000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldText;
+  }
+}
+
+async function stCheckApply() {
+  const data = state.strategyCheck;
+  if (!data || !data.best) { toast('先体检，拿到建议再采纳', 'warn'); return; }
+  const best = data.best;
+  if (!window.confirm(`采纳参数体检建议：${best.field} 从 ${best.from} 改为 ${best.to}？\n采纳后会记入调参历史，可一键回滚。`)) return;
+  const btn = $('#stCheckApply');
+  btn.disabled = true;
+  try {
+    await apiPost('/api/admin/strategy/tune/apply', { field: best.field, to: best.to }, 30000);
+    toast(`已采纳建议：${best.field} → ${best.to}`, 'ok');
+    state.strategyCheck = null;
+    renderStrategyCheck(null);
+    await loadStrategy();
+  } catch (err) {
+    toast(`采纳失败：${err.message}`, 'err');
+    btn.disabled = false;
+  }
+}
+
 function renderStrategyTune(data) {
   const cfg = data.autoTune || {};
   const enabled = $('#stTuneEnabled');
@@ -1743,6 +1852,7 @@ function renderStrategy(data) {
   renderStrategyParams(data);
   renderStrategyTune(data);
   renderStrategyBackfill(data);
+  renderStrategyCheck(state.strategyCheck);
   renderStrategyHistory(data);
 }
 
@@ -1903,6 +2013,10 @@ function bindStrategy() {
   $('#stTuneRollback').addEventListener('click', stTuneRollback);
   const bfBtn = $('#stBackfillRun');
   if (bfBtn) bfBtn.addEventListener('click', stBackfill);
+  const checkBtn = $('#stCheckRun');
+  if (checkBtn) checkBtn.addEventListener('click', stCheckRun);
+  const checkApply = $('#stCheckApply');
+  if (checkApply) checkApply.addEventListener('click', stCheckApply);
   // 历史记录来源切换：实盘 / 回测 / 全部（回测记录多，方便对照）
   $$('#stHistorySource [data-st-source]').forEach((btn) => btn.addEventListener('click', () => {
     state.strategySource = btn.dataset.stSource || 'all';

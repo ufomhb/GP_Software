@@ -150,6 +150,10 @@ function createStrategyLog(deps) {
     cfg.minSamples = Math.min(50, Math.max(2, Number(cfg.minSamples) || DEFAULT_AUTOTUNE.minSamples));
     cfg.minHitRate = Math.min(0.95, Math.max(0.05, Number(cfg.minHitRate) || DEFAULT_AUTOTUNE.minHitRate));
     cfg.step = Math.min(20, Math.max(1, Number(cfg.step) || DEFAULT_AUTOTUNE.step));
+    // v2.9.1：前后验证相关参数
+    cfg.minDelta = Math.min(0.5, Math.max(0.005, Number(cfg.minDelta) || DEFAULT_AUTOTUNE.minDelta));
+    cfg.foldRatio = Math.min(0.9, Math.max(0.5, Number(cfg.foldRatio) || DEFAULT_AUTOTUNE.foldRatio));
+    cfg.maxChanges = Math.min(3, Math.max(1, Math.trunc(Number(cfg.maxChanges) || DEFAULT_AUTOTUNE.maxChanges)));
     cfg.lastTuneDate = String(cfg.lastTuneDate || '');
     return cfg;
   }
@@ -267,7 +271,10 @@ function createStrategyLog(deps) {
       return { verdict: 'flat', note: `次日 ${p.toFixed(2)}%，在 ±${b.cutBand}% 内，方向不明显（中性，不计对错）` };
     }
     // v2.9.1：不变用「该基金当时的自适应阈值」，记录里存了就用它，保证事后评价口径不变
-    const holdBand = Number.isFinite(Number(holdBandOverride)) ? Number(holdBandOverride) : b.holdBand;
+    // 注意 Number(null) === 0：没有存阈值时必须用 bands.holdBand，不能被 null 拐成 0
+    const holdBand = holdBandOverride === null || holdBandOverride === undefined || holdBandOverride === ''
+      ? b.holdBand
+      : (Number.isFinite(Number(holdBandOverride)) ? Number(holdBandOverride) : b.holdBand);
     if (Math.abs(p) <= holdBand) {
       return { verdict: 'right', note: `次日 ${p.toFixed(2)}%，波动在 ±${holdBand}% 内，不动合理` };
     }
@@ -480,9 +487,8 @@ function createStrategyLog(deps) {
     for (const record of changed) persistRecord(record);
     let tune = null;
     if (changed.length) {
-      const after = readStore();
-      // v2.9.0：调参样本 = 实盘 + 回测（用户要求回测记录也进自动调参）
-      tune = runAutoTune(after, buildStats(after, { source: 'all' }), {});
+      // v2.9.1：改为「历史回放 + 前后验证」的调参；历史取不到时内部自动退回记录口径
+      tune = await runAutoTuneV2({}).catch(() => null);
     }
     return { ok: true, evaluated: changed.length, autoTune: tune };
   }
@@ -1471,12 +1477,15 @@ function createStrategyLog(deps) {
         decisionBasis: r.decisionBasis || ((r.eval && Array.isArray(r.eval.items) ? r.eval.items : (r.items || []))
           .some((it) => it && String(it.pctKind) === 'nav') ? 'nav' : 'estimate'),
         estimateKinds: r.estimateKinds || null,
+        bands: r.bands || null,
         createdAt: r.createdAt,
         market: r.market || null,
         snapshot: r.snapshot,
         eval: normalizeEval(r.eval),
         items: r.items,
         pending: r.pending,
+        // v2.9.1：被过滤掉的动作（趋势未确认 / 跌幅过大 / 每日上限），后台历史明细里展示
+        observe: r.observe || [],
       }));
     const records = (sourceFilter === 'live'
       ? mapped.filter((r) => !r.backfill)
@@ -1531,7 +1540,7 @@ function createStrategyLog(deps) {
     const evaluatedRecords = evaluateRecords(store.records, port, today, store.bands);
     for (const record of evaluatedRecords) persistRecord(record);
 
-    const tune = runAutoTune(store, buildStats(store, { source: 'all' }), {});
+    const tune = await runAutoTuneV2({}).catch(() => null);
 
     let recorded = false;
     const todayRecord = store.records.find((r) => r.date === today);
@@ -1590,6 +1599,15 @@ function createStrategyLog(deps) {
     planBackfillDates,
     buildBackfillRecord,
     evaluateBackfillRecord,
+    // v2.9.1 回放引擎 / 参数体检 / 自动调参 v2
+    buildHistory,
+    replay,
+    tuneSearch,
+    applyTuneCandidate,
+    runAutoTuneV2,
+    holdBandFor,
+    statsOfRecords,
+    objectiveOf,
   };
 }
 

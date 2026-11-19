@@ -652,8 +652,9 @@ function classifyPortfolio(port, rules = DEFAULT_STRATEGY_RULES, market = null) 
       // 只有价格站稳 MA20 且趋势不是 down 时加仓才有效（回踩买，不追跌）。
       const ma20 = av && av.levels && Number.isFinite(Number(av.levels.ma20)) ? Number(av.levels.ma20) : null;
       const trend = av && av.analysis ? String(av.analysis.trend || '') : '';
-      const trendOk = !R.addTrendConfirm
-        || (ma20 !== null && Number(r.price) >= ma20 && trend !== 'down');
+      // 均线缺失（新基金 / 数据不足）时不拦，只提示；有均线才真正做趋势确认
+      const trendOk = !R.addTrendConfirm || ma20 === null
+        || (Number(r.price) >= ma20 && trend !== 'down');
       if (!trendOk) {
         observe.push({
           ...itemBase,
