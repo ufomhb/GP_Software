@@ -3803,12 +3803,15 @@ function renderPaperRanking() {
       .map((p) => `${esc(cleanName(p.name) || p.code)} <span class="t-sub">${nf(p.shares, 0)} 股</span>`)
       .join('<br>') || '<span class="muted">空仓</span>';
     const more = (item.positionCount || 0) > 3 ? `<div class="t-sub">等 ${item.positionCount} 只</div>` : '';
+    // 0 收益不标正负号，避免 -0 显示成 +0.00%
+    const pctVal = Number(item.profitPct) || 0;
+    const pctText = Math.abs(pctVal) < 0.005 ? '0.00%' : `${pctVal > 0 ? '+' : ''}${pctVal.toFixed(2)}%`;
     return `<tr class="${item.username === me ? 'is-me' : ''}">
       <td class="num">${i + 1}</td>
       <td><span class="t-name">${esc(item.username)}</span>${item.username === me ? ' <span class="badge">我</span>' : ''}</td>
       <td class="t-price">${nf(item.total, 2)}</td>
       <td class="t-chg ${toneClass(item.profit)}">${signedFmt(item.profit, 2)}</td>
-      <td class="t-chg ${toneClass(item.profitPct)}">${isNum(item.profitPct) ? `${item.profitPct >= 0 ? '+' : ''}${Number(item.profitPct).toFixed(2)}%` : '--'}</td>
+      <td class="t-chg ${toneClass(pctVal)}">${pctText}</td>
       <td>${held}${more}</td>
       <td class="t-dim">${item.updatedAt ? esc(timeText(item.updatedAt)) : '<span class="muted">未交易</span>'}</td>
     </tr>`;
