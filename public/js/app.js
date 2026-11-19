@@ -19,8 +19,10 @@ import {
   usIntradayChart,
   sectorCompareBar,
   usSectorFlowBar,
+  fundPnlAreaChart,
+  fundPnlMonthlyBars,
   COLORS,
-} from './charts.js?v=2.7.0';
+} from './charts.js?v=2.8.0';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -38,11 +40,11 @@ import {
   esc,
   safeUrl,
   timeText,
-} from './util.js?v=2.7.0';
+} from './util.js?v=2.8.0';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.7.0';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.7.0';
+import { $, $$, toast, debounce } from './dom.js?v=2.8.0';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.8.0';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -51,7 +53,7 @@ import {
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.7.0';
+} from './core.js?v=2.8.0';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -66,7 +68,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.7.0';
+} from './views/funds.js?v=2.8.0';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -76,7 +78,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.7.0';
+} from './views/market.js?v=2.8.0';
 
 
 /* =========================================================
@@ -2377,7 +2379,7 @@ function renderPortfolioAdvice() {
     return;
   }
   if (!stockCount && !fundCount) {
-    el.innerHTML = '<div class="panel-head"><div><div class="eyebrow">PORTFOLIO ADVISOR</div><h2>自选组合建议</h2></div></div><div class="empty">还没有自选股或自选基金。加入后，这里会结合市场温度、自选股评分、基金涨跌与 ETF 资金流，动态生成股票 + 基金组合建议<div class="mt12"><button class="btn small" data-goto="watchlist">去添加自选</button></div></div>';
+    el.innerHTML = '<div class="panel-head"><div><div class="eyebrow">PORTFOLIO ADVISOR</div><h2>自选组合建议</h2></div></div><div class="empty">还没有自选股或自选基金。加入后，这里会结合市场温度、自选股评分、基金涨跌与 ETF 资金流，动态生成股票 + 基金组合建议<div class="mt12"><button class="btn small" data-goto="stockwatch">去添加自选</button></div></div>';
     return;
   }
   const fundRows = funds.map((f) => {
@@ -2487,7 +2489,7 @@ function renderWatchAdvice() {
   if (!el) return;
   const items = (state.watchData && state.watchData.items || []).filter((x) => x.advice);
   if (!state.watchlist.length) {
-    el.innerHTML = '<div class="panel-head"><div><div class="eyebrow">WATCHLIST SCORE</div><h2>自选股评分</h2></div></div><div class="empty">添加自选后，这里会显示每只股票的技术评分、支撑压力与参考仓位。<br><button class="text-link mt8" data-goto="watchlist">去添加<加</button></div>';
+    el.innerHTML = '<div class="panel-head"><div><div class="eyebrow">WATCHLIST SCORE</div><h2>自选股评分</h2></div></div><div class="empty">添加自选后，这里会显示每只股票的技术评分、支撑压力与参考仓位。<br><button class="text-link mt8" data-goto="stockwatch">去添加<加</button></div>';
     return;
   }
   if (!items.length) {
@@ -3739,7 +3741,10 @@ function renderPaper() {
     <div class="table-scroll tall-table"><table class="table paper-trade-table">
       <thead><tr><th>时间</th><th>方向</th><th>标的</th><th>价</th><th>股数</th><th>金额</th><th>费用</th><th>信号</th></tr></thead>
       <tbody>${tradeRows}</tbody>
-    </table></div>`;
+    </table></div>
+    <div class="modal-section-title">模拟账户排行榜 · 全体用户</div>
+    <p class="muted small">所有登录用户都能看到彼此的模拟持仓与总资产；仅模拟盘，不含真实资金。</p>
+    <div id="paperRankBody"><div class="empty small">加载排行榜…</div></div>`;
 
   const buyBtn = $('#paperBuyBtn');
   if (buyBtn) buyBtn.addEventListener('click', () => openPaperTrade('buy'));
@@ -3749,6 +3754,7 @@ function renderPaper() {
     try {
       await apiPost('/api/paper/reset', {});
       await loadPaper(true);
+      loadPaperRanking(true);
       toast('模拟账户已重置', 'ok');
     } catch (err) {
       toast(`重置失败：${err.message}`, 'err');
@@ -3757,6 +3763,76 @@ function renderPaper() {
   $$('[data-paper-sell]', el).forEach((b) => b.addEventListener('click', () => {
     openPaperTrade('sell', { secid: b.dataset.paperSell, name: b.dataset.paperName, shares: Number(b.dataset.paperShares) });
   }));
+  // v2.8.0：排行榜随账户面板一起重绘（数据可能已在 state 里，也可能还没拉回来）
+  if (state.paperRank) renderPaperRanking();
+}
+
+/* =========================================================
+   模拟账户排行榜（v2.8.0）
+   ---------------------------------------------------------
+   用户明确要求：本系统所有登录用户都能看到彼此模拟账户的标的与总资产。
+   服务端只透出用户名 + 模拟盘数据；前端这里只负责排序与渲染。
+   ========================================================= */
+async function loadPaperRanking(force = false) {
+  if (!force && state.paperRank && Date.now() - (state.paperRank.at || 0) < 30000) {
+    renderPaperRanking();
+    return;
+  }
+  try {
+    const data = await api('/api/paper/ranking', 30000);
+    state.paperRank = { ...(data || {}), at: Date.now() };
+  } catch (err) {
+    state.paperRank = { items: [], error: err.message, at: Date.now() };
+  }
+  renderPaperRanking();
+}
+
+function renderPaperRanking() {
+  const el = $('#paperRankBody');
+  if (!el) return;
+  const d = state.paperRank;
+  if (!d) { el.innerHTML = '<div class="empty small">加载排行榜…</div>'; return; }
+  if (d.error) { el.innerHTML = `<div class="empty small">排行榜加载失败：${esc(d.error)}</div>`; return; }
+  const items = (d.items || []).slice();
+  const sort = state.paperRankSort || 'total';
+  if (sort === 'profit') items.sort((a, b) => (Number(b.profitPct) || 0) - (Number(a.profitPct) || 0));
+  const me = state.auth && state.auth.username;
+  const rows = items.map((item) => {
+    const held = (item.positions || []).slice(0, 3)
+      .map((p) => `${esc(cleanName(p.name) || p.code)} <span class="t-sub">${nf(p.shares, 0)} 股</span>`)
+      .join('<br>') || '<span class="muted">空仓</span>';
+    const more = (item.positionCount || 0) > 3 ? `<div class="t-sub">等 ${item.positionCount} 只</div>` : '';
+    return `<tr class="${item.username === me ? 'is-me' : ''}">
+      <td class="num">${item.rank}</td>
+      <td><span class="t-name">${esc(item.username)}</span>${item.username === me ? ' <span class="badge">我</span>' : ''}</td>
+      <td class="t-price">${nf(item.total, 2)}</td>
+      <td class="t-chg ${toneClass(item.profit)}">${signedFmt(item.profit, 2)}</td>
+      <td class="t-chg ${toneClass(item.profitPct)}">${isNum(item.profitPct) ? `${item.profitPct >= 0 ? '+' : ''}${Number(item.profitPct).toFixed(2)}%` : '--'}</td>
+      <td>${held}${more}</td>
+      <td class="t-dim">${item.updatedAt ? esc(timeText(item.updatedAt)) : '<span class="muted">未交易</span>'}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="row-between mt8">
+      <div class="seg" id="paperRankSortSeg">
+        <button class="${sort === 'total' ? 'is-active' : ''}" data-rank-sort="total">按总资产</button>
+        <button class="${sort === 'profit' ? 'is-active' : ''}" data-rank-sort="profit">按收益率</button>
+      </div>
+      <span class="muted small">${items.length} 个账号${d.estimated ? ' · 部分持仓按成本价估算' : ''}${d.truncated ? ' · 仅显示前 200 个账号' : ''}</span>
+    </div>
+    <div class="table-scroll tall-table mt8"><table class="table paper-rank-table">
+      <thead><tr><th>排名</th><th>用户</th><th>总资产</th><th>累计盈亏</th><th>收益率</th><th>持仓（前 3）</th><th>最近操作</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7"><div class="empty">还没有账号</div></td></tr>'}</tbody>
+    </table></div>`;
+  const seg = $('#paperRankSortSeg');
+  if (seg) {
+    seg.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-rank-sort]');
+      if (!btn) return;
+      state.paperRankSort = btn.dataset.rankSort;
+      renderPaperRanking();
+    });
+  }
 }
 
 /** 买入/卖出弹窗 */
@@ -3795,6 +3871,7 @@ function openPaperTrade(side = 'buy', preset = {}) {
       state.paper = res.account;
       closeOverlay();
       renderPaper();
+      loadPaperRanking(true);
       toast(`${side === 'buy' ? '买入' : '卖出'}成功：${shares} 股 @ ${nf(res.trade.price, 3)}`, 'ok');
     } catch (err) {
       toast(`下单失败：${err.message}`, 'err');
@@ -4189,7 +4266,9 @@ async function loadFundWatch(force = false) {
     state.fundWatchData = { items: [] };
     renderFundWatchSummary();
     renderFundWatchTable();
-    renderWatchFunds();
+    renderFundHoldSummary();
+    renderFundHoldTable();
+    renderFundPnl();
     if (state.view === 'strategy') renderPortfolioAdvice();
     return;
   }
@@ -4203,12 +4282,201 @@ async function loadFundWatch(force = false) {
     renderFundWatchTable();
     renderFundHoldSummary();
     renderFundHoldTable();
-    renderWatchFunds();
+    renderFundPnl();
     if (state.view === 'strategy') renderPortfolioAdvice();
   } catch (err) {
     handleLoadError('自选基金', err);
   } finally {
     state.loading.delete('fundwatch');
+  }
+}
+
+/* =========================================================
+   自选基金盈亏统计（v2.8.0：日 / 月 / 年，持仓口径）
+   ---------------------------------------------------------
+   持仓（份额/成本）只在本机 localStorage；曲线用服务端返回的
+   净值（场外）或收盘价（ETF）序列按份额加权。日期取并集后前向
+   填充，起点取「所有持仓基金都有数据」的那天，避免早期只统计到
+   一两只基金导致市值被低估。
+   ========================================================= */
+const FUND_PNL_MAX_HOLDINGS = 12;
+
+function fundHeldList() {
+  return state.fundWatchlist
+    .map((f) => ({ code: String(f.code), name: f.name || f.code, type: f.type, h: getFundHolding(f.code) }))
+    .filter((f) => f.h && f.h.shares > 0)
+    .slice(0, FUND_PNL_MAX_HOLDINGS);
+}
+
+/** 上海时区下把 YYYY-MM-DD 平移 N 天（toISOString 会按 UTC 差一天，不能用） */
+function shanghaiDateShift(dstr, days) {
+  const base = new Date(`${String(dstr).slice(0, 10)}T12:00:00+08:00`).getTime();
+  if (!Number.isFinite(base)) return String(dstr).slice(0, 10);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(base + days * 86400000));
+  const get = (k) => (parts.find((p) => p.type === k) || {}).value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+/** 多只基金的净值序列 → 组合市值曲线 + 日/月/年盈亏 */
+function computeFundPnl(data) {
+  const held = fundHeldList();
+  if (!held.length) return null;
+  const byCode = new Map(((data && data.items) || []).map((x) => [String(x.code), x]));
+  const series = held.map((f) => {
+    const row = byCode.get(f.code);
+    const points = ((row && row.points) || [])
+      .map((p) => ({ d: String(p.d).slice(0, 10), c: Number(p.c) }))
+      .filter((p) => /^\d{4}-\d{2}-\d{2}$/.test(p.d) && Number.isFinite(p.c) && p.c > 0)
+      .sort((a, b) => a.d.localeCompare(b.d));
+    return { ...f, points };
+  }).filter((s) => s.points.length >= 2);
+  if (!series.length) return null;
+  const startAt = series.map((s) => s.points[0].d).sort().pop();
+  const dates = [...new Set(series.flatMap((s) => s.points.map((p) => p.d)))].filter((d) => d >= startAt).sort();
+  const maps = series.map((s) => new Map(s.points.map((p) => [p.d, p.c])));
+  const lastKnown = series.map(() => null);
+  const rows = [];
+  for (const d of dates) {
+    let total = 0;
+    let complete = true;
+    series.forEach((s, i) => {
+      const v = maps[i].get(d);
+      if (Number.isFinite(v) && v > 0) lastKnown[i] = v;
+      if (lastKnown[i] === null) complete = false;
+      else total += lastKnown[i] * s.h.shares;
+    });
+    if (complete && total > 0) rows.push({ d, v: Math.round(total * 100) / 100 });
+  }
+  if (rows.length < 2) return null;
+  const costValue = series.reduce((sum, s) => sum + (Number(s.h.cost) > 0 ? Number(s.h.cost) * s.h.shares : 0), 0);
+  const last = rows[rows.length - 1];
+  const prev = rows[rows.length - 2];
+  const atOrBefore = (target) => {
+    let pick = rows[0];
+    for (const r of rows) {
+      if (r.d <= target) pick = r;
+      else break;
+    }
+    return pick;
+  };
+  const diffOf = (base) => (base ? Math.round((last.v - base.v) * 100) / 100 : null);
+  const pctOf = (base) => (base && base.v > 0 ? Math.round(((last.v - base.v) / base.v) * 10000) / 100 : null);
+  const m1Base = atOrBefore(shanghaiDateShift(last.d, -30));
+  const ytdBase = atOrBefore(`${last.d.slice(0, 4)}-01-01`);
+  const y1Base = atOrBefore(shanghaiDateShift(last.d, -365));
+  // 月度盈亏：当月最后一个交易日市值 − 上月末市值
+  const monthEnd = new Map();
+  for (const r of rows) monthEnd.set(r.d.slice(0, 7), r);
+  const monthly = [];
+  let prevMonth = null;
+  for (const [key, row] of [...monthEnd.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (prevMonth !== null) monthly.push({ label: key.slice(5), pnl: Math.round((row.v - prevMonth) * 100) / 100 });
+    prevMonth = row.v;
+  }
+  const firstDate = new Date(`${rows[0].d}T12:00:00+08:00`).getTime();
+  const lastDate = new Date(`${last.d}T12:00:00+08:00`).getTime();
+  return {
+    rows,
+    series,
+    costValue,
+    todayPnl: diffOf(prev),
+    todayPct: pctOf(prev),
+    m1Pnl: diffOf(m1Base),
+    m1Pct: pctOf(m1Base),
+    ytdPnl: diffOf(ytdBase),
+    ytdPct: pctOf(ytdBase),
+    y1Pnl: diffOf(y1Base),
+    y1Pct: pctOf(y1Base),
+    cumulative: costValue > 0 ? Math.round((last.v - costValue) * 100) / 100 : null,
+    cumulativePct: costValue > 0 ? Math.round(((last.v - costValue) / costValue) * 10000) / 100 : null,
+    monthly: monthly.slice(-12),
+    asOf: last.d,
+    marketValue: last.v,
+    holdings: series.length,
+    missingCount: ((data && data.missing) || []).length,
+    rangeDays: Math.max(0, Math.round((lastDate - firstDate) / 86400000)),
+  };
+}
+
+async function loadFundPnl(force = false) {
+  const held = fundHeldList();
+  if (!held.length) {
+    state.fundPnl = { items: [], missing: [], codes: '' };
+    renderFundPnl();
+    return;
+  }
+  const codes = held.map((f) => f.code).join(',');
+  if (!force && state.fundPnl && state.fundPnl.codes === codes) { renderFundPnl(); return; }
+  if (state.loading.has('fundpnl') && !force) return;
+  state.loading.add('fundpnl');
+  const note = $('#fundPnlNote');
+  if (note) note.textContent = '正在计算盈亏曲线：首次需要拉取净值历史，可能要 5~20 秒…';
+  try {
+    const data = await api(`/api/funds/pnl-series?codes=${encodeURIComponent(codes)}&days=400`, 120000);
+    state.fundPnl = { ...(data || {}), codes, at: Date.now() };
+    renderFundPnl();
+  } catch (err) {
+    if (note) note.textContent = `盈亏曲线加载失败：${err.message}`;
+  } finally {
+    state.loading.delete('fundpnl');
+  }
+}
+
+function pnlKpi(label, pnl, pct, sub) {
+  const tone = pnl === null || pnl === undefined ? '' : toneClass(pnl);
+  const main = pnl === null || pnl === undefined ? '--' : signedFmt(pnl, 2);
+  const percent = isNum(pct) ? `${pct >= 0 ? '+' : ''}${Number(pct).toFixed(2)}%` : '';
+  return `<div class="summary-card"><div class="sc-label">${esc(label)}</div><div class="sc-value ${tone}">${main}</div><div class="sc-sub">${esc(percent || sub || '')}</div></div>`;
+}
+
+function renderFundPnl() {
+  const kpis = $('#fundPnlKpis');
+  if (!kpis) return;
+  const note = $('#fundPnlNote');
+  const held = fundHeldList();
+  if (!held.length) {
+    kpis.innerHTML = ['今日盈亏', '近1月盈亏', '今年至今', '近1年盈亏']
+      .map((label) => `<div class="summary-card"><div class="sc-label">${label}</div><div class="sc-value">--</div><div class="sc-sub">未录持仓</div></div>`)
+      .join('');
+    if ($('#fundPnlChart')) $('#fundPnlChart').innerHTML = '<div class="empty small">先在下方「我的自选基金」表格点「仓」录入份额与成本</div>';
+    if ($('#fundPnlBars')) $('#fundPnlBars').innerHTML = '<div class="empty small">还没有持仓，暂无月度盈亏</div>';
+    if ($('#fundPnlChartMeta')) $('#fundPnlChartMeta').textContent = '';
+    if (note) note.textContent = '盈亏统计按已录入份额与成本计算；份额与成本只保存在本机浏览器，不上传。';
+    return;
+  }
+  const calc = computeFundPnl(state.fundPnl);
+  if (!calc) {
+    kpis.innerHTML = held.map((f) => `<div class="summary-card"><div class="sc-label">${esc(cleanName(f.name) || f.code)}</div><div class="sc-value">--</div><div class="sc-sub">净值历史不足</div></div>`).slice(0, 4).join('');
+    if ($('#fundPnlChart')) $('#fundPnlChart').innerHTML = '<div class="empty small">正在获取净值历史…</div>';
+    if ($('#fundPnlBars')) $('#fundPnlBars').innerHTML = '<div class="empty small">正在获取净值历史…</div>';
+    if (note) note.textContent = '已提交请求，正在等待净值历史返回。';
+    return;
+  }
+  const range = state.fundPnlRange || 'year';
+  const days = range === 'quarter' ? 92 : range === 'half' ? 182 : 365;
+  const cutoff = shanghaiDateShift(calc.asOf, -days);
+  const rangeRows = calc.rows.filter((r) => r.d >= cutoff);
+  const chartRows = rangeRows.length >= 2 ? rangeRows : calc.rows.slice(-2);
+  kpis.innerHTML = [
+    pnlKpi('今日盈亏', calc.todayPnl, calc.todayPct),
+    pnlKpi('近1月盈亏', calc.m1Pnl, calc.m1Pct),
+    pnlKpi('今年至今', calc.ytdPnl, calc.ytdPct),
+    pnlKpi('近1年盈亏', calc.y1Pnl, calc.y1Pct),
+    `<div class="summary-card"><div class="sc-label">累计收益</div><div class="sc-value ${toneClass(calc.cumulative)}">${calc.cumulative === null ? '--' : signedFmt(calc.cumulative, 2)}</div><div class="sc-sub">${calc.cumulative === null ? '未录成本净值' : `${calc.cumulativePct >= 0 ? '+' : ''}${Number(calc.cumulativePct).toFixed(2)}%`}</div></div>`,
+    `<div class="summary-card"><div class="sc-label">组合市值</div><div class="sc-value">${nf(calc.marketValue, 2)}</div><div class="sc-sub">${calc.holdings} 只 · 截至 ${esc(calc.asOf)}</div></div>`,
+  ].join('');
+  fundPnlAreaChart($('#fundPnlChart'), chartRows, { cost: calc.costValue > 0 ? calc.costValue : null });
+  fundPnlMonthlyBars($('#fundPnlBars'), calc.monthly);
+  if ($('#fundPnlChartMeta')) $('#fundPnlChartMeta').textContent = `${chartRows[0].d} → ${calc.asOf}`;
+  if (note) {
+    const parts = [`净值口径：${calc.holdings} 只持仓基金按份额加权`];
+    if (calc.costValue <= 0) parts.push('未录成本净值，累计收益为空');
+    if (calc.missingCount) parts.push(`${calc.missingCount} 只未取到净值已跳过`);
+    if (calc.rangeDays < 300) parts.push(`历史仅 ${calc.rangeDays} 天，年区间不完整`);
+    parts.push('场外净值 T+1、QDII 滞后；不含申赎费');
+    note.textContent = parts.join(' · ');
   }
 }
 
@@ -4468,8 +4736,9 @@ function renderFunds() {
     flow: $('#fundFlowView'),
     stock: $('#fundStockView'),
     bond: $('#fundBondView'),
-    watch: $('#fundWatchView'),
   };
+  // v2.8.0：自选基金已独立成板块（fundwatch），基金页不再有 watch 子页
+  if (view === 'watch' || !panes[view]) state.fundView = view = 'sector';
   for (const [key, el] of Object.entries(panes)) if (el) el.hidden = key !== view;
   $$('#fundSubnav button').forEach((b) => b.classList.toggle('is-active', b.dataset.fundView === view));
   $$('#fundFlowDirSeg button').forEach((b) => b.classList.toggle('is-active', b.dataset.fundDir === state.fundFlowDir));
@@ -4494,12 +4763,6 @@ function renderFunds() {
     renderCompareBar();
   }
   if (view === 'bond') renderBondFund();
-  if (view === 'watch') {
-    renderFundWatchSummary();
-    renderFundWatchTable();
-    renderFundHoldSummary();
-    renderFundHoldTable();
-  }
 }
 
 
@@ -5065,53 +5328,8 @@ async function adoptServerPortfolioIfNewDevice() {
 }
 
 
-function renderWatchFunds() {
-  const el = $('#watchFundList');
-  if (!el) return;
-  if ($('#watchFundCount')) $('#watchFundCount').textContent = `${state.fundWatchlist.length} 只`;
-  if (!state.fundWatchlist.length) {
-    el.innerHTML = '<div class="empty">还没有自选基金。去基金页搜索基金，加入后会在这里单独展示<div class="mt12"><button class="btn small" data-goto="funds">去基金页添加</button></div></div>';
-    return;
-  }
-  const items = (state.fundWatchData && state.fundWatchData.items) || [];
-  if (!items.length) {
-    el.innerHTML = '<div class="empty">正在加载自选基金…</div>';
-    return;
-  }
-  const order = new Map(state.fundWatchlist.map((f, i) => [f.code, i]));
-  const meta = new Map(state.fundWatchlist.map((f) => [f.code, f]));
-  let sorted = [...items].sort((a, b) => (order.get(a.code) ?? 999) - (order.get(b.code) ?? 999));
-  if (state.watchFundSort === 'day') sorted = [...items].sort((a, b) => (Number(b.pct) || 0) - (Number(a.pct) || 0));
-  if (state.watchFundSort === 'name') sorted = [...items].sort((a, b) => cleanName(a.name || a.code).localeCompare(cleanName(b.name || b.code), 'zh-CN'));
-  if ($('#watchFundSort')) $('#watchFundSort').value = state.watchFundSort;
-  el.innerHTML = `<div class="table-scroll"><table class="table fund-watch-table">
-    <thead><tr><th>基金</th><th data-col="type">类型</th><th data-col="nav">最新</th><th title="当天公布的真实净值涨跌幅；净值未出显示「当日未出」">当日涨跌</th><th data-col="est" title="15:00 收盘时的预估涨跌幅，冻结后不随准确净值改动，用来核对估值准不准">当日估值</th><th data-col="flow">主力净流入</th><th data-col="score">技术评分</th><th data-col="rating">评级 / 仓位</th><th data-col="navdate">净值日期</th><th>操作</th></tr></thead>
-    <tbody>${sorted.map((x) => {
-      const m = meta.get(x.code) || {};
-      const type = x.type || m.type || 'open';
-      const name = m.name || x.name || x.code;
-      const av = x.advice;
-      return `<tr draggable="true" data-drag-fund="${esc(x.code)}" data-fund-code="${esc(x.code)}" data-fund-name="${esc(cleanName(name))}" data-fund-type="${esc(type)}" title="拖动排序">
-        <td><span class="fund-drag-grip">⋮⋮</span><span class="t-name">${esc(cleanName(name))}</span><span class="t-code">${esc(x.code)}</span></td>
-        <td data-col="type"><span class="fund-tag ${type}">${type === 'etf' ? 'ETF' : '场外'}</span></td>
-        <td data-col="nav" class="t-price">${priceFmt(x.price)}${x.pctKind === 'holdings' || x.pctKind === 'etf' ? '<div class="t-sub">估算净值</div>' : ''}</td>
-        <td class="t-chg ${toneClass(x.navPctShow ?? x.navPctToday ?? (type === 'etf' ? x.pct : null))}">${fundDayPctCell(x)}</td>
-        <td data-col="est" class="t-chg">${fundEstimateCell(x)}</td>
-        <td data-col="flow" class="t-chg ${toneClass(x.mainYi)}">${type === 'etf' ? yiFmt(x.mainYi) : '--'}</td>
-        <td data-col="score" class="t-price ${av && av.score >= 60 ? 'tone-up' : av && av.score < 45 ? 'tone-down' : ''}">${av ? av.score : '--'}${av && av.analysis && av.analysis.includesToday ? '<div class="t-sub">含今日估算</div>' : ''}</td>
-        <td data-col="rating">${av ? `<span class="badge tone-${av.rating.tone}">${esc(av.rating.label)}</span><div class="t-sub">${esc(av.position.text)}</div>` : '--'}</td>
-        <td data-col="navdate" class="t-dim">${esc(x.navDate || x.date || (type === 'etf' ? '实时' : '--'))}</td>
-        <td><div class="fund-watch-actions">
-          <button data-fund-action="detail" data-code="${esc(x.code)}" title="查看详情">K</button>
-          <button data-fund-action="up" data-code="${esc(x.code)}" title="上移">↑</button>
-          <button data-fund-action="down" data-code="${esc(x.code)}" title="下移">↓</button>
-          <button class="del" data-fund-action="remove" data-code="${esc(x.code)}" title="移除">×</button>
-        </div></td>
-      </tr>`;
-    }).join('')}</tbody>
-  </table></div>`;
-  bindFundDrag(el);
-}
+/* v2.8.0：自选基金并入「自选基金」板块，只剩 renderFundWatchTable 一张表，
+   原 renderWatchFunds（#watchFundList 精简表）已删除，避免两份实现漂移。 */
 
 function addFund(item) {
   if (!item || !item.code) return false;
@@ -5124,9 +5342,11 @@ function addFund(item) {
   saveJSON(FUND_WATCH_KEY, state.fundWatchlist);
   schedulePushSync();
   toast(`已加入自选基金：${cleanName(item.name) || item.code}`, 'ok');
-  state.fundView = 'watch';
+  // v2.8.0：自选基金已独立成板块，基金页不再有「自选基金」子页，
+  // 添加后就地刷新（不强行切页），用户可点子页导航里的「自选基金 →」过去看。
   renderFunds();
   loadFundWatch(true);
+  loadFundPnl(true);
   return true;
 }
 
@@ -5137,7 +5357,7 @@ function removeFund(code) {
   schedulePushSync();
   toast(`已移除基金：${item ? cleanName(item.name) : code}`, 'info');
   loadFundWatch(true);
-  renderWatchFunds();
+  loadFundPnl(true);
 }
 
 function moveFund(code, dir) {
@@ -5150,7 +5370,7 @@ function moveFund(code, dir) {
   state.watchFundSort = 'manual';
   if ($('#watchFundSort')) $('#watchFundSort').value = 'manual';
   renderFundWatchTable();
-  renderWatchFunds();
+  if (state.fundPnl) renderFundPnl();
   toast('自选基金顺序已更新', 'ok', 1200);
 }
 
@@ -5166,7 +5386,7 @@ function reorderFund(fromCode, toCode) {
   saveJSON(FUND_WATCH_KEY, state.fundWatchlist);
   schedulePushSync();
   renderFundWatchTable();
-  renderWatchFunds();
+  if (state.fundPnl) renderFundPnl();
   toast('自选基金顺序已更新', 'ok', 1200);
 }
 
@@ -5424,8 +5644,8 @@ function renderFundMetricsBlock(m) {
    ========================================================= */
 let fundSearchTimer = null;
 
-async function runFundSearch(q) {
-  const pop = $('#fundSearchPop');
+async function runFundSearch(q, popEl) {
+  const pop = popEl || $('#fundSearchPop');
   if (!pop) return;
   const query = String(q || '').trim();
   if (!query) { pop.hidden = true; pop.innerHTML = ''; return; }
@@ -5449,6 +5669,62 @@ async function runFundSearch(q) {
     pop.hidden = false;
     pop.innerHTML = `<div class="search-empty">${esc(err.message)}</div>`;
   }
+}
+
+/* =========================================================
+   基金搜索框绑定（v2.8.0：基金页与「自选基金」板块共用一套逻辑）
+   ========================================================= */
+function bindFundSearch(inputSel, popSel, btnSel) {
+  const input = $(inputSel);
+  const pop = $(popSel);
+  if (!input || !pop) return;
+  input.addEventListener('input', (e) => {
+    clearTimeout(fundSearchTimer);
+    fundSearchTimer = setTimeout(() => runFundSearch(e.target.value, pop), 240);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { pop.hidden = true; input.blur(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = state.fundSearchItems[0];
+      if (first) {
+        addFund(first);
+        pop.hidden = true;
+        input.value = '';
+      } else {
+        runFundSearch(input.value, pop);
+      }
+    }
+  });
+  input.addEventListener('focus', () => {
+    if (input.value.trim()) runFundSearch(input.value, pop);
+  });
+  const btn = $(btnSel);
+  if (btn) {
+    btn.addEventListener('click', () => {
+      if (!input.value.trim()) { toast('请输入基金代码或名称', 'warn'); return; }
+      runFundSearch(input.value, pop);
+    });
+  }
+  pop.addEventListener('click', (e) => {
+    const add = e.target.closest('[data-fund-add]');
+    if (add) {
+      e.stopPropagation();
+      const item = state.fundSearchItems.find((x) => x.code === add.dataset.fundAdd);
+      if (item) {
+        addFund(item);
+        pop.hidden = true;
+        input.value = '';
+      }
+      return;
+    }
+    const row = e.target.closest('[data-fund-code]');
+    if (row) {
+      e.stopPropagation();
+      pop.hidden = true;
+      openFund(row.dataset.fundCode, row.dataset.fundName, row.dataset.fundType);
+    }
+  });
 }
 
 /* =========================================================
@@ -6197,7 +6473,7 @@ function resetAll() {
    视图切换 / 加载
    ========================================================= */
 function showView(view) {
-  const known = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'data', 'strategy', 'watchlist'];
+  const known = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'data', 'strategy', 'fundwatch', 'stockwatch'];
   if (!known.includes(view)) view = 'dashboard';
   if (view !== 'strategy') stopTimeline();
   state.view = view;
@@ -6761,9 +7037,12 @@ function renderSeatsBlock(seats) {
    升级为 #/stock/1.600519、#/sector/BK0475、#/fund/510300、#/us/AAPL，
    这样地址栏可以直接复制、收藏、新标签打开，后退键也能正常关闭弹窗。
    ========================================================= */
-const VIEWS = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'data', 'strategy', 'watchlist'];
+const VIEWS = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'data', 'strategy', 'fundwatch', 'stockwatch'];
+// v2.8.0：原「自选·预警」拆成「自选基金」（fundwatch）与「自选股票」（stockwatch），
+// 旧书签 #watchlist 一律落到自选股票，避免历史链接打开空白页。
+const VIEW_ALIAS = { watchlist: 'stockwatch', watch: 'stockwatch' };
 const DETAIL_KINDS = ['stock', 'sector', 'fund', 'us', 'hk'];
-const DETAIL_BASE_VIEW = { stock: 'watchlist', sector: 'sectors', fund: 'funds', us: 'us', hk: 'global' };
+const DETAIL_BASE_VIEW = { stock: 'stockwatch', sector: 'sectors', fund: 'funds', us: 'us', hk: 'global' };
 // 由 popstate / 直接打开详情路由时为 true，避免「打开详情」再压一条新历史
 let routeOpening = false;
 
@@ -6776,7 +7055,8 @@ function parseHashRoute() {
     if (DETAIL_KINDS.includes(kind) && key) return { detail: { kind, key } };
     return { view: 'dashboard' };
   }
-  return { view: VIEWS.includes(raw) ? raw : 'dashboard' };
+  const view = VIEW_ALIAS[raw] || raw;
+  return { view: VIEWS.includes(view) ? view : 'dashboard' };
 }
 
 function detailHash(kind, key) {
@@ -6872,7 +7152,6 @@ function loadView(view) {
     if (state.fundView === 'openflow' && !state.openFlowData) loadOpenFlow();
     if (state.fundView === 'proxy' && !state.proxyData) loadProxy();
     if (state.fundView === 'flow' && !state.fundFlow) loadFundFlow();
-    if (state.fundView === 'watch') loadFundWatch();
     if (state.fundView === 'bond') loadBondFund();
     if (state.fundView === 'stock') {
       if (!state.stockFund) loadStockFund();
@@ -6888,15 +7167,25 @@ function loadView(view) {
     if (state.battleTab !== 'overview') loadBattleTab(state.battleTab);
     else if (state.battle) renderBattleOverview();
   }
-  if (view === 'watchlist') {
+  if (view === 'fundwatch') {
+    renderFundWatchSummary();
+    renderFundWatchTable();
+    renderFundHoldSummary();
+    renderFundHoldTable();
+    renderFundPnl();
+    loadFundWatch();
+    loadFundPnl();
+  }
+  if (view === 'stockwatch') {
     renderWatchTable();
     renderAlerts();
     renderWatchTips();
-    renderWatchFunds();
+    renderPaper();
+    renderPaperRanking();
     loadWatchData();
-    loadFundWatch();
     loadCloudAlerts();
     loadPaper();
+    loadPaperRanking();
   }
 }
 
@@ -6943,7 +7232,8 @@ async function refreshFast() {
   try {
     await loadOverview();
     await loadWatchData(true);
-    if (state.view === 'watchlist') loadFundWatch();
+    if (state.view === 'fundwatch') loadFundWatch();
+    if (state.view === 'stockwatch') loadPaperRanking();
     if (state.view === 'china') {
       await loadChinaStock();
       loadChinaDistribution();
@@ -6962,7 +7252,6 @@ async function refreshFast() {
     if (state.view === 'funds') {
       if (state.fundView === 'sector') loadFundSectorFlow(true);
       if (state.fundView === 'flow') loadFundFlow(true);
-      if (state.fundView === 'watch') loadFundWatch(true);
       if (state.fundView === 'bond') loadBondFund(true);
       if (state.fundView === 'stock') {
         loadStockFund();
@@ -6986,7 +7275,8 @@ async function refreshAll(manual = false) {
   if (state.view === 'china') { await loadChinaRanks(true); await loadChinaStock(true); await loadChinaChart(); await loadChinaDistribution(true); await loadCsi300Ratio(true); await loadIndexCompare(true); await loadChinaPeriods(true); }
   if (state.view === 'global') await loadGlobalChart(true);
   if (state.view === 'us') { await loadUS(true); await loadUSChart(true); await loadUSMinutes(true); }
-  if (state.view === 'watchlist') await loadFundWatch(true);
+  if (state.view === 'fundwatch') { await loadFundWatch(true); await loadFundPnl(true); }
+  if (state.view === 'stockwatch') { await loadPaper(true); await loadPaperRanking(true); }
   if (state.view === 'commodities') await loadCommodityChart(true);
   if (state.view === 'commodities') await loadMetalsIntraday(true);
   if (state.view === 'funds') {
@@ -6994,7 +7284,6 @@ async function refreshAll(manual = false) {
     if (state.fundView === 'openflow') await loadOpenFlow(true);
     if (state.fundView === 'proxy') await loadProxy(true);
     if (state.fundView === 'flow') await loadFundFlow(true);
-    if (state.fundView === 'watch') await loadFundWatch(true);
     if (state.fundView === 'bond') await loadBondFund(true);
     if (state.fundView === 'stock') {
       await loadStockFund(true);
@@ -7246,7 +7535,6 @@ function bindEvents() {
     if (state.fundView === 'openflow' && !state.openFlowData) loadOpenFlow();
     if (state.fundView === 'proxy' && !state.proxyData) loadProxy();
     if (state.fundView === 'flow' && !state.fundFlow) loadFundFlow();
-    if (state.fundView === 'watch') loadFundWatch();
     if (state.fundView === 'bond') loadBondFund();
     if (state.fundView === 'stock') {
       if (!state.stockFund) loadStockFund();
@@ -7358,49 +7646,9 @@ function bindEvents() {
     if (row) openStockFund(row.dataset.stockFundCode, row.dataset.stockFundName);
   });
 
-  const fundSearchInput = $('#fundSearchInput');
-  if (fundSearchInput) {
-    fundSearchInput.addEventListener('input', (e) => {
-      clearTimeout(fundSearchTimer);
-      fundSearchTimer = setTimeout(() => runFundSearch(e.target.value), 240);
-    });
-    fundSearchInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { $('#fundSearchPop').hidden = true; fundSearchInput.blur(); }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        const first = state.fundSearchItems[0];
-        if (first) { addFund(first); $('#fundSearchPop').hidden = true; fundSearchInput.value = ''; }
-        else runFundSearch(fundSearchInput.value);
-      }
-    });
-    fundSearchInput.addEventListener('focus', () => {
-      if (fundSearchInput.value.trim()) runFundSearch(fundSearchInput.value);
-    });
-  }
-  $('#fundSearchBtn') && $('#fundSearchBtn').addEventListener('click', () => {
-    const q = $('#fundSearchInput') ? $('#fundSearchInput').value : '';
-    if (!q.trim()) { toast('请输入基金代码或名称', 'warn'); return; }
-    runFundSearch(q);
-  });
-  $('#fundSearchPop') && $('#fundSearchPop').addEventListener('click', (e) => {
-    const add = e.target.closest('[data-fund-add]');
-    if (add) {
-      e.stopPropagation();
-      const item = state.fundSearchItems.find((x) => x.code === add.dataset.fundAdd);
-      if (item) {
-        addFund(item);
-        $('#fundSearchPop').hidden = true;
-        if ($('#fundSearchInput')) $('#fundSearchInput').value = '';
-      }
-      return;
-    }
-    const row = e.target.closest('[data-fund-code]');
-    if (row) {
-      e.stopPropagation();
-      $('#fundSearchPop').hidden = true;
-      openFund(row.dataset.fundCode, row.dataset.fundName, row.dataset.fundType);
-    }
-  });
+  // 基金搜索：基金页 + 自选基金板块各一套，逻辑共用
+  bindFundSearch('#fundSearchInput', '#fundSearchPop', '#fundSearchBtn');
+  bindFundSearch('#fwSearchInput', '#fwSearchPop', '#fwSearchBtn');
   $('#fundFlowTable') && $('#fundFlowTable').addEventListener('click', (e) => {
     const row = e.target.closest('[data-fund-code]');
     if (row) openFund(row.dataset.fundCode, row.dataset.fundName, row.dataset.fundType);
@@ -7450,7 +7698,16 @@ function bindEvents() {
 
   $('#watchFundSort') && $('#watchFundSort').addEventListener('change', (e) => {
     state.watchFundSort = e.target.value;
-    renderWatchFunds();
+    renderFundWatchTable();
+  });
+
+  // v2.8.0：盈亏曲线区间切换（近1年 / 近半年 / 近3月）
+  $('#fundPnlRangeSeg') && $('#fundPnlRangeSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-pnl-range]');
+    if (!btn) return;
+    state.fundPnlRange = btn.dataset.pnlRange;
+    $$('#fundPnlRangeSeg button').forEach((b) => b.classList.toggle('is-active', b === btn));
+    renderFundPnl();
   });
 
   $('#cnIndexSeg') && $('#cnIndexSeg').addEventListener('click', (e) => {
@@ -7658,7 +7915,10 @@ function bindEvents() {
     const box = $('#searchBox');
     if (box && !box.contains(e.target) && $('#searchPop')) $('#searchPop').hidden = true;
     const fundWrap = e.target.closest('.fund-search-wrap');
-    if (!fundWrap && $('#fundSearchPop')) $('#fundSearchPop').hidden = true;
+    if (!fundWrap) {
+      if ($('#fundSearchPop')) $('#fundSearchPop').hidden = true;
+      if ($('#fwSearchPop')) $('#fwSearchPop').hidden = true;
+    }
   });
 }
 
@@ -7869,9 +8129,11 @@ async function init() {
 
   // 首屏路由：既支持 #china 这类视图，也支持 #/stock/1.600519 这类详情深链
   const bootRoute = parseHashRoute();
-  const initial = bootRoute.detail
-    ? (DETAIL_BASE_VIEW[bootRoute.detail.kind] || 'dashboard')
-    : bootRoute.view;
+  const params = new URLSearchParams(location.search);
+  const legacyFundWatch = params.get('fundview') === 'watch';
+  const initial = legacyFundWatch
+    ? 'fundwatch'
+    : (bootRoute.detail ? (DETAIL_BASE_VIEW[bootRoute.detail.kind] || 'dashboard') : bootRoute.view);
   state.view = initial;
   $$('.nav-tab').forEach((tab) => tab.classList.toggle('is-active', tab.dataset.view === initial));
   $$('.view').forEach((section) => section.classList.toggle('is-active', section.id === `view-${initial}`));
@@ -7883,8 +8145,8 @@ async function init() {
   loadWatchData();
   loadHeroSeries().then(() => renderHero());
   setTimeout(loadMiniSeries, 1600);
-  const params = new URLSearchParams(location.search);
-  if (['flow', 'watch', 'stock', 'sector', 'bond', 'openflow', 'proxy'].includes(params.get('fundview'))) state.fundView = params.get('fundview');
+  // v2.8.0：?fundview=watch 已迁移成「自选基金」板块，其余 fundview 取值仍留在基金页
+  if (['flow', 'stock', 'sector', 'bond', 'openflow', 'proxy'].includes(params.get('fundview'))) state.fundView = params.get('fundview');
   await adoptServerPortfolioIfNewDevice();
   loadView(initial);
 
@@ -7923,6 +8185,8 @@ export {
   switchDataTab, renderLonghu, renderCalendar, renderConvertibles, renderScreener,
   // 阶段 2.4 / 3.3：云端预警与模拟交易面板
   renderPaper, loadCloudAlerts,
+  // v2.8.0：自选基金盈亏统计与模拟账户排行榜
+  loadFundPnl, renderFundPnl, computeFundPnl, loadPaperRanking, renderPaperRanking,
   // v2.7.0：叠层（个股详情之上再开 F10 / 资讯）与席位明细区块
   mountOverlay, pushOverlay, topLayer, closeOverlay, renderSeatsBlock, openStrategyInNewTab,
 };

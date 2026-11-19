@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { startApp, bootstrapAdmin } from './helpers/app.mjs';
 
 test('账号：首个账号可注册并自动成为管理员', async (t) => {
@@ -117,4 +119,30 @@ test('账号：会话文件里不出现明文 token', async (t) => {
   const sessions = JSON.parse(app.readData('sessions.json'));
   assert.ok(!Object.keys(sessions).includes(raw), 'sessions.json 不应以明文 token 为键');
   assert.ok(Object.keys(sessions).every((k) => /^[0-9a-f]{64}$/.test(k)));
+});
+
+test('账号：会话按上海自然日失效（昨天创建的会话必须重新登录）', async (t) => {
+  const app = await startApp();
+  t.after(() => app.stop());
+  const c = await bootstrapAdmin(app, 'alice', 'alice12345');
+  const me = await c.get('/api/auth/me');
+  assert.equal(me.body.user.username, 'alice');
+
+  // 把会话的 createdAt 改成「昨天」，模拟跨 0 点（服务端用 createdAt 推导登录日）
+  const file = JSON.parse(app.readData('sessions.json'));
+  const keys = Object.keys(file);
+  assert.equal(keys.length, 1);
+  file[keys[0]].createdAt = Date.now() - 26 * 3600 * 1000;
+  writeFileSync(join(app.dataDir, 'sessions.json'), JSON.stringify(file, null, 2));
+
+  const after = await c.get('/api/auth/me');
+  assert.equal(after.body.user, null, '跨日会话应失效');
+  const guarded = await c.get('/api/portfolio');
+  assert.equal(guarded.status, 401, '跨日会话访问受保护接口应 401');
+
+  // 重新登录：Cookie 的 Max-Age 不能超过一天（到下一个上海 0 点）
+  const relogin = await c.post('/api/auth/login', { username: 'alice', password: 'alice12345' });
+  assert.equal(relogin.status, 200);
+  const maxAge = Number((relogin.headers.get('set-cookie') || '').match(/Max-Age=(\d+)/)?.[1]);
+  assert.ok(maxAge > 0 && maxAge <= 86400, `Max-Age 应在 (0, 86400]，实际 ${maxAge}`);
 });

@@ -88,6 +88,42 @@ function ago(ts) {
   return `${Math.floor(diff / 86400000)} 天前`;
 }
 
+/* =========================================================
+   设备信息（v2.8.0）
+   ---------------------------------------------------------
+   登录事件里已经存了原始 User-Agent，这里只做展示层解析：
+   系统 · 浏览器 · 设备类型，原始 UA 放进 title 便于排查。
+   ========================================================= */
+function parseUa(raw) {
+  const ua = String(raw || '');
+  if (!ua) return { os: '', browser: '', type: '', text: '未知设备' };
+  let os = '其他系统';
+  if (/Windows NT/.test(ua)) os = 'Windows';
+  else if (/iPhone|iPod/.test(ua)) os = 'iOS';
+  else if (/iPad/.test(ua)) os = 'iPadOS';
+  else if (/Android/.test(ua)) os = 'Android';
+  else if (/Macintosh|Mac OS X/.test(ua)) os = 'macOS';
+  else if (/Linux/.test(ua)) os = 'Linux';
+  let browser = '未知浏览器';
+  if (/Edg\//.test(ua)) browser = 'Edge';
+  else if (/MicroMessenger/.test(ua)) browser = '微信';
+  else if (/QQBrowser/.test(ua)) browser = 'QQ 浏览器';
+  else if (/CriOS\//.test(ua)) browser = 'Chrome';
+  else if (/Chrome\//.test(ua)) browser = 'Chrome';
+  else if (/Firefox\//.test(ua)) browser = 'Firefox';
+  else if (/Safari\//.test(ua)) browser = 'Safari';
+  const ver = (ua.match(/(?:Edg|CriOS|Chrome|Firefox|QQBrowser|Version)\/(\d+)/) || [])[1];
+  const type = /iPad|Tablet/.test(ua) ? '平板' : (/Mobile|iPhone|Android/.test(ua) ? '手机' : '桌面');
+  const text = `${os} · ${browser}${ver ? ` ${ver}` : ''} · ${type}`;
+  return { os, browser, type, text };
+}
+
+function deviceCell(ua) {
+  if (!ua) return '<span class="muted">未知设备</span>';
+  const d = parseUa(ua);
+  return `<span title="${esc(ua)}">${esc(d.text)}</span>`;
+}
+
 function topView(views) {
   const entries = Object.entries(views || {});
   if (!entries.length) return '<span class="muted">-</span>';
@@ -295,7 +331,7 @@ function renderBars(box, series, key, format, extraClass = '') {
 function loginRows(logins) {
   if (!logins || !logins.length) return '<div class="admin-empty">暂无记录</div>';
   return `<table class="admin-table"><thead><tr>
-      <th>时间</th><th>用户</th><th>动作</th><th>结果</th><th>IP</th><th>说明</th>
+      <th>时间</th><th>用户</th><th>动作</th><th>结果</th><th>IP</th><th>设备</th><th>说明</th>
     </tr></thead><tbody>${logins.map((item) => `
       <tr>
         <td class="nowrap">${esc(fmtClock(item.at))}</td>
@@ -303,6 +339,7 @@ function loginRows(logins) {
         <td>${esc(ACTION_LABELS[item.action] || item.action || '-')}</td>
         <td>${item.ok ? '<span class="admin-badge ok">成功</span>' : '<span class="admin-badge fail">失败</span>'}</td>
         <td class="num">${esc(item.ip || '-')}</td>
+        <td class="nowrap">${deviceCell(item.ua)}</td>
         <td class="muted">${esc(item.reason || '')}</td>
       </tr>`).join('')}</tbody></table>`;
 }
@@ -329,7 +366,7 @@ async function loadOverview() {
     $('#ovOnline').innerHTML = online.length
       ? online.map((item) => `
         <div class="admin-list-item">
-          <div><b>${esc(item.username)}</b><br><small>${esc(item.ip || '')} · ${esc(item.ua || '').slice(0, 46)}</small></div>
+          <div><b>${esc(item.username)}</b><br><small>${esc(item.ip || '')} · ${deviceCell(item.ua)}</small></div>
           <small>${esc(ago(item.lastSeen))}</small>
         </div>`).join('')
       : '<div class="admin-empty">最近 5 分钟没有用户活动</div>';

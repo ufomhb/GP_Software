@@ -13,7 +13,7 @@
   <meta name="description" content="寰球智投：A股、全球指数、期货、黄金白银实时行情，板块资金流向与规则化策略终端。">
   <title>寰球智投 · 全球行情与智能策略终端</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.7.0">
+  <link rel="stylesheet" href="/css/app.css?v=2.8.0">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icon.svg">
 </head>
@@ -123,9 +123,13 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="6" rx="8" ry="3"></ellipse><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"></path><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"></path></svg>
         <span>数据中心</span>
       </button>
-      <button class="nav-tab" data-view="watchlist">
+      <button class="nav-tab" data-view="fundwatch">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 18 9 8l5 6 6-10"></path><path d="M4 21h16"></path></svg>
+        <span>自选基金</span>
+      </button>
+      <button class="nav-tab" data-view="stockwatch">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9L12 3Z"></path></svg>
-        <span>自选·预警</span>
+        <span>自选股票</span>
       </button>
       <div class="nav-meta">
         <span class="freshness" id="dataFreshness"><i></i>连接中</span>
@@ -212,7 +216,7 @@
         <article class="panel watch-panel">
           <div class="panel-head">
             <div><div class="eyebrow">WATCHLIST</div><h2>我的自选</h2></div>
-            <button class="text-link" data-goto="watchlist">管理 →</button>
+            <button class="text-link" data-goto="stockwatch">管理 →</button>
           </div>
           <div id="dashWatch"></div>
         </article>
@@ -683,7 +687,7 @@
         <button data-fund-view="flow">ETF 资金流</button>
         <button data-fund-view="stock">股票型基金</button>
         <button data-fund-view="bond">债基</button>
-        <button data-fund-view="watch">自选基金</button>
+        <button class="text-link fund-subnav-jump" data-goto="fundwatch" title="自选基金的净值、持仓与盈亏统计已独立成「自选基金」板块">自选基金 →</button>
       </div>
 
       <!-- 板块资金 -->
@@ -886,33 +890,6 @@
           </div>
           <div class="table-scroll tall-table"><table class="table" id="bondFundTable"></table></div>
           <p class="muted small mt12">债基波动通常小于权益基金，但仍存在久期、信用与可转债权益敞口风险；近1日涨幅为最新净值日变动，不是实时交易价格。</p>
-        </article>
-      </div>
-
-      <!-- 自选基金 / 我的持仓 -->
-      <div class="fund-pane" id="fundWatchView" hidden>
-        <div class="fund-summary-grid" id="fundWatchSummary"></div>
-        <article class="panel fund-hold-panel">
-          <div class="panel-head">
-            <div>
-              <div class="eyebrow">MY PORTFOLIO</div>
-              <h3>我的持仓 · 收益与结构</h3>
-              <span class="muted small">录入份额与成本净值后自动计算持有收益、当日盈亏与仓位占比（仅存本机）</span>
-            </div>
-            <span class="badge">份额 + 成本</span>
-          </div>
-          <div class="fund-summary-grid" id="fundHoldSummary"></div>
-          <div id="fundHoldTable"></div>
-        </article>
-        <article class="panel">
-          <div class="panel-head">
-            <div><h3>我的自选基金</h3><span class="muted small" id="fundWatchCount">0 只</span></div>
-            <div class="head-actions">
-              <button class="text-link" id="fundSync" title="从服务端拉取电脑上录入的自选基金与持仓（手机换设备时用）">同步到本机</button>
-              <button class="text-link" id="fundExport">导出 JSON</button>
-            </div>
-          </div>
-          <div id="fundWatchTable"></div>
         </article>
       </div>
 
@@ -1298,13 +1275,87 @@
       </div>
     </section>
 
-    <!-- ===================== 自选·预警 ===================== -->
-    <section class="view" id="view-watchlist">
+    <!-- ===================== 自选基金 ===================== -->
+    <section class="view" id="view-fundwatch">
       <div class="view-head">
         <div>
-          <div class="eyebrow">WATCHLIST & ALERTS</div>
-          <h1>自选与预警</h1>
-          <p>自选股评分、价格提醒与自选基金独立展示</p>
+          <div class="eyebrow">FUND WATCHLIST</div>
+          <h1>自选基金</h1>
+          <p>自选基金净值、持仓收益，以及日 / 月 / 年盈亏统计（场外净值 T+1）</p>
+        </div>
+        <div class="head-actions fund-add">
+          <div class="fund-search-wrap">
+            <div class="input-wrap grow">
+              <input id="fwSearchInput" type="search" placeholder="搜索基金代码 / 名称，如 510300" autocomplete="off">
+              <span>⌕</span>
+            </div>
+            <div id="fwSearchPop" class="search-pop fund-search-pop" hidden></div>
+          </div>
+          <button class="btn primary" id="fwSearchBtn">搜索</button>
+        </div>
+      </div>
+
+      <div class="fund-summary-grid" id="fundWatchSummary"></div>
+
+      <article class="panel pnl-panel" id="fundPnlPanel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">PROFIT &amp; LOSS</div>
+            <h3>盈亏统计 · 日 / 月 / 年</h3>
+            <span class="muted small">按已录入份额与成本加权，净值口径（不含申赎费）</span>
+          </div>
+          <div class="seg" id="fundPnlRangeSeg">
+            <button class="is-active" data-pnl-range="year">近1年</button>
+            <button data-pnl-range="half">近半年</button>
+            <button data-pnl-range="quarter">近3月</button>
+          </div>
+        </div>
+        <div class="fund-summary-grid pnl-kpis" id="fundPnlKpis"></div>
+        <div class="pnl-chart-grid">
+          <div class="pnl-chart-box">
+            <div class="pnl-chart-title">组合市值曲线 <span class="muted small" id="fundPnlChartMeta"></span></div>
+            <div id="fundPnlChart" class="pnl-chart"></div>
+          </div>
+          <div class="pnl-chart-box">
+            <div class="pnl-chart-title">月度盈亏（最近 12 个月）</div>
+            <div id="fundPnlBars" class="pnl-chart"></div>
+          </div>
+        </div>
+        <p class="muted small mt12" id="fundPnlNote">还没有录入持仓。在下方「我的自选基金」表格里点「仓」填写份额与成本净值，就能看到盈亏曲线。</p>
+      </article>
+
+      <article class="panel fund-hold-panel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">MY PORTFOLIO</div>
+            <h3>我的持仓 · 收益与结构</h3>
+            <span class="muted small">录入份额与成本净值后自动计算持有收益、当日盈亏与仓位占比（仅存本机）</span>
+          </div>
+          <span class="badge">份额 + 成本</span>
+        </div>
+        <div class="fund-summary-grid" id="fundHoldSummary"></div>
+        <div id="fundHoldTable"></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <div><h3>我的自选基金</h3><span class="muted small" id="fundWatchCount">0 只</span><span class="muted small" style="margin-left:10px">拖动行或点击 ↑↓ 排序（手机长按行拖动）</span></div>
+          <div class="table-tools"><select id="watchFundSort" title="自选基金排序"><option value="manual">手动顺序</option><option value="day">按日涨跌</option><option value="name">按名称</option></select>
+            <button class="text-link" id="fundSync" title="从服务端拉取电脑上录入的自选基金与持仓（手机换设备时用）">同步到本机</button>
+            <button class="text-link" id="fundExport">导出 JSON</button>
+          </div>
+        </div>
+        <div id="fundWatchTable"></div>
+      </article>
+    </section>
+
+    <!-- ===================== 自选股票 ===================== -->
+    <section class="view" id="view-stockwatch">
+      <div class="view-head">
+        <div>
+          <div class="eyebrow">STOCK WATCHLIST</div>
+          <h1>自选股票</h1>
+          <p>模拟交易账户与全用户排行榜、自选股评分、条件预警</p>
         </div>
         <div class="head-actions watch-add">
           <div class="input-wrap grow"><input id="watchAddInput" type="search" placeholder="输入代码或名称，如 600519"><span>+</span></div>
@@ -1317,11 +1368,6 @@
       <article class="panel">
         <div class="panel-head"><div><h3>我的自选</h3><span class="muted small" id="watchCount">0 只</span><span class="muted small" style="margin-left:10px">拖动行或点击 ↑↓ 排序（手机长按行拖动）</span></div><button class="text-link" id="exportWatch">导出 JSON</button></div>
         <div id="watchTable"></div>
-      </article>
-
-      <article class="panel">
-        <div class="panel-head"><div><h3>我的自选基金</h3><span class="muted small" id="watchFundCount">0 只</span><span class="muted small" style="margin-left:10px">拖动行或点击 ↑↓ 排序</span></div><div class="table-tools"><select id="watchFundSort" title="自选基金排序"><option value="manual">手动顺序</option><option value="day">按日涨跌</option><option value="name">按名称</option></select><button class="text-link" data-goto="funds">去基金页添加</button></div></div>
-        <div id="watchFundList"></div>
       </article>
 
       <div class="strategy-2col">
@@ -1346,7 +1392,7 @@
   <div id="toastRoot" class="toasts" aria-live="polite"></div>
 
   <script src="/vendor/echarts.min.js"></script>
-  <script type="module" src="/js/app.js?v=2.7.0"></script>
+  <script type="module" src="/js/app.js?v=2.8.0"></script>
   <script>
     // PWA：注册「网络优先」的 Service Worker（发版后刷新即拿到新版本，离线时回退缓存壳）
     // file:// 打开时跳过，避免在本地直接双击 HTML 时报错。

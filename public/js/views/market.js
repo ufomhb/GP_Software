@@ -7,13 +7,13 @@
      行情小工具，因此 app.js 反过来从这里 import，彼此不构成循环依赖。
 
    依赖：core.js（state）、util.js（格式化/转义）、dom.js（$）、charts.js（sparkline 等）。 */
-import { state } from '../core.js?v=2.7.0';
+import { state } from '../core.js?v=2.8.0';
 import {
   esc, priceFmt, pctFmt, stockFmt, toneClass, cleanName, timeText,
   isNum, nf, yiFmt, compactAmount, safeUrl,
-} from '../util.js?v=2.7.0';
-import { $ } from '../dom.js?v=2.7.0';
-import { sparkline, sectorFlowBar, gaugeChart, COLORS } from '../charts.js?v=2.7.0';
+} from '../util.js?v=2.8.0';
+import { $ } from '../dom.js?v=2.8.0';
+import { sparkline, sectorFlowBar, gaugeChart, COLORS } from '../charts.js?v=2.8.0';
 
 
 /* =========================================================
@@ -321,7 +321,7 @@ export function renderDashWatch() {
   if (!el) return;
   const items = state.watchData && state.watchData.items ? state.watchData.items : [];
   if (!state.watchlist.length) {
-    el.innerHTML = '<div class="empty">还没有自选股<br><button class="text-link mt8" data-goto="watchlist">去添加第一只</button></div>';
+    el.innerHTML = '<div class="empty">还没有自选股<br><button class="text-link mt8" data-goto="stockwatch">去添加第一只</button></div>';
     return;
   }
   if (!items.length) {

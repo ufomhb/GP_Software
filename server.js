@@ -65,7 +65,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.7.0';
+const VERSION = '2.8.0';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）

@@ -222,3 +222,42 @@ test('个股资讯：能取到时返回带 url 的条目，取不到也不 500',
     }
   });
 });
+
+/* ---------------- 3.4 模拟账户排行榜（v2.8.0） ---------------- */
+
+test('排行榜：未登录 401', async () => {
+  await withApp(async (c) => {
+    const anon = await c.req('/api/paper/ranking', { cookie: '' });
+    assert.equal(anon.status, 401);
+  });
+});
+
+test('排行榜：本系统所有账号互相可见，且不透出账号 ID', async (t) => {
+  const app = await startApp({ env: { ALLOW_REGISTER: '1' } });
+  t.after(() => app.stop());
+  const a = app.client();
+  const regA = await a.post('/api/auth/register', { username: 'paperA', password: 'paper-pw-111' });
+  assert.equal(regA.status, 200);
+  const b = app.client();
+  const regB = await b.post('/api/auth/register', { username: 'paperB', password: 'paper-pw-222' });
+  assert.equal(regB.status, 200);
+
+  // A 尝试下一笔（行情取不到就只验证账户结构，排行榜仍应存在）
+  const buy = await a.post('/api/paper/trade', { secid: '1.600519', side: 'buy', shares: 100 });
+  assert.ok([200, 400].includes(buy.status), `下单返回 ${buy.status}`);
+
+  const rank = await b.get('/api/paper/ranking');
+  assert.equal(rank.status, 200);
+  assert.equal(rank.body.ok, true);
+  assert.equal(rank.body.items.length, 2, '两个账号都应在榜上');
+  assert.deepEqual(rank.body.items.map((x) => x.username).sort(), ['paperA', 'paperB']);
+  for (const item of rank.body.items) {
+    assert.ok(!('userId' in item), '排行榜不应透出 userId');
+    assert.ok(Number.isFinite(item.total), '总资产应为数字');
+    assert.ok(Number.isInteger(item.rank) && item.rank >= 1);
+    assert.ok(Array.isArray(item.positions));
+    assert.ok(Number.isFinite(item.profitPct));
+  }
+  assert.equal(rank.body.items[0].rank, 1);
+  assert.ok(rank.body.items[0].total >= rank.body.items[1].total, '默认按总资产降序');
+});

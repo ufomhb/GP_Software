@@ -52,7 +52,7 @@ function setOption(el, option) {
 
 export function resizeCharts() {
   if (!window.echarts) return;
-  document.querySelectorAll('.hero-chart,.main-chart,.tall-chart,.gauge-chart,.flow-chart,.distribution-chart,.fund-sector-chart,.csi300-ratio-chart,.csi300-ratio-line,.index-compare-chart,.index-mini-chart,.pa-pie,.umi-chart,.us-sector-chart').forEach((el) => {
+  document.querySelectorAll('.hero-chart,.main-chart,.tall-chart,.gauge-chart,.flow-chart,.distribution-chart,.fund-sector-chart,.csi300-ratio-chart,.csi300-ratio-line,.index-compare-chart,.index-mini-chart,.pa-pie,.umi-chart,.us-sector-chart,.pnl-chart').forEach((el) => {
     const inst = window.echarts.getInstanceByDom(el);
     if (inst) inst.resize();
   });
@@ -1664,6 +1664,145 @@ export function usIntradayChart(el, points, options = {}) {
         lineStyle: { color: 'rgba(148,163,184,.45)', width: 1, type: 'dashed' },
         data: [{ yAxis: base }, ...segmentLines],
       },
+    }],
+  });
+}
+
+/* =========================================================
+   自选基金盈亏（v2.8.0）：组合市值曲线 + 月度盈亏柱
+   ========================================================= */
+export function fundPnlAreaChart(el, points, options = {}) {
+  const rows = (Array.isArray(points) ? points : []).filter((p) => Number.isFinite(Number(p.v)));
+  if (!el) return null;
+  if (rows.length < 2) {
+    el.innerHTML = '<div class="empty small">净值历史不足，暂时画不出曲线</div>';
+    return null;
+  }
+  const cost = Number.isFinite(Number(options.cost)) ? Number(options.cost) : null;
+  const dates = rows.map((p) => String(p.d).slice(0, 10));
+  const values = rows.map((p) => Number(p.v));
+  const up = values[values.length - 1] >= values[0];
+  const color = up ? C.up : C.down;
+  const rgb = up ? '255,77,94' : '22,199,132';
+  return setOption(el, {
+    animation: false,
+    tooltip: {
+      ...TOOLTIP,
+      trigger: 'axis',
+      axisPointer: { type: 'line', lineStyle: { color: 'rgba(56,189,248,.28)' } },
+      formatter: (ps) => {
+        const p = ps && ps[0];
+        if (!p) return '';
+        const idx = p.dataIndex;
+        const v = values[idx];
+        const pnl = cost ? v - cost : null;
+        return `<div style="color:#7f8fa8;font-size:10px">${esc(dates[idx])}</div>
+          <div style="font-size:11px;color:#dbe7f6;margin-top:3px">组合市值 <b style="font-family:Bahnschrift">${v.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</b></div>
+          ${pnl === null ? '' : `<div style="font-size:10px;color:${pnl >= 0 ? C.up : C.down};margin-top:2px">对成本 ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div>`}`;
+      },
+    },
+    grid: { left: 62, right: 18, top: 14, bottom: 28 },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: C.line } },
+      axisTick: { show: false },
+      axisLabel: { color: C.muted, fontSize: 8, hideOverlap: true, formatter: (v) => String(v).slice(5) },
+      splitLine: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      scale: true,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: {
+        color: C.muted,
+        fontSize: 8,
+        formatter: (v) => (Math.abs(v) >= 10000 ? `${(v / 10000).toFixed(1)}万` : Number(v).toFixed(0)),
+      },
+      splitLine: { lineStyle: { color: C.split } },
+    },
+    series: [{
+      type: 'line',
+      data: values,
+      smooth: 0.2,
+      showSymbol: false,
+      lineStyle: { width: 1.7, color },
+      itemStyle: { color },
+      areaStyle: {
+        color: new window.echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: `rgba(${rgb},.26)` },
+          { offset: 1, color: `rgba(${rgb},0)` },
+        ]),
+      },
+      markLine: cost === null ? undefined : {
+        silent: true,
+        symbol: 'none',
+        label: {
+          show: true,
+          position: 'insideEndTop',
+          color: C.muted,
+          fontSize: 8,
+          formatter: '成本',
+        },
+        lineStyle: { color: 'rgba(245,196,81,.55)', width: 1, type: 'dashed' },
+        data: [{ yAxis: cost }],
+      },
+    }],
+  });
+}
+
+export function fundPnlMonthlyBars(el, months) {
+  const rows = (Array.isArray(months) ? months : []).filter((m) => m && Number.isFinite(Number(m.pnl)));
+  if (!el) return null;
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty small">还没有满月数据</div>';
+    return null;
+  }
+  return setOption(el, {
+    animationDuration: 400,
+    tooltip: {
+      ...TOOLTIP,
+      trigger: 'axis',
+      axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(56,189,248,.04)' } },
+      formatter: (ps) => {
+        const row = rows[ps[0] && ps[0].dataIndex];
+        if (!row) return '';
+        return `<div style="font-size:11px;color:#dbe7f6">${esc(row.label)}</div>
+          <div style="font-size:10px;color:${row.pnl >= 0 ? C.up : C.down};margin-top:3px">盈亏 <b style="font-family:Bahnschrift">${row.pnl >= 0 ? '+' : ''}${Number(row.pnl).toFixed(2)}</b></div>`;
+      },
+    },
+    grid: { left: 56, right: 14, top: 14, bottom: 26 },
+    xAxis: {
+      type: 'category',
+      data: rows.map((m) => m.label),
+      axisLine: { lineStyle: { color: C.line } },
+      axisTick: { show: false },
+      axisLabel: { color: C.muted, fontSize: 8, interval: 0 },
+    },
+    yAxis: {
+      type: 'value',
+      scale: true,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: {
+        color: C.muted,
+        fontSize: 8,
+        formatter: (v) => (Math.abs(v) >= 10000 ? `${(v / 10000).toFixed(1)}万` : Number(v).toFixed(0)),
+      },
+      splitLine: { lineStyle: { color: C.split } },
+    },
+    series: [{
+      type: 'bar',
+      barWidth: '58%',
+      data: rows.map((m) => ({
+        value: Number(m.pnl),
+        itemStyle: {
+          color: Number(m.pnl) >= 0 ? 'rgba(255,77,94,.78)' : 'rgba(22,199,132,.78)',
+          borderRadius: 3,
+        },
+      })),
     }],
   });
 }

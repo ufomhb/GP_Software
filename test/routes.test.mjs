@@ -101,3 +101,17 @@ test('路由：未知接口仍然返回 404 + 未知接口', async (t) => {
   assert.equal(res.status, 404);
   assert.equal(res.body.error, '未知接口');
 });
+
+test('基金：pnl-series 需要登录，且最多 12 只', async (t) => {
+  const app = await startApp();
+  t.after(() => app.stop());
+  const anon = app.client();
+  const unauth = await anon.get('/api/funds/pnl-series?codes=510300');
+  assert.equal(unauth.status, 401);
+
+  const admin = await bootstrapAdmin(app, 'pnlcheck', 'pnlpass123');
+  const codes = Array.from({ length: 13 }, (_, i) => String(600000 + i)).join(',');
+  const tooMany = await admin.get(`/api/funds/pnl-series?codes=${codes}`);
+  assert.equal(tooMany.status, 400);
+  assert.match(String(tooMany.body.error || ''), /12/);
+});
