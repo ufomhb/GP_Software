@@ -3910,6 +3910,38 @@ function paperLotOf(secid) {
   return /^[01]\.\d{6}$/.test(String(secid || '')) ? 100 : 1;
 }
 
+/**
+ * 股数校验（纯函数，弹窗与单测共用）。
+ * 注意：弹窗里不再用 <input step> 的原生校验（step 从 min 起算，min=1/step=100 会让 100 非法），
+ * 统一在这里给出中文提示，服务端仍会二次校验。
+ */
+function paperValidateShares({ side = 'buy', shares, secid = '', price = 0, cash = 0, held = 0 } = {}) {
+  const n = Math.floor(Number(shares));
+  if (!Number.isFinite(n) || n <= 0) return { ok: false, message: '股数必须是正整数' };
+  const lot = paperLotOf(secid);
+  if (lot === 100 && n % 100 !== 0) {
+    if (side === 'buy') {
+      const lo = Math.floor(n / 100) * 100;
+      const hi = lo + 100;
+      return { ok: false, message: `买入 A 股 / 场内 ETF 需 100 股整数倍，当前 ${n} 股（可改成 ${lo} 或 ${hi}）` };
+    }
+    if (n !== Math.floor(Number(held) || 0)) {
+      return { ok: false, message: `卖出需 100 股整数倍；想清仓请点「全部」一次卖出 ${nf(held, 0)} 股` };
+    }
+  }
+  if (side === 'buy' && Number(price) > 0) {
+    const amount = Number(price) * n;
+    const fee = paperFeeOf(amount);
+    if (amount + fee > (Number(cash) || 0) + 0.005) {
+      return { ok: false, message: `可用资金不足：需要 ${nf(amount + fee, 2)} 元，现有 ${nf(cash, 2)} 元` };
+    }
+  }
+  if (side === 'sell' && n > Math.floor(Number(held) || 0)) {
+    return { ok: false, message: `持仓不足：当前 ${nf(held, 0)} 股，不能卖出 ${n} 股` };
+  }
+  return { ok: true, message: '' };
+}
+
 /** 当前模拟持仓里某只标的的份额 */
 function paperHeldShares(secid) {
   const pos = ((state.paper && state.paper.positions) || []).find((p) => p.secid === secid);
@@ -4052,7 +4084,7 @@ function openPaperTrade(side = 'buy', preset = {}) {
         <div class="modal-title"><h2>模拟${isSell ? '卖出' : '买入'}</h2><span class="muted small">按最新价成交，佣金万 2.5（最低 5 元）${isSell ? ' + 印花税万 5' : ''}</span></div>
         <button class="modal-close" data-close>×</button>
       </div>
-      <form id="paperForm" class="pw-form" autocomplete="off">
+      <form id="paperForm" class="pw-form" autocomplete="off" novalidate>
         <div class="paper-symbol-wrap">
           <label class="input-wrap">
             <span>标的</span>
@@ -4064,7 +4096,10 @@ function openPaperTrade(side = 'buy', preset = {}) {
         <div class="paper-quote" id="paperQuote"><div class="empty small">先输入股票代码或名称，选中标的后显示实时报价与分时</div></div>
         <div id="paperIntraday" class="paper-intraday"></div>
         <div class="paper-qty">
-          <label class="input-wrap"><span>股数</span><input id="paperShares" type="number" min="1" step="${isSell ? 1 : 100}" value="100" placeholder="100 的整数倍"></label>
+          <label class="input-wrap">
+            <span>股数</span>
+            <input id="paperShares" type="number" min="1" step="1" inputmode="numeric" value="100" placeholder="如 100 / 200 / 500">
+          </label>
           <div class="paper-ratio-seg" id="paperRatioSeg" role="group" aria-label="按比例下单">
             <button type="button" data-paper-ratio="0.25">1/4</button>
             <button type="button" data-paper-ratio="0.3333">1/3</button>
@@ -4072,6 +4107,7 @@ function openPaperTrade(side = 'buy', preset = {}) {
             <button type="button" data-paper-ratio="1">全部</button>
           </div>
         </div>
+        <div class="paper-qty-hint">A 股 / 场内 ETF 买入需 100 股整数倍；卖出可全仓（含零股）</div>
         <div class="paper-preview" id="paperPreview"><span class="muted small">选择标的并填写股数后，这里显示预计成交金额与费用</span></div>
         <label class="input-wrap"><span>备注</span><input id="paperNote" maxlength="40" placeholder="可选，如：回踩 MA20 买入"></label>
         <div class="modal-actions">
@@ -4184,7 +4220,15 @@ function openPaperTrade(side = 'buy', preset = {}) {
       payload.ratio = t.ratio;
     } else {
       const shares = Math.floor(Number(sharesInput ? sharesInput.value : 0));
-      if (!Number.isFinite(shares) || shares <= 0) { toast('股数必须是正整数', 'warn'); return; }
+      const check = paperValidateShares({
+        side,
+        shares,
+        secid: t.target.secid,
+        price: t.quote ? t.quote.price : 0,
+        cash: (state.paper || {}).cash,
+        held: paperHeldShares(t.target.secid),
+      });
+      if (!check.ok) { toast(check.message, 'warn', 6000); return; }
       payload.shares = shares;
     }
     const btn = $('#paperSubmit');
@@ -8550,6 +8594,7 @@ export {
   loadFundPnl, renderFundPnl, computeFundPnl, loadPaperRanking, renderPaperRanking,
   // v2.9.0：模拟买卖弹窗（搜索 / 比例 / 报价与分时）与盈亏口径统一的共用函数
   openPaperTrade, paperRatioShares, paperHeldShares, renderPaperQuote, renderPaperPreview,
+  paperValidateShares, paperLotOf,
   fundPortfolio,
   // v2.7.0：叠层（个股详情之上再开 F10 / 资讯）与席位明细区块
   mountOverlay, pushOverlay, topLayer, closeOverlay, renderSeatsBlock, openStrategyInNewTab,

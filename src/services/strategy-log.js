@@ -33,15 +33,32 @@
 const DEFAULT_BANDS = {
   addBand: 0.3,   // 加仓：次日涨 ≥ 0.3% 算对，跌 ≤ -0.3% 算错
   cutBand: 0.3,   // 减仓：次日跌 ≤ -0.3% 算对，涨 ≥ 0.3% 算错
-  holdBand: 0.8,  // 不变：次日 |涨跌| ≤ 0.8% 算对
+  holdBand: 1.5,  // 不变：次日 |涨跌| ≤ 该值算对（v2.9.1 从 0.8 提到 1.5：基金次日 |涨跌| 中位数 1.54%）
   evalWindow: 3,  // 决策日后最多几个工作日之内必须拿到次日净值
 };
 
+/* v2.9.1：「不变」的判定阈值跟着基金自身波动走（ATR14% × 0.55，夹在 1.2%~3.0%）。
+   0.8% 的固定阈值对基金来说等于要求几乎不波动，回测里 68% 的「不变」被判成中性，
+   看起来命中率只有 31%，其实是被判定口径吃掉了。 */
+const HOLD_BAND_MIN = 1.2;
+const HOLD_BAND_MAX = 3.0;
+const HOLD_BAND_ATR_K = 0.55;
+
+function holdBandFor(atrPct, bands = DEFAULT_BANDS) {
+  const base = Number.isFinite(Number(bands && bands.holdBand)) ? Number(bands.holdBand) : DEFAULT_BANDS.holdBand;
+  const atr = Number(atrPct);
+  if (!Number.isFinite(atr) || atr <= 0) return base;
+  return Math.round(Math.min(HOLD_BAND_MAX, Math.max(HOLD_BAND_MIN, HOLD_BAND_ATR_K * atr)) * 100) / 100;
+}
+
 const DEFAULT_AUTOTUNE = {
   enabled: true,      // 全自动调参开关
-  minSamples: 5,      // 至少这么多条可判定样本才敢动参数
-  minHitRate: 0.5,    // 命中率低于它才调
-  step: 5,            // 每次调整的幅度（评分门槛加减 5）
+  minSamples: 20,     // v2.9.1：至少这么多条可判定样本才敢动参数（原 5 太小，噪声当信号）
+  minHitRate: 0.5,    // 记录口径（旧逻辑）用：命中率低于它才调
+  step: 5,            // 记录口径（旧逻辑）用：每次调整幅度
+  minDelta: 0.03,     // v2.9.1：验证段目标函数至少要改善 3% 才采纳
+  foldRatio: 0.7,     // v2.9.1：前 70% 训练、后 30% 验证
+  maxChanges: 2,      // v2.9.1：单次最多采纳几项（当前实现一次只采纳 1 项，留作上限）
   lastTuneDate: '',   // 已自动调参的日期（每天最多一次）
 };
 
@@ -233,7 +250,7 @@ function createStrategyLog(deps) {
 
   /* ---------------- 判定 ---------------- */
 
-  function judge(action, pct, bands = DEFAULT_BANDS) {
+  function judge(action, pct, bands = DEFAULT_BANDS, holdBandOverride = null) {
     const b = { ...DEFAULT_BANDS, ...(bands || {}) };
     if (pct === null || pct === undefined || !Number.isFinite(Number(pct))) {
       return { verdict: 'skipped', note: '次日净值未取到' };
@@ -249,8 +266,12 @@ function createStrategyLog(deps) {
       if (p >= b.cutBand) return { verdict: 'wrong', note: `次日 +${p.toFixed(2)}%，减仓减在上涨` };
       return { verdict: 'flat', note: `次日 ${p.toFixed(2)}%，在 ±${b.cutBand}% 内，方向不明显（中性，不计对错）` };
     }
-    if (Math.abs(p) <= b.holdBand) return { verdict: 'right', note: `次日 ${p.toFixed(2)}%，波动在 ±${b.holdBand}% 内，不动合理` };
-    return { verdict: 'flat', note: `次日 ${p.toFixed(2)}%，超出 ±${b.holdBand}%：不动是保守选择，记中性（不计对错）` };
+    // v2.9.1：不变用「该基金当时的自适应阈值」，记录里存了就用它，保证事后评价口径不变
+    const holdBand = Number.isFinite(Number(holdBandOverride)) ? Number(holdBandOverride) : b.holdBand;
+    if (Math.abs(p) <= holdBand) {
+      return { verdict: 'right', note: `次日 ${p.toFixed(2)}%，波动在 ±${holdBand}% 内，不动合理` };
+    }
+    return { verdict: 'flat', note: `次日 ${p.toFixed(2)}%，超出 ±${holdBand}%：不动是保守选择，记中性（不计对错）` };
   }
 
   /* ---------------- 记录 ---------------- */
@@ -271,7 +292,7 @@ function createStrategyLog(deps) {
   }
 
   /** 单条建议的落库字段（实盘记录与历史回测共用，避免两套结构漂移） */
-  function mapRecordItem(it) {
+  function mapRecordItem(it, bands = DEFAULT_BANDS) {
     return {
       code: it.code,
       name: it.name,
@@ -290,14 +311,18 @@ function createStrategyLog(deps) {
       score: it.score,
       fundScore: it.fundScore === undefined ? it.score : it.fundScore,
       marketAdj: it.marketAdj || 0,
+      atrPct: it.atrPct === undefined ? null : it.atrPct,
+      // v2.9.1：判定「不变」时用的自适应阈值（ATR 校准），事后评价按它复现
+      holdBandUsed: it.action === 'hold' ? holdBandFor(it.atrPct, bands) : null,
       reason: it.reason,
     };
   }
 
   function buildRecord(port, {
-    slotTime = '14:30', source = 'manual', date, late = false, rules = defaultRules, market = null,
+    slotTime = '14:30', source = 'manual', date, late = false, rules = defaultRules, bands = DEFAULT_BANDS, market = null,
   } = {}) {
     const effectiveRules = normalizeStrategyRules(rules);
+    const effectiveBands = { ...DEFAULT_BANDS, ...(bands || {}) };
     const cls = classifyPortfolio(port, effectiveRules, market);
     const items = [...cls.add, ...cls.cut, ...cls.hold];
     const marketSnapshot = marketSnapshotOf(market);
@@ -311,6 +336,7 @@ function createStrategyLog(deps) {
       decisionBasis: 'estimate',
       createdAt: Date.now(),
       rules: effectiveRules,
+      bands: effectiveBands,
       market: marketSnapshot,
       snapshot: {
         today: port.today,
@@ -321,13 +347,18 @@ function createStrategyLog(deps) {
         marketVerdict: marketSnapshot ? marketSnapshot.verdict : '',
         marketScore: marketSnapshot ? marketSnapshot.score : null,
         counts: {
-          add: cls.add.length, cut: cls.cut.length, hold: cls.hold.length, pending: cls.pending.length,
+          add: cls.add.length, cut: cls.cut.length, hold: cls.hold.length,
+          pending: cls.pending.length, observe: (cls.observe || []).length,
         },
       },
-      items: items.map(mapRecordItem),
+      items: items.map((it) => mapRecordItem(it, effectiveBands)),
       pending: cls.pending.map((r) => ({
         code: r.code, name: r.name, navDate: r.navDate || '', navPct: r.navPct,
         note: r.decisionPct === null ? '没有 15:00 估值，不参与本次决策' : '',
+      })),
+      observe: (cls.observe || []).map((it) => ({
+        code: it.code, name: it.name, action: it.action, rule: it.rule,
+        pct: it.pct, score: it.score, reason: it.reason,
       })),
       eval: null,
     };
@@ -352,6 +383,7 @@ function createStrategyLog(deps) {
       date: today,
       late: Boolean(late) || afterClose,
       rules: store.rules,
+      bands: store.bands,
       market,
     });
     persistRecord(record);
@@ -382,6 +414,8 @@ function createStrategyLog(deps) {
       hitRate: decided > 0 ? counts.right / decided : null,
       // 覆盖率 = 可判定条数 / 全部条数：让「样本被中性/未评吃掉多少」一眼可见。
       coverageRate: total > 0 ? decided / total : null,
+      // v2.9.1：中性率（flat/全部）单独列出来，避免把「中性多」误读成「命中率低」。
+      neutralRate: total > 0 ? counts.flat / total : null,
     };
   }
 
@@ -412,7 +446,7 @@ function createStrategyLog(deps) {
         const navDate = row ? String(row.navDate || '') : '';
         const usable = Boolean(row) && row.pctKind === 'nav' && allowed.includes(navDate) && row.pct !== null;
         if (usable) {
-          const verdict = judge(item.action, row.pct, bands);
+          const verdict = judge(item.action, row.pct, bands, item.holdBandUsed);
           items.push({ ...item, evalPct: Number(row.pct), evalDate: navDate, verdict: verdict.verdict, note: verdict.note });
         } else if (!tooLate) {
           waiting = true; // 次日净值还没公布，下次再来
@@ -480,8 +514,9 @@ function createStrategyLog(deps) {
   }
 
   /** 单日回测记录：结构与实盘完全一致，只是来源 / 口径字段不同 */
-  function buildBackfillRecord({ date, rows, totals, rules = defaultRules, market = null }) {
+  function buildBackfillRecord({ date, rows, totals, rules = defaultRules, bands = DEFAULT_BANDS, market = null }) {
     const effectiveRules = normalizeStrategyRules(rules);
+    const effectiveBands = { ...DEFAULT_BANDS, ...(bands || {}) };
     const cls = classifyPortfolio({ rows, totals: totals || {}, today: date }, effectiveRules, market);
     const items = [...cls.add, ...cls.cut, ...cls.hold];
     const marketSnapshot = marketSnapshotOf(market);
@@ -495,6 +530,7 @@ function createStrategyLog(deps) {
       decisionBasis: 'estimate-replay',
       createdAt: Date.now(),
       rules: effectiveRules,
+      bands: effectiveBands,
       market: marketSnapshot,
       snapshot: {
         today: date,
@@ -504,15 +540,22 @@ function createStrategyLog(deps) {
         profit: totals ? totals.profit : null,
         marketVerdict: marketSnapshot ? marketSnapshot.verdict : '',
         marketScore: marketSnapshot ? marketSnapshot.score : null,
-        counts: { add: cls.add.length, cut: cls.cut.length, hold: cls.hold.length, pending: cls.pending.length },
+        counts: {
+          add: cls.add.length, cut: cls.cut.length, hold: cls.hold.length,
+          pending: cls.pending.length, observe: (cls.observe || []).length,
+        },
       },
-      items: items.map(mapRecordItem),
+      items: items.map((it) => mapRecordItem(it, effectiveBands)),
       pending: cls.pending.map((r) => ({
         code: r.code,
         name: r.name,
         navDate: r.navDate || '',
         navPct: r.navPct,
         note: '当日 15:00 估值不可用（QDII / 无持仓 / 覆盖率不足），不参与回测决策',
+      })),
+      observe: (cls.observe || []).map((it) => ({
+        code: it.code, name: it.name, action: it.action, rule: it.rule,
+        pct: it.pct, score: it.score, reason: it.reason,
       })),
       eval: null,
     };
@@ -544,7 +587,7 @@ function createStrategyLog(deps) {
           note: `评价窗口（决策日后 ${bands.evalWindow} 个工作日）内没拿到次日净值`,
         };
       }
-      const verdict = judge(it.action, hit.pct, bands);
+      const verdict = judge(it.action, hit.pct, bands, it.holdBandUsed);
       return { ...it, evalPct: hit.pct, evalDate: hit.d, verdict: verdict.verdict, note: verdict.note };
     });
     return {
@@ -562,7 +605,16 @@ function createStrategyLog(deps) {
    *   stockAdvice(quote, candles, {risk})        → 技术评分（与实盘同一函数）
    *   buildMarketContext(pulse)                  → 市场氛围（与实盘同一函数）
    */
-  async function backfillNow({ days = 130, force = false } = {}) {
+  /* ---------------- 历史回测 / 重放引擎（v2.9.0，v2.9.1 抽出重放） ----------------
+     1) buildHistory：抓净值/日线/重仓股，逐日重建 15:00 估值 + 技术评分，得到「每日行」；
+     2) replay：用给定参数把这些行重新跑一遍 classifyPortfolio + 次日判定（纯计算）；
+     3) backfillNow：replay + 落库 + 记录区间；
+     4) tuneSearch：在 replay 上做坐标搜索 + 前后验证，给出更优参数建议。
+     历史行缓存在进程内 10 分钟，回测/体检/调参共用，避免重复抓行情。
+     ------------------------------------------------- */
+  let historyCache = null; // { at, key, history }
+
+  async function buildHistory({ days = 130, refresh = false } = {}) {
     const windowDays = Math.max(30, Math.min(180, Math.trunc(Number(days) || 130)));
     const bad = (m) => Object.assign(new Error(m), { status: 400 });
     if (typeof getFundPnlSeries !== 'function' || typeof estimateFundHistPctBatch !== 'function') {
@@ -575,6 +627,11 @@ function createStrategyLog(deps) {
     if (!held.length) throw bad('还没有录入持仓：先在「自选基金」表格点「仓」填份额，再回测');
 
     const codes = held.map((r) => String(r.code)).filter(Boolean);
+    const cacheKey = `${windowDays}|${codes.join(',')}|${dateKeyOf()}`;
+    if (!refresh && historyCache && historyCache.key === cacheKey && Date.now() - historyCache.at < 10 * 60 * 1000) {
+      return historyCache.history;
+    }
+
     const rawDays = windowDays + 80;
     const seriesRes = await getFundPnlSeries(codes, Math.min(500, rawDays));
     const items = (seriesRes && seriesRes.items) || [];
@@ -611,14 +668,8 @@ function createStrategyLog(deps) {
     const until = calendar.filter((d) => d < today).slice(-1)[0] || '';
     if (!until) throw bad('净值历史还不足一个交易日');
 
-    const store = readStore();
-    const existing = store.records
-      .filter((r) => !(force && r.source === 'backfill'))
-      .map((r) => r.date);
-    const plan = planBackfillDates(calendar, { days: windowDays, until, existing });
-    if (!plan.length) {
-      return { ok: true, records: 0, skipped: 0, empty: 0, from: null, to: null, reason: 'nothing-to-do', tune: null };
-    }
+    const plan = planBackfillDates(calendar, { days: windowDays, until });
+    if (!plan.length) throw bad('没有可回测的交易日');
 
     // 逐日「15:00 估值」：重仓穿透 / 目标 ETF 穿透，与实盘同一公式
     const estMap = await estimateFundHistPctBatch({
@@ -674,9 +725,9 @@ function createStrategyLog(deps) {
         } catch { /* 指数缺失 → 该日市场氛围记不可用 */ }
       }
     }
-    const marketCache = new Map();
+    const marketByDate = new Map();
     const marketOf = (date) => {
-      if (marketCache.has(date)) return marketCache.get(date);
+      if (marketByDate.has(date)) return marketByDate.get(date);
       let market = null;
       if (typeof buildMarketContext === 'function' && indexPct.size) {
         const pctOf = (key) => {
@@ -696,7 +747,7 @@ function createStrategyLog(deps) {
           market = got && got.available !== false ? got : null;
         } catch { market = null; }
       }
-      marketCache.set(date, market);
+      marketByDate.set(date, market);
       return market;
     };
 
@@ -737,21 +788,20 @@ function createStrategyLog(deps) {
     };
     const etfHistoryOf = (code, date) => {
       const candles = etfCandles.get(code) || [];
-      const idx = candles.length - 1;
       const upTo = [];
-      for (let i = 0; i <= idx; i += 1) {
+      for (let i = 0; i < candles.length; i += 1) {
         if (candles[i].d <= date) upTo.push(candles[i]);
         else break;
       }
       return upTo;
     };
 
-    let made = 0;
     let skipped = 0;
-    let empty = 0;
+    const rowsByDate = new Map();
+    const estimateKinds = new Map();
     for (const date of plan) {
       const rows = [];
-      const estimates = {};
+      const kinds = new Set();
       for (const r of held) {
         const code = String(r.code);
         const shares = Number(r.shares) || 0;
@@ -798,7 +848,7 @@ function createStrategyLog(deps) {
             price = round4(prev.nav * (1 + estPct / 100));
             pct = estPct;
             pctKind = estKind || 'holdings';
-            estimates[code] = estKind || 'holdings';
+            kinds.add(estKind || 'holdings');
             if (typeof stockAdvice === 'function') {
               const bars = openHistoryOf(code, date, estPct, price);
               if (bars.length >= 20) {
@@ -832,7 +882,7 @@ function createStrategyLog(deps) {
           advice,
         });
       }
-      if (!rows.length) { empty += 1; continue; }
+      if (!rows.length) { rowsByDate.set(date, []); continue; }
       const marketValue = rows.reduce((s, x) => s + x.marketValue, 0);
       let costValue = 0;
       let dayProfit = 0;
@@ -846,7 +896,8 @@ function createStrategyLog(deps) {
         x.weight = marketValue > 0 ? (x.marketValue / marketValue) * 100 : null;
       }
       const profit = costValue > 0 ? marketValue - costValue : null;
-      const totals = {
+      rowsByDate.set(date, rows);
+      rows.totals = {
         marketValue,
         costValue,
         dayProfit,
@@ -857,36 +908,334 @@ function createStrategyLog(deps) {
         held: rows.length,
         covered: rows.filter((x) => x.pct !== null).length,
       };
-      const record = buildBackfillRecord({
-        date, rows, totals, rules: store.rules, market: marketOf(date),
-      });
-      // 全是「未更新」的日期不落库（没有建议可评价）
-      if (!record.items.length) { empty += 1; continue; }
-      record.estimateKinds = [...new Set(Object.values(estimates))];
-      persistRecord(evaluateBackfillRecord(record, { navByCode, bands: store.bands }));
-      made += 1;
+      estimateKinds.set(date, [...kinds]);
+      marketOf(date);
     }
 
-    const from = plan[0] || '';
-    const to = plan[plan.length - 1] || '';
-    const missing = (seriesRes && seriesRes.missing) || [];
-    // 回测元信息：页面展示「上次回测」用
+    const history = {
+      days: windowDays,
+      from: plan[0] || '',
+      to: plan[plan.length - 1] || '',
+      until,
+      dates: plan,
+      rowsByDate,
+      totalsByDate: new Map([...rowsByDate.entries()].map(([d, rs]) => [d, rs.totals || null])),
+      markets: marketByDate,
+      navByCode,
+      etfSet: [...etfSet],
+      codes,
+      missing: (seriesRes && seriesRes.missing) || [],
+      skipped,
+      estimateKinds,
+      at: Date.now(),
+    };
+    historyCache = { at: Date.now(), key: cacheKey, history };
+    return history;
+  }
+
+  /** 用给定参数把历史行重放一遍（纯计算；不落库） */
+  function replay(history, rules = defaultRules, bands = DEFAULT_BANDS) {
+    const effectiveRules = normalizeStrategyRules(rules);
+    const effectiveBands = { ...DEFAULT_BANDS, ...(bands || {}) };
+    const records = [];
+    let empty = 0;
+    for (const date of (history && history.dates) || []) {
+      const rows = (history.rowsByDate && history.rowsByDate.get(date)) || [];
+      if (!rows.length) { empty += 1; continue; }
+      const totals = rows.totals || (history.totalsByDate && history.totalsByDate.get(date)) || {};
+      const record = buildBackfillRecord({
+        date,
+        rows,
+        totals,
+        rules: effectiveRules,
+        bands: effectiveBands,
+        market: history.markets ? history.markets.get(date) || null : null,
+      });
+      if (!record.items.length) { empty += 1; continue; }
+      record.estimateKinds = (history.estimateKinds && history.estimateKinds.get(date)) || [];
+      records.push(evaluateBackfillRecord(record, { navByCode: history.navByCode, bands: effectiveBands }));
+    }
+    return { records, empty };
+  }
+
+  async function backfillNow({ days = 130, force = false } = {}) {
+    const windowDays = Math.max(30, Math.min(180, Math.trunc(Number(days) || 130)));
+    const history = await buildHistory({ days: windowDays, refresh: force });
+    const store = readStore();
+    const existing = new Set(store.records
+      .filter((r) => !(force && r.source === 'backfill'))
+      .map((r) => r.date));
+    const writable = history.dates.filter((d) => !existing.has(d));
+    if (!writable.length) {
+      return {
+        ok: true, records: 0, skipped: history.skipped, empty: 0,
+        from: history.from, to: history.to, missing: history.missing,
+        reason: 'nothing-to-do', tune: null,
+      };
+    }
+    const replayed = replay(history, store.rules, store.bands);
+    const wanted = new Set(writable);
+    let made = 0;
+    let empty = 0;
+    for (const record of replayed.records) {
+      if (!wanted.has(record.date)) { empty += 1; continue; }
+      persistRecord(record);
+      made += 1;
+    }
+    // 没有任何建议的日期（全「未更新」）不计入落库
+    const skippedEmpty = writable.length - made;
+
     const after = readStore();
     after.backfill = {
       at: Date.now(),
       days: windowDays,
-      from,
-      to,
+      from: history.from,
+      to: history.to,
       records: made,
-      skipped,
-      empty,
-      missing,
-      codes: codes.length,
+      skipped: history.skipped,
+      empty: skippedEmpty,
+      missing: history.missing,
+      codes: history.codes.length,
     };
     saveMeta(after);
     // 回测样本立刻参与自动调参（用户要求），结果与调参历史都可回滚
-    const tune = runAutoTune(after, buildStats(after, { source: 'all' }), { manual: true });
-    return { ok: true, records: made, skipped, empty, from, to, missing, tune };
+    const tune = await runAutoTuneV2({ force: true, history }).catch(() => null);
+    return {
+      ok: true,
+      records: made,
+      skipped: history.skipped,
+      empty: skippedEmpty,
+      from: history.from,
+      to: history.to,
+      missing: history.missing,
+      tune,
+    };
+  }
+
+  /* ---------------- 参数体检 / 自动调参 v2（v2.9.1） ----------------
+     目标函数 = 方向性命中率 × sqrt(覆盖率)，样本不足不动；
+     坐标搜索（每次只动 1 个参数、±1 步），前 70% 训练选参、后 30% 验证确认，
+     验证改善 ≥ minDelta 才采纳，避免「同一批样本既调又评」的过拟合。
+     ------------------------------------------------- */
+  // eslint-disable-next-line no-unused-vars
+  const TUNE_FIELDS = ['addScore', 'cutScore', 'addDip', 'cutDip', 'cutMaxDip', 'maxActionsPerDay', 'baseRatio', 'marketWeight', 'addTrendConfirm'];
+
+  function statsOfRecords(records) {
+    const items = [];
+    for (const r of records || []) for (const it of (r && r.eval && r.eval.items) || []) items.push(it);
+    return summarizeEval(items);
+  }
+
+  function objectiveOf(stats, minSamples = 20) {
+    if (!stats || !Number.isFinite(stats.decided) || stats.decided < Math.max(10, minSamples)) return null;
+    const hit = Number.isFinite(stats.hitRate) ? stats.hitRate : 0;
+    const cov = Number.isFinite(stats.coverageRate) ? stats.coverageRate : 0;
+    return Math.round(hit * Math.sqrt(Math.max(0.01, cov)) * 10000) / 10000;
+  }
+
+  function splitRecords(records, foldRatio = 0.7) {
+    const rows = [...(records || [])].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const ratio = Math.min(0.9, Math.max(0.5, Number(foldRatio) || 0.7));
+    const cut = Math.max(1, Math.floor(rows.length * ratio));
+    return { train: rows.slice(0, cut), validate: rows.slice(cut) };
+  }
+
+  /** 候选参数：每次只动一个字段，幅度有上限（避免一步跳太远） */
+  function candidateMoves(rules) {
+    const R = normalizeStrategyRules(rules);
+    const moves = [];
+    const add = (field, to, step) => {
+      const next = normalizeStrategyRules({ ...R, [field]: to })[field];
+      if (String(next) !== String(R[field])) moves.push({ field, from: R[field], to: next, step });
+    };
+    add('addScore', R.addScore + 5, '+5');
+    add('addScore', R.addScore - 5, '-5');
+    add('cutScore', R.cutScore + 5, '+5');
+    add('cutScore', R.cutScore - 5, '-5');
+    add('addDip', R.addDip + 0.4, '+0.4');
+    add('addDip', R.addDip - 0.4, '-0.4');
+    add('cutDip', R.cutDip + 0.5, '+0.5');
+    add('cutDip', R.cutDip - 0.5, '-0.5');
+    add('cutMaxDip', R.cutMaxDip + 1, '+1');
+    add('cutMaxDip', R.cutMaxDip - 1, '-1');
+    add('maxActionsPerDay', R.maxActionsPerDay + 1, '+1');
+    add('maxActionsPerDay', R.maxActionsPerDay - 1, '-1');
+    add('baseRatio', R.baseRatio + 5, '+5');
+    add('baseRatio', R.baseRatio - 5, '-5');
+    add('marketWeight', R.marketWeight + 0.5, '+0.5');
+    add('marketWeight', R.marketWeight - 0.5, '-0.5');
+    moves.push({ field: 'addTrendConfirm', from: R.addTrendConfirm, to: !R.addTrendConfirm, step: 'toggle' });
+    return moves;
+  }
+
+  let lastSearch = null; // 最近一次体检结果，applyTuneCandidate 只接受它推荐的那一档
+
+  /**
+   * 参数体检：不改参数，只返回「当前参数 vs 建议参数」以及训练 / 验证两段指标。
+   * 数据来自 buildHistory + replay（与回测同一份历史，不重复抓行情）。
+   */
+  async function tuneSearch({ days = 130, refresh = false } = {}) {
+    const history = await buildHistory({ days, refresh });
+    const store = readStore();
+    const cfg = store.autoTune;
+    const bands = store.bands;
+    const minSamples = Math.min(200, Math.max(5, Number(cfg.minSamples) || 20));
+    const minDelta = Math.min(0.5, Math.max(0.005, Number(cfg.minDelta) || 0.03));
+    const foldRatio = Math.min(0.9, Math.max(0.5, Number(cfg.foldRatio) || 0.7));
+
+    const baseReplay = replay(history, store.rules, bands);
+    const baseSplit = splitRecords(baseReplay.records, foldRatio);
+    const baseTrain = statsOfRecords(baseSplit.train);
+    const baseValid = statsOfRecords(baseSplit.validate);
+    const baseTrainObj = objectiveOf(baseTrain, minSamples);
+    const baseValidObj = objectiveOf(baseValid, minSamples);
+
+    const candidates = [];
+    for (const mv of candidateMoves(store.rules)) {
+      const res = replay(history, { ...store.rules, [mv.field]: mv.to }, bands);
+      const split = splitRecords(res.records, foldRatio);
+      const t = statsOfRecords(split.train);
+      const v = statsOfRecords(split.validate);
+      candidates.push({
+        field: mv.field,
+        from: mv.from,
+        to: mv.to,
+        step: mv.step,
+        train: { ...t, objective: objectiveOf(t, minSamples) },
+        validate: { ...v, objective: objectiveOf(v, minSamples) },
+      });
+    }
+    const rank = (c) => (Number.isFinite(c.train.objective) ? c.train.objective : -1);
+    candidates.sort((a, b) => rank(b) - rank(a));
+    const best = candidates.find((c) => Number.isFinite(c.train.objective)
+      && Number.isFinite(c.validate.objective)
+      && baseTrainObj !== null && baseValidObj !== null
+      && c.train.objective > baseTrainObj + 1e-9
+      && c.validate.objective >= baseValidObj + minDelta) || null;
+    const brief = (c) => ({
+      objective: c.objective,
+      hitRate: c.hitRate,
+      coverageRate: c.coverageRate,
+      neutralRate: c.neutralRate,
+      decided: c.decided,
+      total: c.total,
+    });
+    const payload = {
+      ok: true,
+      sample: {
+        days: history.days,
+        from: history.from,
+        to: history.to,
+        records: baseReplay.records.length,
+        codes: history.codes.length,
+      },
+      rules: store.rules,
+      baseline: {
+        train: brief({ ...baseTrain, objective: baseTrainObj }),
+        validate: brief({ ...baseValid, objective: baseValidObj }),
+      },
+      candidates: candidates.slice(0, 8).map((c) => ({
+        field: c.field,
+        from: c.from,
+        to: c.to,
+        step: c.step,
+        train: brief(c.train),
+        validate: brief(c.validate),
+      })),
+      best: best
+        ? { field: best.field, from: best.from, to: best.to, step: best.step, train: brief(best.train), validate: brief(best.validate) }
+        : null,
+      minSamples,
+      minDelta,
+      foldRatio,
+    };
+    lastSearch = { at: Date.now(), payload };
+    return payload;
+  }
+
+  /** 采纳体检建议（只接受最近一次体检推荐的那一档，避免前端传任意值） */
+  function applyTuneCandidate({ field, to } = {}) {
+    const recommended = lastSearch && lastSearch.payload && lastSearch.payload.best;
+    if (!recommended) return { ok: false, reason: 'no-search', message: '先跑一次「参数体检」' };
+    if (String(recommended.field) !== String(field) || String(recommended.to) !== String(to)) {
+      return { ok: false, reason: 'not-recommended', message: '只接受最近一次体检推荐的那一档参数' };
+    }
+    const store = readStore();
+    const next = normalizeStrategyRules({ ...store.rules, [recommended.field]: recommended.to });
+    if (String(next[recommended.field]) === String(store.rules[recommended.field])) {
+      return { ok: false, reason: 'no-change', message: '参数已经是该值' };
+    }
+    const before = { ...store.rules };
+    store.rules = next;
+    const tune = {
+      at: Date.now(),
+      date: dateKeyOf(),
+      trigger: 'search',
+      changes: [{
+        field: recommended.field,
+        from: before[recommended.field],
+        to: next[recommended.field],
+        hitRate: recommended.validate.hitRate,
+        samples: recommended.validate.decided,
+      }],
+      before,
+      after: { ...next },
+      metrics: { baseline: lastSearch.payload.baseline, best: recommended, sample: lastSearch.payload.sample },
+    };
+    store.tunes = [...(store.tunes || []), tune].slice(-MAX_TUNES);
+    saveMeta(store);
+    return { ok: true, rules: next, tune };
+  }
+
+  /**
+   * 自动调参 v2：回放历史 → 坐标搜索 → 前后验证 → 只采纳一项。
+   * 历史取不到（离线/无持仓）时退回记录口径，保证每日仍有动作。
+   */
+  async function runAutoTuneV2({ force = false, history = null } = {}) {
+    const store = readStore();
+    const cfg = store.autoTune;
+    if (!cfg.enabled && !force) return { tuned: false, reason: 'disabled' };
+    const today = dateKeyOf();
+    if (!force && cfg.lastTuneDate === today) return { tuned: false, reason: 'already-tuned-today' };
+    let search = null;
+    try {
+      if (history) {
+        historyCache = { at: Date.now(), key: `${history.days}|${(history.codes || []).join(',')}|${today}`, history };
+        search = await tuneSearch({ days: history.days });
+      } else {
+        search = await tuneSearch({ days: 130 });
+      }
+    } catch {
+      const fallback = runAutoTune(store, buildStats(store, { source: 'all' }), { manual: true, force });
+      return { ...fallback, mode: 'records' };
+    }
+    if (!search || !search.best) {
+      store.autoTune.lastTuneDate = today;
+      saveMeta(store);
+      return { tuned: false, reason: 'no-improvement', search };
+    }
+    const best = search.best;
+    const before = { ...store.rules };
+    store.rules = normalizeStrategyRules({ ...store.rules, [best.field]: best.to });
+    store.autoTune.lastTuneDate = today;
+    const tune = {
+      at: Date.now(),
+      date: today,
+      trigger: force ? 'backfill' : 'auto-replay',
+      changes: [{
+        field: best.field,
+        from: before[best.field],
+        to: store.rules[best.field],
+        hitRate: best.validate.hitRate,
+        samples: best.validate.decided,
+      }],
+      before,
+      after: { ...store.rules },
+      metrics: { baseline: search.baseline, best, sample: search.sample },
+    };
+    store.tunes = [...(store.tunes || []), tune].slice(-MAX_TUNES);
+    saveMeta(store);
+    return { tuned: true, tune, search };
   }
 
   /* ---------------- 统计 ---------------- */
@@ -1192,7 +1541,7 @@ function createStrategyLog(deps) {
       const market = await safeMarketContext();
       const late = clock > 15 * 60 + 5;
       persistRecord(buildRecord(port, {
-        slotTime: '14:30', source: 'auto', date: today, late, rules: store.rules, market,
+        slotTime: '14:30', source: 'auto', date: today, late, rules: store.rules, bands: store.bands, market,
       }));
       recorded = true;
     } else if (todayRecord
@@ -1209,6 +1558,7 @@ function createStrategyLog(deps) {
         date: today,
         late,
         rules: store.rules,
+        bands: store.bands,
         market,
       }));
       recorded = true;

@@ -31,6 +31,11 @@ const DEFAULT_STRATEGY_RULES = {
   marketWeight: 1,           // 市场氛围对综合评分的权重（0=忽略，1=标准，2=加倍）
   concentrationPct: 40,      // 单只占比上限，超过则强制减仓
   concentrationTargetPct: 30,
+  // v2.9.1 新增（回测数据支撑的过滤条件）
+  addTrendConfirm: true,     // 加仓要求价格站稳 MA20 且趋势不是 down（不追跌）
+  cutMaxDip: 3,              // 当日跌幅 ≥ 该值时不因弱评分减仓（不追跌，进「观察」）
+  maxActionsPerDay: 3,       // 每天最多改几只（按信号强度取前 N，其余顺延）
+  volNormalize: false,       // 是否把当日涨跌换算成 ATR 倍数再比阈值（债基/股基同标准）
 };
 
 function normalizeStrategyRules(raw) {
@@ -56,6 +61,13 @@ function normalizeStrategyRules(raw) {
     marketWeight: num('marketWeight', 0, 2),
     concentrationPct: num('concentrationPct', 20, 90),
     concentrationTargetPct: num('concentrationTargetPct', 10, 80),
+    // v2.9.1：过滤条件（回测数据支撑）
+    addTrendConfirm: src.addTrendConfirm === undefined
+      ? DEFAULT_STRATEGY_RULES.addTrendConfirm
+      : (src.addTrendConfirm === true || src.addTrendConfirm === '1' || src.addTrendConfirm === 1),
+    cutMaxDip: num('cutMaxDip', 0.5, 10),
+    maxActionsPerDay: Math.min(10, Math.max(1, Math.trunc(Number(src.maxActionsPerDay) || DEFAULT_STRATEGY_RULES.maxActionsPerDay))),
+    volNormalize: src.volNormalize === true || src.volNormalize === '1' || src.volNormalize === 1,
   };
 }
 
@@ -572,6 +584,7 @@ function classifyPortfolio(port, rules = DEFAULT_STRATEGY_RULES, market = null) 
   const add = [];
   const cut = [];
   const pendingList = [];
+  const observe = []; // v2.9.1：有信号但被过滤（趋势未确认 / 跌幅过大 / 每日上限），不算建议也不算「不变」
   // 市场氛围只调整「综合评分」，不改评分门槛本身：偏空时门槛实质变严，偏多时变松。
   const marketScore = market && market.available !== false && Number.isFinite(Number(market.score))
     ? Number(market.score) : 0;
@@ -606,11 +619,18 @@ function classifyPortfolio(port, rules = DEFAULT_STRATEGY_RULES, market = null) 
     const navPct = r.pct === null || r.pct === undefined || r.pct === ''
       ? null
       : (Number.isFinite(Number(r.pct)) ? Number(r.pct) : null);
+    // v2.9.1：把基金自身波动（ATR%）带进建议，供「自适应判定」与「波动归一」用
+    const atrPct = av && av.analysis && Number.isFinite(Number(av.analysis.atrPct))
+      ? Number(av.analysis.atrPct)
+      : null;
     const itemBase = {
       shares: r.shares, price: r.price, pct, pctKind: dk, navPct,
       navDate: r.navDate || '', weight: r.weight,
-      score, fundScore, marketAdj, decisionBasis: dk,
+      score, fundScore, marketAdj, decisionBasis: dk, atrPct,
     };
+    // volNormalize：把「当日涨跌」换算成 ATR 倍数（2% ≈ 原阈值 1 倍），让债基/股基同标准
+    const vol2 = R.volNormalize && Number.isFinite(atrPct) && atrPct > 0 ? atrPct : null;
+    const pctSignal = vol2 ? (pct / vol2) * 2 : pct;
     // 1) 集中度强制减仓
     if (r.weight !== null && r.weight > R.concentrationPct && totals.marketValue > 0) {
       const targetMv = totals.marketValue * (R.concentrationTargetPct / 100);
@@ -627,19 +647,44 @@ function classifyPortfolio(port, rules = DEFAULT_STRATEGY_RULES, market = null) 
         continue;
       }
     }
-    if (score !== null && score >= R.addScore && pct <= -R.addDip) {
-      const ratio = score >= R.strongScore && pct <= -R.strongDip ? strongRatio : baseRatio;
+    if (score !== null && score >= R.addScore && pctSignal <= -R.addDip) {
+      // v2.9.1：趋势确认——回测显示「评分高 + 当日跌」对次日没有预测力，
+      // 只有价格站稳 MA20 且趋势不是 down 时加仓才有效（回踩买，不追跌）。
+      const ma20 = av && av.levels && Number.isFinite(Number(av.levels.ma20)) ? Number(av.levels.ma20) : null;
+      const trend = av && av.analysis ? String(av.analysis.trend || '') : '';
+      const trendOk = !R.addTrendConfirm
+        || (ma20 !== null && Number(r.price) >= ma20 && trend !== 'down');
+      if (!trendOk) {
+        observe.push({
+          ...itemBase,
+          code: r.code, name: r.name, action: 'add', rule: 'add-trend-blocked',
+          targetShares: r.shares, delta: 0, ratioPct: 0,
+          reason: `${scoreText} 偏多、${src} ${pct.toFixed(2)}% 回落，但价格未站稳 MA20${ma20 === null ? '（缺均线）' : `（现价 ${pushNum(r.price)} / MA20 ${pushNum(ma20)}）`}${trend === 'down' ? '、趋势向下' : ''}，暂不加仓`,
+        });
+        continue;
+      }
+      const ratio = score >= R.strongScore && pctSignal <= -R.strongDip ? strongRatio : baseRatio;
       const delta = roundShares(r.shares, r.marketValue * ratio / r.price, ratio);
       add.push({
         ...itemBase,
         code: r.code, name: r.name, action: 'add', rule: 'score-strong-dip',
         targetShares: r.shares + delta, delta,
         ratioPct: ratio * 100,
-        reason: `${scoreText} 偏多，${src} ${pct.toFixed(2)}% 回落，建议加 ${chengText(ratio)}（分 2 批）`,
+        reason: `${scoreText} 偏多，${src} ${pct.toFixed(2)}% 回落且站稳 MA20，建议加 ${chengText(ratio)}（分 2 批）`,
       });
       continue;
     }
-    if (score !== null && score < R.cutScore && (pct >= R.cutRise || pct <= -R.cutDip)) {
+    if (score !== null && score < R.cutScore && (pctSignal >= R.cutRise || pctSignal <= -R.cutDip)) {
+      // v2.9.1：不追跌——当日跌幅超过 cutMaxDip 时不减仓（回测：1-2% 跌幅减仓命中 54%，≥5% 仅 39%）
+      if (pct <= -Number(R.cutMaxDip)) {
+        observe.push({
+          ...itemBase,
+          code: r.code, name: r.name, action: 'cut', rule: 'cut-max-dip',
+          targetShares: r.shares, delta: 0, ratioPct: 0,
+          reason: `${scoreText} 偏弱，但当日已跌 ${Math.abs(pct).toFixed(2)}%（≥ ${R.cutMaxDip}%），不追跌减仓，等反弹或次日确认`,
+        });
+        continue;
+      }
       const ratio = score < R.weakScore ? strongRatio : baseRatio;
       const delta = roundShares(r.shares, r.marketValue * ratio / r.price, ratio);
       cut.push({
@@ -663,7 +708,31 @@ function classifyPortfolio(port, rules = DEFAULT_STRATEGY_RULES, market = null) 
         : '无明确信号，保持现有仓位',
     });
   }
-  return { add, cut, hold, pending: pendingList, rows, totals, marketAdj };
+
+  // v2.9.1：每日调仓上限——按信号强度（|当日涨跌|）排序，只保留前 N 只，
+  // 其余记「顺延」；集中度强制减仓属于风控，永远保留。
+  const cap = Math.max(1, Math.trunc(Number(R.maxActionsPerDay) || 3));
+  const forced = cut.filter((x) => x.rule === 'concentration');
+  const movable = [...add, ...cut.filter((x) => x.rule !== 'concentration')]
+    .sort((a, b) => Math.abs(Number(b.pct) || 0) - Math.abs(Number(a.pct) || 0));
+  const keep = new Set(forced.map((x) => `${x.code}|${x.rule}`));
+  const budget = Math.max(0, cap - forced.length);
+  const kept = movable.slice(0, budget);
+  for (const it of kept) keep.add(`${it.code}|${it.rule}`);
+  const overflow = movable.slice(budget);
+  for (const it of overflow) {
+    observe.push({
+      ...it,
+      rule: 'daily-cap',
+      targetShares: it.shares,
+      delta: 0,
+      ratioPct: 0,
+      reason: `信号成立，但已到每日调仓上限 ${cap} 只（本只排第 ${movable.indexOf(it) + 1}），顺延到下一交易日`,
+    });
+  }
+  const addFinal = add.filter((x) => keep.has(`${x.code}|${x.rule}`));
+  const cutFinal = cut.filter((x) => keep.has(`${x.code}|${x.rule}`));
+  return { add: addFinal, cut: cutFinal, hold, pending: pendingList, observe, rows, totals, marketAdj };
 }
 
 function buildStrategyReport(port, pulse, opts = {}) {
