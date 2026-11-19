@@ -3175,3 +3175,68 @@ button[hidden] { display: none !important; }
   .paper-rank-table th:nth-child(7), .paper-rank-table td:nth-child(7) { display: none; }
   .paper-rank-table th:nth-child(6), .paper-rank-table td:nth-child(6) { max-width: 128px; overflow: hidden; text-overflow: ellipsis; }
 }
+
+/* =========================================================
+   v2.9.0：模拟买卖弹窗（搜索标的 / 报价 / 分时 / 比例下单）
+   ========================================================= */
+.paper-rank-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.paper-rank-head .btn.small { padding: 4px 10px; font-size: 12px; }
+
+.paper-symbol-wrap { position: relative; }
+.paper-symbol-pop {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 40;
+  max-height: 252px; overflow: auto;
+}
+.paper-picks { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.paper-pick {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 9px; font-size: 12px; color: #cfe0f4;
+  background: rgba(148, 163, 184, .07); border: 1px solid rgba(148, 163, 184, .16);
+  border-radius: 8px; cursor: pointer;
+}
+.paper-pick small { color: #7f8fa8; font-size: 11px; }
+.paper-pick:hover { border-color: rgba(56, 189, 248, .45); }
+.paper-pick.is-active { border-color: rgba(56, 189, 248, .75); background: rgba(56, 189, 248, .12); }
+
+.paper-quote {
+  padding: 10px 12px; margin-bottom: 8px;
+  background: rgba(148, 163, 184, .05); border: 1px solid rgba(148, 163, 184, .12);
+  border-radius: 10px;
+}
+.paper-quote-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.paper-quote-id b { font-size: 14px; }
+.paper-quote-price { font-family: Bahnschrift, var(--num); font-size: 20px; display: flex; align-items: baseline; gap: 8px; }
+.paper-quote-price span { font-size: 12px; }
+.paper-quote-meta { color: #9fb2c9; font-size: 12px; }
+.paper-intraday { width: 100%; height: 190px; margin-bottom: 10px; }
+.paper-intraday .empty { padding: 28px 0; text-align: center; }
+
+.paper-qty { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.paper-qty .input-wrap { flex: 1 1 140px; }
+.paper-ratio-seg { display: inline-flex; gap: 0; border: 1px solid rgba(148, 163, 184, .2); border-radius: 8px; overflow: hidden; }
+.paper-ratio-seg button {
+  padding: 8px 12px; font: inherit; font-size: 12px; color: #cfe0f4;
+  background: rgba(148, 163, 184, .06); border: 0; border-right: 1px solid rgba(148, 163, 184, .14);
+  cursor: pointer;
+}
+.paper-ratio-seg button:last-child { border-right: 0; }
+.paper-ratio-seg button:hover { background: rgba(148, 163, 184, .14); }
+.paper-ratio-seg button.is-active { background: rgba(56, 189, 248, .18); color: #dff1ff; }
+
+.paper-preview {
+  margin: 10px 0 4px; padding: 9px 12px;
+  background: rgba(148, 163, 184, .04); border: 1px dashed rgba(148, 163, 184, .18);
+  border-radius: 8px; font-size: 12px; color: #b9c9dd;
+}
+.paper-preview-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 0; }
+.paper-preview-row b { color: #e6eef8; font-family: Bahnschrift, var(--num); }
+.paper-preview-warn { margin-top: 6px; color: #ff8d9d; }
+
+@media (max-width: 720px) {
+  .paper-quote-price { font-size: 18px; }
+  .paper-intraday { height: 160px; }
+  .paper-qty { gap: 8px; }
+  .paper-ratio-seg { width: 100%; }
+  .paper-ratio-seg button { flex: 1; padding: 9px 0; }
+}
+

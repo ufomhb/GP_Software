@@ -13,7 +13,7 @@
   <meta name="description" content="寰球智投：A股、全球指数、期货、黄金白银实时行情，板块资金流向与规则化策略终端。">
   <title>寰球智投 · 全球行情与智能策略终端</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.8.0">
+  <link rel="stylesheet" href="/css/app.css?v=2.9.0">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icon.svg">
 </head>
@@ -1302,7 +1302,7 @@
           <div>
             <div class="eyebrow">PROFIT &amp; LOSS</div>
             <h3>盈亏统计 · 日 / 月 / 年</h3>
-            <span class="muted small">按已录入份额与成本加权，净值口径（不含申赎费）</span>
+            <span class="muted small">与下方「我的持仓」同一口径：今日按实时 / 估算净值，区间按净值序列（不含申赎费）</span>
           </div>
           <div class="seg" id="fundPnlRangeSeg">
             <button class="is-active" data-pnl-range="year">近1年</button>
@@ -1392,7 +1392,7 @@
   <div id="toastRoot" class="toasts" aria-live="polite"></div>
 
   <script src="/vendor/echarts.min.js"></script>
-  <script type="module" src="/js/app.js?v=2.8.0"></script>
+  <script type="module" src="/js/app.js?v=2.9.0"></script>
   <script>
     // PWA：注册「网络优先」的 Service Worker（发版后刷新即拿到新版本，离线时回退缓存壳）
     // file:// 打开时跳过，避免在本地直接双击 HTML 时报错。

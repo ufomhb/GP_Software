@@ -146,3 +146,38 @@ test('账号：会话按上海自然日失效（昨天创建的会话必须重�
   const maxAge = Number((relogin.headers.get('set-cookie') || '').match(/Max-Age=(\d+)/)?.[1]);
   assert.ok(maxAge > 0 && maxAge <= 86400, `Max-Age 应在 (0, 86400]，实际 ${maxAge}`);
 });
+
+test('账号：勾选「7 天免登录」后跨日仍有效，且后台记录能看到这次登录', async (t) => {
+  const app = await startApp();
+  t.after(() => app.stop());
+  await bootstrapAdmin(app, 'alice', 'alice12345');
+
+  const c = app.client();
+  const login = await c.post('/api/auth/login', { username: 'alice', password: 'alice12345', remember: true });
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get('set-cookie') || '';
+  const maxAge = Number(cookie.match(/Max-Age=(\d+)/)?.[1]);
+  assert.equal(maxAge, 7 * 86400, `勾选后 Cookie 应为 7 天，实际 ${maxAge}`);
+
+  const file = JSON.parse(app.readData('sessions.json'));
+  const keys = Object.keys(file);
+  assert.equal(keys.length, 1);
+  const session = file[keys[0]];
+  assert.equal(session.remember, true, '会话应标记 remember');
+  const days = (Number(session.expiresAt) - Date.now()) / 86400000;
+  assert.ok(days > 6.9 && days <= 7.01, `会话有效期应约 7 天，实际 ${days.toFixed(2)} 天`);
+
+  // 把创建时间改成「昨天」：普通会话会失效，勾了 7 天免登录的必须仍然有效
+  session.createdAt = Date.now() - 26 * 3600 * 1000;
+  writeFileSync(join(app.dataDir, 'sessions.json'), JSON.stringify(file, null, 2));
+  const me = await c.get('/api/auth/me');
+  assert.equal(me.body.user && me.body.user.username, 'alice', '7 天免登录的会话跨日不应失效');
+  const guarded = await c.get('/api/portfolio');
+  assert.equal(guarded.status, 200, '跨日后受保护接口仍可用');
+
+  // 后台登录记录：说明列标「7 天免登录」（走接口读内存里的 statsStore，避免等落盘）
+  const logs = await c.get('/api/admin/logins?limit=20');
+  assert.equal(logs.status, 200);
+  const hit = (logs.body.logins || []).filter((x) => x.username === 'alice' && x.ok && x.reason === '7 天免登录');
+  assert.ok(hit.length >= 1, '登录记录应标注「7 天免登录」');
+});

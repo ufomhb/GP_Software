@@ -16,6 +16,7 @@ const ROLE_LABELS = { super: '超级管理员', admin: '管理员', user: '普�
 const ACTION_LABELS = {
   login: '登录', register: '注册', password: '修改密码', reset: '重置密码',
   role: '角色变更', kick: '强制下线', clear: '清空日志', deploy: '推送部署', strategy: '策略记录',
+  paper: '模拟交易',
 };
 
 const state = {
@@ -29,6 +30,8 @@ const state = {
   deployTimer: null,
   strategy: null,
   strategyTips: new Map(), // tooltip key -> HTML，每次渲染 strategy 时重建
+  strategySource: 'all', // v2.9.0：历史记录来源过滤（实盘 / 回测 / 全部）
+  paper: null, // v2.9.0：后台「模拟交易」快照
 };
 
 function esc(value) {
@@ -283,7 +286,8 @@ function switchSection(section) {
   $$('.admin-section').forEach((sec) => sec.classList.toggle('is-active', sec.id === `sec-${section}`));
   const titles = {
     overview: '概览', users: '用户管理', logins: '登录记录', stats: '使用统计',
-    system: '系统状态', logs: '系统日志', deploy: '部署到 NAS', strategy: '持仓策略', push: '定时推送', source: '数据源', net: '手机访问', changelog: '更新履历',
+    system: '系统状态', logs: '系统日志', deploy: '部署到 NAS', strategy: '持仓策略',
+    paper: '模拟交易', push: '定时推送', source: '数据源', net: '手机访问', changelog: '更新履历',
   };
   $('#adminTitle').textContent = titles[section] || '后台管理';
   $('#adminRefreshAt').textContent = '';
@@ -300,6 +304,7 @@ function loadSection(section) {
     logs: loadLogs,
     deploy: loadDeploy,
     strategy: loadStrategy,
+    paper: loadPaper,
     push: loadPush,
     source: loadSource,
     net: loadNet,
@@ -1108,7 +1113,11 @@ const ST_ACTION_ORDER = ['add', 'cut', 'hold'];
 const ST_SCORE_ORDER = ['<35', '35-45', '45-65', '65-80', '>=80', '无评分'];
 const ST_MARKET_ORDER = ['偏多', '震荡', '偏空', '未知'];
 const ST_MARKET_CLS = { '偏多': 'st-up', '偏空': 'st-down', '震荡': 'st-flat', '未知': 'st-flat' };
-const ST_BASIS_LABEL = { estimate: '15:00 估值', 'estimate-repaired': '估值（已修正）' };
+const ST_BASIS_LABEL = {
+  estimate: '15:00 估值',
+  'estimate-repaired': '估值（已修正）',
+  'estimate-replay': '15:00 估值（回测重建）',
+};
 const ST_MIN_SAMPLES = 3; // 可判定样本少于 3 条时不给百分比，避免小样本误导
 const ST_VERDICT = {
   right: { icon: '✓', label: '合理', cls: 'ok' },
@@ -1478,8 +1487,10 @@ function renderStrategyStats(data) {
   const overall = stats.overall || {};
   const byAction = stats.byAction || {};
   const ov = stTotals(overall);
+  const liveDays = n((data.statsLive || {}).days);
+  const bfDays = n((data.statsBackfill || {}).days);
   $('#stHitMeta').textContent = stats.days
-    ? `${n(stats.days)} 个交易日 · ${n(stats.items)} 条建议`
+    ? `${n(stats.days)} 个交易日 · ${n(stats.items)} 条建议（实盘 ${liveDays} 天 / 回测 ${bfDays} 天）`
     : '还没有可评价的记录';
 
   // 主 KPI：只显示含中性口径（对 / 全部条数）；严格口径只留给自动调参，不再出现百分比
@@ -1517,6 +1528,7 @@ function renderStrategyStats(data) {
     + `判定：加仓 次日涨过 <b>+${addBand}%</b> 算对、跌过 <b>-${addBand}%</b> 算错；`
     + `减仓反之（次日跌过 <b>-${cutBand}%</b> 算对）；`
     + `不变 次日 |涨跌| ≤ <b>${holdBand}%</b> 算对，超出记中性。<br>`
+    + `样本 = <b>实盘记录 + 回测记录</b>（自动调参也用这个合计口径）；回测单独的统计见下方「近半年回测」。<br>`
     + `可判定样本不足 ${ST_MIN_SAMPLES} 条的评分区间 / 市场氛围行显示「样本不足」；鼠标停在任意一行可看具体明细。`;
 
   // 按评分区间（折叠区，仅统计加仓/减仓建议）
@@ -1576,7 +1588,10 @@ function renderStrategyParams(data) {
 
 function renderStrategyHistory(data) {
   const records = data.records || [];
-  $('#stHistoryMeta').textContent = records.length ? `最近 ${records.length} 天（最多保留 300 天）` : '还没有记录';
+  const srcLabel = state.strategySource === 'live' ? '实盘' : state.strategySource === 'backfill' ? '回测' : '全部';
+  $('#stHistoryMeta').textContent = records.length
+    ? `最近 ${records.length} 天（${srcLabel}，最多保留 300 天）`
+    : '还没有记录';
   if (!records.length) {
     $('#stHistory').innerHTML = '<div class="admin-empty">还没有记录。点上面的「记录今日建议」开始积累，第二天会自动用已公布净值评价。</div>';
     return;
@@ -1616,7 +1631,7 @@ function renderStrategyHistory(data) {
     const tipAttr = stTipRegister(`hist:${rec.date}`, stHistoryTipHtml(rec));
     return `<article class="st-day">
       <header class="st-day-head"${tipAttr}>
-        <b>${esc(rec.date)}</b>${stBasisBadge(rec)}
+        <b>${esc(rec.date)}</b>${rec.backfill ? ' <span class="st-tag skip">回测</span>' : ''}${stBasisBadge(rec)}
         <span class="st-tag add">加 ${n(c.add)}</span>
         <span class="st-tag cut">减 ${n(c.cut)}</span>
         <span class="st-tag hold">不变 ${n(c.hold)}</span>
@@ -1632,6 +1647,66 @@ function renderStrategyHistory(data) {
       </div>
     </article>`;
   }).join('');
+}
+
+/** 近半年回测卡：上次结果 + 回测命中率 + 按动作表 */
+function renderStrategyBackfill(data) {
+  const bf = data.backfill || null;
+  const st = data.statsBackfill || {};
+  const meta = $('#stBfMeta');
+  if (meta) {
+    meta.textContent = bf
+      ? `上次：${bf.from || '--'} → ${bf.to || '--'} · ${n(bf.records)} 天记录 · 覆盖 ${n(bf.days)} 个交易日`
+      : '还没有跑过回测';
+  }
+  const note = $('#stBfNote');
+  if (note) {
+    note.innerHTML = '回测口径：逐日按现有规则重建 <b>15:00 当日估值</b>（重仓股穿透 / 目标 ETF 穿透），不用收盘后已公布净值；'
+      + '技术评分、「加/减/不变」规则、次日判定窗口都与实盘一致，回测记录同样计入命中率与自动调参。'
+      + '近似之处：权重复用最新季报、沿用当前份额、市场氛围只按三大指数（历史涨跌家数 / 成交额不可得）。';
+  }
+  const ov = stTotals(st.overall || {});
+  const box = $('#stBfStats');
+  if (box) {
+    box.innerHTML = st.days
+      ? `<div class="st-kpi"><span class="st-kpi-label">回测含中性命中率</span><b class="st-kpi-value">${stCoverRate(ov.right, ov.total)}</b></div>
+         <div class="st-kpi-sub">对 ${ov.right} · 错 ${ov.wrong} · 中性 ${ov.flat} · 未评 ${ov.skipped} · 共 ${ov.total} · 可判定 ${ov.decided} 条</div>`
+      : '<div class="admin-empty">还没有回测记录，点上面的「回测最近半年」生成</div>';
+  }
+  const byAction = st.byAction || {};
+  const rows = ST_ACTION_ORDER.map((action) => {
+    const s = stTotals(byAction[action]);
+    return `<tr><td><span class="st-tag ${action}">${ST_ACTION_LABEL[action]}</span></td><td>${s.total}</td><td class="ok">${s.right}</td><td class="bad">${s.wrong}</td><td>${s.flat}</td><td>${s.skipped}</td><td>${stCoverRate(s.right, s.total)} <span class="st-hit-frac">${s.right}/${s.total}</span></td></tr>`;
+  }).join('');
+  const table = $('#stBfAction');
+  if (table) {
+    table.innerHTML = st.days
+      ? `<table class="admin-table st-table"><thead><tr><th>动作</th><th>条数</th><th>对</th><th>错</th><th>中性</th><th>未评</th><th>含中性命中率</th></tr></thead><tbody>${rows}</tbody></table>`
+      : '';
+  }
+}
+
+async function stBackfill() {
+  const btn = $('#stBackfillRun');
+  if (!btn) return;
+  btn.disabled = true;
+  const oldText = btn.textContent;
+  btn.textContent = '回测中（首次可能要 20~40 秒）…';
+  try {
+    const res = await apiPost('/api/admin/strategy/backfill', { days: 130 }, 180000);
+    const tune = res.tune;
+    const tuneText = tune && tune.tuned
+      ? `；已按新样本调参：${tune.tune.changes.map((c) => `${c.field} ${c.from}→${c.to}`).join('，')}`
+      : '';
+    const skipText = res.skipped ? `，${n(res.skipped)} 个标的日缺行情已跳过` : '';
+    toast(`回测完成：${n(res.records)} 天记录（${res.from || '--'} → ${res.to || '--'}）${skipText}${tuneText}`, 'ok', 8000);
+    await loadStrategy();
+  } catch (err) {
+    toast(`回测失败：${err.message}`, 'err', 8000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldText;
+  }
 }
 
 function renderStrategyTune(data) {
@@ -1667,12 +1742,17 @@ function renderStrategy(data) {
   renderStrategySuggestions(data);
   renderStrategyParams(data);
   renderStrategyTune(data);
+  renderStrategyBackfill(data);
   renderStrategyHistory(data);
 }
 
 async function loadStrategy() {
   try {
-    const data = await api('/api/admin/strategy', 30000);
+    const query = new URLSearchParams({
+      limit: '150',
+      source: state.strategySource || 'all',
+    });
+    const data = await api(`/api/admin/strategy?${query.toString()}`, 40000);
     renderStrategy(data);
   } catch (err) {
     $('#stToday').innerHTML = `<div class="admin-empty">读取失败：${esc(err.message)}</div>`;
@@ -1821,6 +1901,14 @@ function bindStrategy() {
   $('#stTuneSave').addEventListener('click', stTuneSave);
   $('#stTuneRun').addEventListener('click', stTuneRun);
   $('#stTuneRollback').addEventListener('click', stTuneRollback);
+  const bfBtn = $('#stBackfillRun');
+  if (bfBtn) bfBtn.addEventListener('click', stBackfill);
+  // 历史记录来源切换：实盘 / 回测 / 全部（回测记录多，方便对照）
+  $$('#stHistorySource [data-st-source]').forEach((btn) => btn.addEventListener('click', () => {
+    state.strategySource = btn.dataset.stSource || 'all';
+    $$('#stHistorySource [data-st-source]').forEach((b) => b.classList.toggle('is-active', b === btn));
+    loadStrategy();
+  }));
   const moreToggle = $('#stMoreToggle');
   if (moreToggle) moreToggle.addEventListener('click', stToggleMore);
   // 明细展开/收起（列表是动态渲染的，用事件委托）
@@ -1831,6 +1919,170 @@ function bindStrategy() {
     const body = $('[data-st-body="' + date + '"]');
     if (body) body.hidden = !body.hidden;
   });
+}
+
+/* ---------------- 模拟交易（v2.9.0） ----------------
+   管理员可以：改全局初始资金、把用户排除出排行榜（黑名单）、
+   查看任意用户的模拟持仓、按指定初始资金重置某个账户。
+   --------------------------------------------------- */
+
+async function loadPaper() {
+  try {
+    const data = await api('/api/admin/paper', 30000);
+    state.paper = data;
+    renderPaperAdmin(data);
+  } catch (err) {
+    const box = $('#paperUsers');
+    if (box) box.innerHTML = `<div class="admin-empty">读取失败：${esc(err.message)}</div>`;
+  }
+}
+
+function renderPaperAdmin(data) {
+  const cfg = data.config || {};
+  const users = data.users || [];
+  const totals = data.totals || {};
+  const cards = $('#paperCards');
+  if (cards) {
+    renderCards(cards, [
+      { label: '模拟账户', value: n(totals.users), sub: `已交易 ${n(totals.traded)} 个` },
+      { label: '排行榜隐藏', value: n(totals.hidden), sub: '黑名单（仍可自己交易）' },
+      { label: '全局初始资金', value: n(cfg.initial).toLocaleString('zh-CN'), sub: '新账号 / 重置用', tone: 'accent' },
+      { label: '持仓取价', value: data.estimated ? '部分按成本估算' : '实时', sub: data.estimated ? '个别标的取不到实时价' : '全部取到实时价' },
+    ]);
+  }
+  const initialInput = $('#paperInitial');
+  if (initialInput && document.activeElement !== initialInput) initialInput.value = String(n(cfg.initial));
+  const meta = $('#paperMeta');
+  if (meta) {
+    meta.textContent = `${users.length} 个用户 · 隐藏 ${n(totals.hidden)} 个 · 初始资金 ${n(cfg.initial).toLocaleString('zh-CN')} 元`;
+  }
+  const rows = users.map((u) => {
+    const profit = Number(u.profit) || 0;
+    const tone = profit > 0 ? 'ok' : profit < 0 ? 'bad' : '';
+    return `<tr>
+      <td><b>${esc(u.username)}</b>${u.primary ? ' <span class="admin-badge admin">主账号</span>' : ''}</td>
+      <td><button type="button" class="admin-btn ${u.hidden ? '' : 'primary'}" data-paper-hide="${esc(u.id)}" data-hidden="${u.hidden ? '1' : '0'}">${u.hidden ? '已隐藏' : '进排行榜'}</button></td>
+      <td class="num">${n(u.initial).toLocaleString('zh-CN')}</td>
+      <td class="num">${n(u.cash).toLocaleString('zh-CN')}</td>
+      <td class="num">${n(u.marketValue).toLocaleString('zh-CN')}</td>
+      <td class="num">${n(u.total).toLocaleString('zh-CN')}</td>
+      <td class="num ${tone}">${profit > 0 ? '+' : ''}${n(profit).toLocaleString('zh-CN')}<br><small class="muted">${n(u.profitPct).toFixed(2)}%</small></td>
+      <td class="num">${n(u.positionCount)}</td>
+      <td class="nowrap muted">${u.updatedAt ? esc(fmtClock(u.updatedAt)) : '未交易'}</td>
+      <td class="ops">
+        <button type="button" class="admin-btn" data-paper-view="${esc(u.id)}">查看持仓</button>
+        <button type="button" class="admin-btn danger" data-paper-reset="${esc(u.id)}" data-name="${esc(u.username)}" data-initial="${n(u.initial)}">重置</button>
+      </td>
+    </tr>`;
+  }).join('');
+  const box = $('#paperUsers');
+  if (box) {
+    box.innerHTML = `<table class="admin-table"><thead><tr>
+      <th>用户</th><th>排行榜</th><th>初始资金</th><th>可用资金</th><th>持仓市值</th><th>总资产</th><th>累计盈亏</th><th>持仓数</th><th>最近操作</th><th>操作</th>
+    </tr></thead><tbody>${rows || '<tr><td colspan="10"><div class="admin-empty">还没有用户</div></td></tr>'}</tbody></table>`;
+  }
+  $$('[data-paper-hide]').forEach((btn) => btn.addEventListener('click', () => togglePaperHidden(btn.getAttribute('data-paper-hide'))));
+  $$('[data-paper-view]').forEach((btn) => btn.addEventListener('click', () => showPaperDetail(btn.getAttribute('data-paper-view'))));
+  $$('[data-paper-reset]').forEach((btn) => btn.addEventListener('click', () => resetPaperUser(
+    btn.getAttribute('data-paper-reset'),
+    btn.getAttribute('data-name'),
+    Number(btn.getAttribute('data-initial')) || n(cfg.initial),
+  )));
+}
+
+/** 切换某用户是否进入排行榜（黑名单 = 不显示） */
+async function togglePaperHidden(id) {
+  const data = state.paper || {};
+  const cfg = data.config || {};
+  const hidden = new Set(cfg.hiddenUserIds || []);
+  const user = (data.users || []).find((u) => u.id === id);
+  if (!user) return;
+  if (hidden.has(id)) {
+    hidden.delete(id);
+  } else {
+    if (!window.confirm(`把「${user.username}」从排行榜隐藏？他仍然可以正常模拟交易，只是别人看不到他的账户。`)) return;
+    hidden.add(id);
+  }
+  try {
+    await apiPost('/api/admin/paper/config', { hiddenUserIds: [...hidden] }, 20000);
+    toast(hidden.has(id) ? `已把「${user.username}」从排行榜隐藏` : `已让「${user.username}」重新进入排行榜`, 'ok');
+    await loadPaper();
+  } catch (err) {
+    toast(`保存失败：${err.message}`, 'err');
+  }
+}
+
+async function savePaperInitial() {
+  const input = $('#paperInitial');
+  if (!input) return;
+  const initial = Number(input.value);
+  if (!Number.isFinite(initial) || initial < 10000 || initial > 100000000) {
+    toast('初始资金需在 10,000 ~ 100,000,000 元之间', 'warn');
+    return;
+  }
+  const btn = $('#paperSaveInitial');
+  btn.disabled = true;
+  try {
+    await apiPost('/api/admin/paper/config', { initial }, 20000);
+    toast(`全局初始资金已改为 ${initial.toLocaleString('zh-CN')} 元（只影响新账号与后续重置）`, 'ok');
+    await loadPaper();
+  } catch (err) {
+    toast(`保存失败：${err.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function resetPaperUser(id, name, currentInitial) {
+  const raw = window.prompt(`把「${name}」的模拟账户清空并按初始资金重开。输入初始资金（元）：`, String(currentInitial || 1000000));
+  if (raw === null) return;
+  const initial = Number(raw);
+  if (!Number.isFinite(initial) || initial < 10000 || initial > 100000000) {
+    toast('初始资金需在 10,000 ~ 100,000,000 元之间', 'warn');
+    return;
+  }
+  try {
+    await apiPost('/api/admin/paper/reset', { id, initial }, 30000);
+    toast(`已重置「${name}」的模拟盘（初始 ${initial.toLocaleString('zh-CN')} 元）`, 'ok');
+    await loadPaper();
+  } catch (err) {
+    toast(`重置失败：${err.message}`, 'err');
+  }
+}
+
+function showPaperDetail(id) {
+  const data = state.paper || {};
+  const user = (data.users || []).find((u) => u.id === id);
+  const wrap = $('#paperDetailWrap');
+  const box = $('#paperDetail');
+  if (!user || !wrap || !box) return;
+  const title = $('#paperDetailTitle');
+  if (title) title.textContent = `${user.username} 的模拟持仓`;
+  const rows = (user.positions || []).map((p) => `<tr>
+    <td><span class="t-name">${esc(p.name || p.code)}</span><span class="t-code">${esc(p.code)}</span></td>
+    <td class="num">${n(p.shares).toLocaleString('zh-CN')}</td>
+    <td class="num">${n(p.cost).toFixed(3)}</td>
+    <td class="num">${n(p.price).toFixed(3)}</td>
+    <td class="num">${n(p.marketValue).toLocaleString('zh-CN')}</td>
+    <td class="num ${p.profit > 0 ? 'ok' : p.profit < 0 ? 'bad' : ''}">${p.profit > 0 ? '+' : ''}${n(p.profit).toLocaleString('zh-CN')}</td>
+    <td class="num">${p.profitPct === null || p.profitPct === undefined ? '--' : `${n(p.profitPct).toFixed(2)}%`}</td>
+  </tr>`).join('');
+  box.innerHTML = `<div class="admin-kv-list">
+      <div class="admin-kv"><span>初始资金</span><b>${n(user.initial).toLocaleString('zh-CN')} 元</b></div>
+      <div class="admin-kv"><span>可用资金</span><b>${n(user.cash).toLocaleString('zh-CN')} 元</b></div>
+      <div class="admin-kv"><span>持仓市值 / 总资产</span><b>${n(user.marketValue).toLocaleString('zh-CN')} / ${n(user.total).toLocaleString('zh-CN')} 元</b></div>
+      <div class="admin-kv"><span>累计盈亏</span><b>${user.profit > 0 ? '+' : ''}${n(user.profit).toLocaleString('zh-CN')} 元（${n(user.profitPct).toFixed(2)}%）</b></div>
+    </div>
+    ${rows ? `<table class="admin-table"><thead><tr><th>标的</th><th>份额</th><th>成本</th><th>现价</th><th>市值</th><th>浮盈</th><th>收益率</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="admin-empty">该账户当前空仓</div>'}`;
+  wrap.hidden = false;
+  wrap.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function bindPaper() {
+  const save = $('#paperSaveInitial');
+  if (save) save.addEventListener('click', savePaperInitial);
+  const close = $('#paperDetailClose');
+  if (close) close.addEventListener('click', () => { const wrap = $('#paperDetailWrap'); if (wrap) wrap.hidden = true; });
 }
 
 /* ---------------- 启动 ---------------- */
@@ -1847,6 +2099,7 @@ function bindChrome() {
   bindLogs();
   bindDeploy();
   bindStrategy();
+  bindPaper();
   stTipBind();
   stModalBind();
   setInterval(() => {

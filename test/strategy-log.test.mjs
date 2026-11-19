@@ -444,3 +444,210 @@ test('补记口径修正：late + 旧净值口径的记录用冻结估值回填'
   assert.equal(rec.items[0].repairedPct, -6.36, '原净值口径保留在 repairedPct 便于核对');
   assert.match(rec.items[0].reason, /15:00 估值/);
 });
+
+/* =========================================================
+   历史回测（v2.9.0）
+   ---------------------------------------------------------
+   钉住三件事：
+   1) 日期规划：只取 until 之前的交易日、已有记录不重算；
+   2) 决策口径：用「重建的 15:00 估值」出加/减/不变，不是收盘后净值；
+   3) 次日判定：窗口内第一个已公布净值日，与实盘同一个 judge；
+   4) 回测记录与实盘记录一起进统计与自动调参。
+   ========================================================= */
+
+function bfRow(overrides = {}) {
+  return {
+    code: '110022', name: '测试基金', type: 'open', held: true, shares: 1000,
+    cost: 1.5, price: 1.5, pct: -1.5, pctKind: 'holdings', decisionPct: -1.5,
+    decisionKind: 'holdings', navDate: '2026-11-12', navPct: -0.2, pctStale: false,
+    marketValue: 1500, profit: 0, weight: 33.3,
+    advice: { score: 72, rating: { label: '偏多' }, position: { text: '3 成' } },
+    ...overrides,
+  };
+}
+
+test('回测日期规划：只取 until 之前的交易日，已有记录不重算', () => {
+  const { log } = makeHarness();
+  const calendar = [
+    '2026-11-05', '2026-11-06', '2026-11-09', '2026-11-10',
+    '2026-11-11', '2026-11-12', '2026-11-13', '2026-11-16',
+  ];
+  const dates = log.planBackfillDates(calendar, {
+    days: 3,
+    until: '2026-11-13',
+    existing: [{ date: '2026-11-12' }],
+  });
+  assert.deepEqual(dates, ['2026-11-10', '2026-11-11', '2026-11-13'], '取 ≤11-13 且未被占用的最后 3 天');
+  const all = log.planBackfillDates(calendar, { days: 99, until: '2026-11-16' });
+  assert.equal(all.length, 8);
+  assert.equal(all[all.length - 1], '2026-11-16');
+});
+
+test('回测记录：用重建的 15:00 估值出动作，结构与实盘一致', () => {
+  const { log } = makeHarness({ today: '2026-11-13', bands: {} });
+  const rows = [
+    bfRow({ code: 'A001', name: '加仓样本', decisionPct: -1.5, pct: -1.5, advice: { score: 72 } }),
+    bfRow({ code: 'B002', name: '减仓样本', decisionPct: 1.2, pct: 1.2, advice: { score: 30 } }),
+    bfRow({ code: 'C003', name: '不变样本', decisionPct: -0.5, pct: -0.5, advice: { score: 55 } }),
+  ];
+  const market = { available: true, verdict: '震荡', score: 0, cnScore: 0, extScore: 0, summary: '', ext: '', lines: [] };
+  const rec = log.buildBackfillRecord({
+    date: '2026-11-13',
+    rows,
+    totals: { marketValue: 4500, portfolioPct: -0.3, dayProfit: -15, profit: 0 },
+    market,
+  });
+  assert.equal(rec.source, 'backfill');
+  assert.equal(rec.backfill, true);
+  assert.equal(rec.decisionBasis, 'estimate-replay', '口径必须是「估值重放」，不是净值');
+  assert.deepEqual(rec.snapshot.counts, { add: 1, cut: 1, hold: 1, pending: 0 });
+  const byCode = Object.fromEntries(rec.items.map((it) => [it.code, it]));
+  assert.equal(byCode.A001.action, 'add');
+  assert.equal(byCode.B002.action, 'cut');
+  assert.equal(byCode.C003.action, 'hold');
+  assert.equal(byCode.A001.pct, -1.5, '决策日涨跌 = 重建的估值');
+  assert.equal(byCode.A001.decisionBasis, 'holdings');
+});
+
+test('回测判定：窗口内第一个已公布净值日，超窗记 skipped', () => {
+  const { log } = makeHarness();
+  const rec = {
+    date: '2026-11-13', // 周五 → 窗口内的第一个工作日是 11-16
+    items: [
+      { code: 'A001', action: 'add' },
+      { code: 'B002', action: 'cut' },
+      { code: 'C003', action: 'hold' },
+      { code: 'D004', action: 'hold' },
+    ],
+  };
+  const navByCode = new Map([
+    ['A001', new Map([['2026-11-16', { nav: 1.6, pct: 2.0 }]])],
+    ['B002', new Map([['2026-11-16', { nav: 1.0, pct: -1.5 }]])],
+    // C003 当天停牌，下一个工作日才有 → 仍然取窗口内第一个有净值的日子
+    ['C003', new Map([['2026-11-17', { nav: 1.0, pct: 0.2 }]])],
+    // D004 窗口内一直没净值
+    ['D004', new Map()],
+  ]);
+  const got = log.evaluateBackfillRecord(rec, { navByCode });
+  const byCode = Object.fromEntries(got.eval.items.map((it) => [it.code, it]));
+  assert.equal(byCode.A001.verdict, 'right', '加仓后次日 +2% 算对');
+  assert.equal(byCode.A001.evalDate, '2026-11-16');
+  assert.equal(byCode.B002.verdict, 'right', '减仓后次日 -1.5% 算对');
+  assert.equal(byCode.C003.verdict, 'right', '不变且次日 +0.2% 在 ±0.8% 内');
+  assert.equal(byCode.C003.evalDate, '2026-11-17');
+  assert.equal(byCode.D004.verdict, 'skipped');
+  assert.equal(got.eval.basis, '次日已公布净值（回测）');
+});
+
+/** 回测编排用的假行情：两天净值 + 一只 ETF + 三大指数 */
+function backfillDeps() {
+  const cal = ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13'];
+  const navPoints = cal.map((d, i) => ({ d, c: 1.5 + i * 0.01 }));
+  const etfCandles = cal.map((d, i) => ({ d, o: 4 + i * 0.02, h: 4.05 + i * 0.02, l: 3.95 + i * 0.02, c: 4 + i * 0.02, v: 1000 }));
+  const indexCandles = cal.map((d, i) => ({ d, o: 3000 + i * 5, h: 3010 + i * 5, l: 2990 + i * 5, c: 3000 + i * 5, v: 1 }));
+  return {
+    cal,
+    getFundPnlSeries: async (codes) => ({
+      items: (codes || []).map((code) => ({
+        code,
+        type: code === '510300' ? 'etf' : 'open',
+        points: code === '510300' ? etfCandles.map((c) => ({ d: c.d, c: c.c })) : navPoints,
+      })),
+      missing: [],
+    }),
+    estimateFundHistPctBatch: async ({ dates }) => new Map([
+      ['110022', new Map((dates || []).map((d) => [d, { pct: -1.5, kind: 'holdings', covered: 6, weight: 42 }]))],
+    ]),
+    getKline: async (secid) => {
+      if (secid === '1.510300') return { candles: etfCandles, name: '沪深300ETF' };
+      return { candles: indexCandles, name: '指数' };
+    },
+    stockAdvice: (quote) => ({ score: Number(quote.pct) <= -1 ? 72 : 55, rating: { label: '偏多' }, position: { text: '3 成' } }),
+    buildMarketContext: () => ({ available: true, verdict: '震荡', score: 0, cnScore: 0, extScore: 0, summary: '', ext: '', lines: [] }),
+    isEtfLike: (code) => code === '510300',
+    fundSecid: (code) => (code === '510300' ? '1.510300' : null),
+  };
+}
+
+test('回测编排：逐日生成建议 + 次日判定，不覆盖实盘记录', async () => {
+  const deps = backfillDeps();
+  const port = {
+    today: '2026-11-13',
+    totals: { marketValue: 5500, portfolioPct: -0.3, dayProfit: -15, profit: 100, profitPct: 2 },
+    rows: [
+      bfRow({ code: '110022', name: '场外样本', shares: 1000, price: 1.5, marketValue: 1500, weight: 27, advice: null }),
+      bfRow({ code: '510300', name: 'ETF 样本', type: 'etf', shares: 1000, price: 4, marketValue: 4000, weight: 73, advice: null }),
+    ],
+  };
+  port.heldRows = port.rows;
+  portState = port;
+  const harness = makeHarness({
+    today: '2026-11-13',
+    autoTune: { enabled: false },
+    extraDeps: deps,
+  });
+  // 已经有一条实盘记录：回测不能覆盖它
+  harness.state.records.set('2026-11-12', {
+    date: '2026-11-12', slotTime: '14:30', source: 'auto', items: [], pending: [],
+    snapshot: { counts: { add: 0, cut: 0, hold: 0, pending: 0 } }, eval: null,
+  });
+
+  const res = await harness.log.backfillNow({ days: 130 });
+  assert.equal(res.ok, true);
+  assert.ok(res.records >= 2, `应生成多天记录，实际 ${res.records}`);
+  const records = harness.log.snapshot({ limit: 200, source: 'backfill' }).records;
+  assert.ok(records.length >= 2);
+  const rec = records[0];
+  assert.equal(rec.source, 'backfill');
+  assert.equal(rec.decisionBasis, 'estimate-replay');
+  assert.ok(rec.items.length >= 1, '回测记录应有建议');
+  assert.ok(rec.eval && rec.eval.items.length >= 1, '回测记录应带次日判定');
+  // 场外基金的决策日涨跌来自重建的估值（-1.5），不是净值
+  const open = rec.items.find((it) => it.code === '110022');
+  assert.ok(open);
+  assert.equal(open.pct, -1.5);
+  // 实盘记录原样保留
+  const live = harness.log.snapshot({ limit: 200, source: 'live' }).records;
+  assert.equal(live.length, 1);
+  assert.equal(live[0].date, '2026-11-12');
+  // 回测元信息落库
+  const snap = harness.log.snapshot({ limit: 1 });
+  assert.ok(snap.backfill && snap.backfill.records >= 2);
+});
+
+test('统计口径：实盘 / 回测分开统计，自动调参用合计样本', () => {
+  const harness = makeHarness({ today: '2026-11-13' });
+  // 实盘：2 对 0 错；回测：0 对 6 错（故意让合计命中率 < 50%，触发调参）
+  seedEvaluated(harness, '2026-11-05', [
+    { code: 'A', action: 'add', verdict: 'right' },
+    { code: 'B', action: 'add', verdict: 'right' },
+  ]);
+  for (let i = 0; i < 6; i += 1) {
+    harness.state.records.set(`2026-10-0${i + 1}`, {
+      date: `2026-10-0${i + 1}`,
+      source: 'backfill',
+      backfill: true,
+      items: [{ code: 'X', name: '回测样本', action: 'add', rule: 'score-strong-dip' }],
+      pending: [],
+      snapshot: { counts: { add: 1, cut: 0, hold: 0, pending: 0 } },
+      eval: {
+        items: [{ code: 'X', name: '回测样本', action: 'add', verdict: 'wrong' }],
+        summary: { right: 0, wrong: 1, flat: 0, skipped: 0, total: 1, decided: 1, hitRate: 0 },
+      },
+    });
+  }
+  const snap = harness.log.snapshot({ limit: 50 });
+  assert.equal(snap.statsLive.days, 1, '实盘统计只含实盘记录');
+  assert.equal(snap.statsBackfill.days, 6);
+  assert.equal(snap.stats.days, 7, '合计口径含回测');
+
+  const tune = harness.log.runAutoTune({});
+  assert.equal(tune.tuned, true, '回测样本应参与自动调参并触发');
+  const change = tune.tune.changes.find((c) => c.field === 'addScore');
+  assert.ok(change, '加仓命中率不足应上调 addScore');
+  assert.equal(change.samples, 8, '调参样本 = 实盘 2 条 + 回测 6 条');
+
+  const rolled = harness.log.rollbackLastTune();
+  assert.equal(rolled.ok, true);
+  assert.equal(rolled.rules.addScore, change.from);
+});

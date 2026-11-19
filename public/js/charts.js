@@ -52,7 +52,7 @@ function setOption(el, option) {
 
 export function resizeCharts() {
   if (!window.echarts) return;
-  document.querySelectorAll('.hero-chart,.main-chart,.tall-chart,.gauge-chart,.flow-chart,.distribution-chart,.fund-sector-chart,.csi300-ratio-chart,.csi300-ratio-line,.index-compare-chart,.index-mini-chart,.pa-pie,.umi-chart,.us-sector-chart,.pnl-chart').forEach((el) => {
+  document.querySelectorAll('.hero-chart,.main-chart,.tall-chart,.gauge-chart,.flow-chart,.distribution-chart,.fund-sector-chart,.csi300-ratio-chart,.csi300-ratio-line,.index-compare-chart,.index-mini-chart,.pa-pie,.umi-chart,.us-sector-chart,.pnl-chart,.paper-intraday').forEach((el) => {
     const inst = window.echarts.getInstanceByDom(el);
     if (inst) inst.resize();
   });

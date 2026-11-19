@@ -22,7 +22,7 @@ import {
   fundPnlAreaChart,
   fundPnlMonthlyBars,
   COLORS,
-} from './charts.js?v=2.8.0';
+} from './charts.js?v=2.9.0';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -40,11 +40,11 @@ import {
   esc,
   safeUrl,
   timeText,
-} from './util.js?v=2.8.0';
+} from './util.js?v=2.9.0';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.8.0';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.8.0';
+import { $, $$, toast, debounce } from './dom.js?v=2.9.0';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.9.0';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -53,7 +53,7 @@ import {
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.8.0';
+} from './core.js?v=2.9.0';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -68,7 +68,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.8.0';
+} from './views/funds.js?v=2.9.0';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -78,7 +78,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.8.0';
+} from './views/market.js?v=2.9.0';
 
 
 /* =========================================================
@@ -289,6 +289,8 @@ function topLayer() {
 function closeOverlay() {
   const root = $('#overlayRoot');
   if (!root) return;
+  // 模拟买卖弹窗关掉后丢弃当前标的，避免异步报价回填到已经关掉的面板
+  if (!$('#paperForm')) state.paperTrade = null;
   // 叠加层：只关最上面那层，下面那层（个股详情等）继续留着
   const layer = topLayer();
   if (layer) {
@@ -3742,19 +3744,23 @@ function renderPaper() {
       <thead><tr><th>时间</th><th>方向</th><th>标的</th><th>价</th><th>股数</th><th>金额</th><th>费用</th><th>信号</th></tr></thead>
       <tbody>${tradeRows}</tbody>
     </table></div>
-    <div class="modal-section-title">模拟账户排行榜 · 全体用户</div>
-    <p class="muted small">所有登录用户都能看到彼此的模拟持仓与总资产；仅模拟盘，不含真实资金。</p>
-    <div id="paperRankBody"><div class="empty small">加载排行榜…</div></div>`;
+    <div class="modal-section-title paper-rank-head">
+      <span>模拟账户排行榜 · 全体用户</span>
+      <button class="btn small" id="paperRankToggle" aria-expanded="${state.paperRankOpen ? 'true' : 'false'}">${state.paperRankOpen ? '收起排行榜' : '展开排行榜'}</button>
+    </div>
+    <p class="muted small">所有登录用户都能看到彼此的模拟持仓与总资产；仅模拟盘，不含真实资金。默认收起，点「展开排行榜」再显示。</p>
+    <div id="paperRankBody" ${state.paperRankOpen ? '' : 'hidden'}><div class="empty small">展开后加载排行榜…</div></div>`;
 
   const buyBtn = $('#paperBuyBtn');
   if (buyBtn) buyBtn.addEventListener('click', () => openPaperTrade('buy'));
   const resetBtn = $('#paperResetBtn');
   if (resetBtn) resetBtn.addEventListener('click', async () => {
-    if (!confirm('确定把模拟账户重置为 100 万、清空持仓与成交记录？')) return;
+    const initial = Number((state.paper || {}).initial) || 1000000;
+    if (!confirm(`确定把模拟账户重置为 ${nf(initial, 0)} 元、清空持仓与成交记录？`)) return;
     try {
       await apiPost('/api/paper/reset', {});
       await loadPaper(true);
-      loadPaperRanking(true);
+      if (state.paperRankOpen) loadPaperRanking(true);
       toast('模拟账户已重置', 'ok');
     } catch (err) {
       toast(`重置失败：${err.message}`, 'err');
@@ -3763,8 +3769,26 @@ function renderPaper() {
   $$('[data-paper-sell]', el).forEach((b) => b.addEventListener('click', () => {
     openPaperTrade('sell', { secid: b.dataset.paperSell, name: b.dataset.paperName, shares: Number(b.dataset.paperShares) });
   }));
-  // v2.8.0：排行榜随账户面板一起重绘（数据可能已在 state 里，也可能还没拉回来）
-  if (state.paperRank) renderPaperRanking();
+  // v2.9.0：排行榜默认收起，点按钮才请求并显示（用户要求）
+  const rankBtn = $('#paperRankToggle');
+  if (rankBtn) {
+    rankBtn.addEventListener('click', () => {
+      state.paperRankOpen = !state.paperRankOpen;
+      const body = $('#paperRankBody');
+      if (body) body.hidden = !state.paperRankOpen;
+      rankBtn.textContent = state.paperRankOpen ? '收起排行榜' : '展开排行榜';
+      rankBtn.setAttribute('aria-expanded', state.paperRankOpen ? 'true' : 'false');
+      if (state.paperRankOpen) {
+        if (state.paperRank) renderPaperRanking();
+        else loadPaperRanking();
+      }
+    });
+  }
+  // 展开状态下随账户面板一起重绘（收起时完全不请求排行榜接口）
+  if (state.paperRankOpen) {
+    if (state.paperRank) renderPaperRanking();
+    else loadPaperRanking();
+  }
 }
 
 /* =========================================================
@@ -3826,7 +3850,7 @@ function renderPaperRanking() {
         <button class="${sort === 'total' ? 'is-active' : ''}" data-rank-sort="total">按总资产</button>
         <button class="${sort === 'profit' ? 'is-active' : ''}" data-rank-sort="profit">按收益率</button>
       </div>
-      <span class="muted small">${items.length} 个账号${d.estimated ? ' · 部分持仓按成本价估算' : ''}${d.truncated ? ' · 仅显示前 200 个账号' : ''}</span>
+      <span class="muted small">${items.length} 个账号${d.hidden ? ` · 另有 ${d.hidden} 个账号被管理员隐藏` : ''}${d.estimated ? ' · 部分持仓按成本价估算' : ''}${d.truncated ? ' · 仅显示前 200 个账号' : ''}</span>
     </div>
     <div class="table-scroll tall-table mt8"><table class="table paper-rank-table">
       <thead><tr><th>排名</th><th>用户</th><th>总资产</th><th>累计盈亏</th><th>收益率</th><th>持仓（前 3）</th><th>最近操作</th></tr></thead>
@@ -3843,48 +3867,337 @@ function renderPaperRanking() {
   }
 }
 
-/** 买入/卖出弹窗 */
-function openPaperTrade(side = 'buy', preset = {}) {
+/* =========================================================
+   模拟买卖弹窗（v2.9.0）
+   ---------------------------------------------------------
+   用户要求：能直接输入代码/名称选标的、看到当前价与分时图、
+   按「剩余金额的百分比」下单（1/4、1/3、1/2、全部），卖出同理。
+   成交价仍以服务端为准；这里的股数只是按当前报价的估算。
+   ========================================================= */
+const PAPER_FEE_RATE = 0.00025;
+const PAPER_FEE_MIN = 5;
+const PAPER_TAX_RATE = 0.0005;
+
+function shanghaiTodayKey() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const get = (k) => (parts.find((p) => p.type === k) || {}).value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function paperFeeOf(amount) {
+  return Math.max(PAPER_FEE_MIN, Number(amount) * PAPER_FEE_RATE);
+}
+
+/** 按比例估算股数（与服务端 paperTrade 的 ratio 口径一致） */
+function paperRatioShares({ side, ratio, price, cash, held, lot }) {
+  const p = Number(price);
+  if (!(p > 0)) return 0;
+  const step = lot || 100;
+  if (side === 'sell') {
+    const shares = Number(held) || 0;
+    if (shares <= 0) return 0;
+    return ratio >= 1 ? shares : Math.floor((shares * ratio) / step) * step;
+  }
+  const budget = Math.max(0, (Number(cash) || 0) * ratio);
+  let want = Math.floor(budget / (p * (1 + PAPER_FEE_RATE)) / step) * step;
+  while (want > 0 && p * want + paperFeeOf(p * want) > (Number(cash) || 0) + 0.005) want -= step;
+  return Math.max(0, want);
+}
+
+function paperLotOf(secid) {
+  return /^[01]\.\d{6}$/.test(String(secid || '')) ? 100 : 1;
+}
+
+/** 当前模拟持仓里某只标的的份额 */
+function paperHeldShares(secid) {
+  const pos = ((state.paper && state.paper.positions) || []).find((p) => p.secid === secid);
+  return pos ? Number(pos.shares) || 0 : 0;
+}
+
+function renderPaperQuote() {
+  const box = $('#paperQuote');
+  const t = state.paperTrade;
+  if (!box || !t) return;
   const d = state.paper || {};
-  const watch = state.watchlist || [];
-  const options = watch.map((w) => `<option value="${esc(w.secid)}" data-name="${esc(w.name)}">${esc(cleanName(w.name))} ${esc(w.code)}</option>`).join('');
+  const side = t.side;
+  const target = t.target;
+  if (!target) {
+    box.innerHTML = '<div class="empty small">先输入股票代码或名称，选中标的后显示实时报价与分时</div>';
+    const chart = $('#paperIntraday');
+    if (chart) chart.innerHTML = '';
+    renderPaperPreview();
+    return;
+  }
+  const q = t.quote;
+  const held = paperHeldShares(target.secid);
+  if (!q) {
+    box.innerHTML = `<div class="paper-quote-main"><div><b>${esc(cleanName(target.name) || target.code || '')}</b> <span class="t-code">${esc(target.code || '')}</span></div><div class="muted small">报价加载中…</div></div>`;
+    renderPaperPreview();
+    return;
+  }
+  const tone = toneClass(q.pct);
+  box.innerHTML = `<div class="paper-quote-main">
+      <div class="paper-quote-id"><b>${esc(cleanName(q.name || target.name) || target.code || '')}</b> <span class="t-code">${esc(q.code || target.code || '')}</span></div>
+      <div class="paper-quote-price ${tone}">${priceFmt(q.price)}<span>${q.pct === null || q.pct === undefined ? '--' : pctFmt(q.pct)}</span></div>
+      <div class="paper-quote-meta">${side === 'buy'
+        ? `可用资金 ${nf(d.cash, 2)} 元`
+        : `当前模拟持仓 ${nf(held, 0)} 股`}</div>
+    </div>`;
+  renderPaperPreview();
+}
+
+function renderPaperPreview() {
+  const box = $('#paperPreview');
+  const t = state.paperTrade;
+  if (!box || !t) return;
+  const q = t.quote;
+  const target = t.target;
+  const sharesInput = $('#paperShares');
+  const shares = Math.max(0, Math.floor(Number(sharesInput ? sharesInput.value : 0) || 0));
+  if (!target || !q || !(Number(q.price) > 0) || !shares) {
+    box.innerHTML = t.ratio
+      ? `<span class="muted small">按 ${esc(t.ratio >= 1 ? '全部' : `1/${Math.round(1 / t.ratio)}`)} 估算中…</span>`
+      : '<span class="muted small">选择标的并填写股数后，这里显示预计成交金额与费用</span>';
+    return;
+  }
+  const amount = shares * Number(q.price);
+  const fee = paperFeeOf(amount);
+  const tax = t.side === 'sell' ? amount * PAPER_TAX_RATE : 0;
+  const d = state.paper || {};
+  const cashAfter = t.side === 'buy' ? Number(d.cash) - amount - fee : Number(d.cash) + amount - fee - tax;
+  const heldAfter = t.side === 'sell' ? paperHeldShares(target.secid) - shares : paperHeldShares(target.secid) + shares;
+  const short = t.side === 'buy' ? Number(d.cash) + 0.005 < amount + fee : paperHeldShares(target.secid) < shares;
+  box.innerHTML = `<div class="paper-preview-row"><span>预计金额</span><b>${nf(amount, 2)} 元</b></div>
+    <div class="paper-preview-row"><span>佣金（万 2.5，最低 5 元）${tax ? ' + 印花税（万 5）' : ''}</span><b>${nf(fee + tax, 2)} 元</b></div>
+    <div class="paper-preview-row"><span>成交后${t.side === 'buy' ? '可用资金' : '剩余份额'}</span><b>${t.side === 'buy' ? `${nf(cashAfter, 2)} 元` : `${nf(Math.max(0, heldAfter), 0)} 股`}</b></div>
+    ${short ? `<div class="paper-preview-warn">${t.side === 'buy' ? '可用资金不足，请减少股数或改按比例买入' : '持仓不足，无法卖出这么多'}</div>` : ''}`;
+}
+
+async function loadPaperQuote(secid) {
+  const t = state.paperTrade;
+  if (!t || !secid) return;
+  t.quote = null;
+  renderPaperQuote();
+  const date = shanghaiTodayKey();
+  const [quoteRes, intraRes] = await Promise.allSettled([
+    api(`/api/quotes?secids=${encodeURIComponent(secid)}`, 12000),
+    api(`/api/intraday?secid=${encodeURIComponent(secid)}&date=${encodeURIComponent(date)}`, 20000),
+  ]);
+  if (state.paperTrade !== t) return; // 弹窗已关闭或换了标的
+  if (quoteRes.status === 'fulfilled') {
+    t.quote = ((quoteRes.value || {}).items || [])[0] || null;
+  }
+  const chart = $('#paperIntraday');
+  if (intraRes.status === 'fulfilled' && chart) {
+    const data = intraRes.value || {};
+    const candles = data.candles || [];
+    if (candles.length >= 2) {
+      intradayChart(chart, { candles, preClose: Number(data.preClose), fullSession: true });
+      t.intraday = data;
+    } else {
+      chart.innerHTML = `<div class="empty small">暂无分时（未开盘或休市）${data.periodLabel ? ` · ${esc(data.periodLabel)}` : ''}</div>`;
+    }
+  } else if (chart) {
+    chart.innerHTML = '<div class="empty small">分时暂不可用，价格仍可正常成交</div>';
+  }
+  renderPaperQuote();
+}
+
+/** 选中标的后：更新标题、加载报价与分时 */
+function pickPaperSymbol(item, { presetShares = 0 } = {}) {
+  const t = state.paperTrade;
+  if (!t || !item || !item.secid) return;
+  t.target = { secid: String(item.secid), code: String(item.code || ''), name: String(item.name || '') };
+  t.ratio = null;
+  t.presetShares = Number(presetShares) || 0;
+  const input = $('#paperShares');
+  if (input && t.presetShares > 0) input.value = String(t.presetShares);
+  const pop = $('#paperSymbolPop');
+  if (pop) pop.hidden = true;
+  const symbolInput = $('#paperSymbol');
+  if (symbolInput) symbolInput.value = `${cleanName(t.target.name) || ''} ${t.target.code || ''}`.trim();
+  const chips = $$('[data-paper-pick]');
+  chips.forEach((c) => c.classList.toggle('is-active', c.dataset.paperPick === t.target.secid));
+  loadPaperQuote(t.target.secid);
+}
+
+/** 打开买入/卖出弹窗 */
+function openPaperTrade(side = 'buy', preset = {}) {
+  const isSell = side === 'sell';
+  const d = state.paper || {};
+  state.paperTrade = {
+    side,
+    target: null,
+    quote: null,
+    intraday: null,
+    ratio: null,
+    presetShares: Number(preset.shares) || 0,
+    searchTimer: null,
+  };
+  const picks = (isSell
+    ? ((d.positions || []).map((p) => ({ secid: p.secid, code: p.code, name: p.name, extra: `${nf(p.shares, 0)} 股` })))
+    : ((state.watchlist || []).map((w) => ({ secid: w.secid, code: w.code, name: w.name, extra: '' })))
+  ).slice(0, 6);
+  const chips = picks.map((p) => `<button type="button" class="paper-pick" data-paper-pick="${esc(p.secid)}" data-paper-code="${esc(p.code || '')}" data-paper-name="${esc(p.name || '')}">
+      <span>${esc(cleanName(p.name) || p.code || p.secid)}</span>${p.extra ? `<small>${esc(p.extra)}</small>` : `<small>${esc(p.code || '')}</small>`}
+    </button>`).join('');
   mountOverlay(`
-    <div class="modal modal-sm">
+    <div class="modal modal-md paper-trade-modal">
       <div class="modal-head">
-        <div class="modal-title"><h2>${side === 'buy' ? '模拟买入' : '模拟卖出'}</h2></div>
+        <div class="modal-title"><h2>模拟${isSell ? '卖出' : '买入'}</h2><span class="muted small">按最新价成交，佣金万 2.5（最低 5 元）${isSell ? ' + 印花税万 5' : ''}</span></div>
         <button class="modal-close" data-close>×</button>
       </div>
-      ${preset.secid ? `<div class="muted small mb8">标的：${esc(cleanName(preset.name || ''))} · 持仓 ${nf(preset.shares, 0)} 股</div>` : ''}
       <form id="paperForm" class="pw-form" autocomplete="off">
-        ${preset.secid ? '' : `<label class="input-wrap"><span>标的</span><select id="paperSecid">${options || '<option value="">（自选为空，请先加自选）</option>'}</select></label>`}
-        <label class="input-wrap"><span>股数</span><input id="paperShares" type="number" min="100" step="100" value="${preset.shares && side === 'sell' ? preset.shares : 100}" placeholder="100 的整数倍"></label>
+        <div class="paper-symbol-wrap">
+          <label class="input-wrap">
+            <span>标的（输入代码或名称）</span>
+            <input id="paperSymbol" type="search" placeholder="${isSell ? '输入持仓标的代码或名称，如 600519' : '输入股票代码或名称，如 600519 / 贵州茅台'}" autocomplete="off">
+          </label>
+          <div id="paperSymbolPop" class="search-pop paper-symbol-pop" hidden></div>
+        </div>
+        <div class="paper-picks">${chips || `<span class="muted small">${isSell ? '还没有模拟持仓' : '自选股为空，可直接搜索任意 A 股 / ETF'}</span>`}</div>
+        <div class="paper-quote" id="paperQuote"><div class="empty small">先输入股票代码或名称，选中标的后显示实时报价与分时</div></div>
+        <div id="paperIntraday" class="paper-intraday"></div>
+        <div class="paper-qty">
+          <label class="input-wrap"><span>股数</span><input id="paperShares" type="number" min="1" step="${isSell ? 1 : 100}" value="100" placeholder="100 的整数倍"></label>
+          <div class="paper-ratio-seg" id="paperRatioSeg" role="group" aria-label="按比例下单">
+            <button type="button" data-paper-ratio="0.25">1/4</button>
+            <button type="button" data-paper-ratio="0.3333">1/3</button>
+            <button type="button" data-paper-ratio="0.5">1/2</button>
+            <button type="button" data-paper-ratio="1">全部</button>
+          </div>
+        </div>
+        <div class="paper-preview" id="paperPreview"><span class="muted small">选择标的并填写股数后，这里显示预计成交金额与费用</span></div>
         <label class="input-wrap"><span>备注</span><input id="paperNote" maxlength="40" placeholder="可选，如：回踩 MA20 买入"></label>
-        <p class="muted small">按提交时的最新价成交；A 股需 100 股整数倍。可用资金 ${nf(d.cash, 0)} 元。</p>
-        <div class="modal-actions"><button class="btn primary" type="submit" id="paperSubmit">确认${side === 'buy' ? '买入' : '卖出'}</button></div>
+        <div class="modal-actions">
+          <button type="button" class="btn" data-close>取消</button>
+          <button class="btn primary" type="submit" id="paperSubmit">确认${isSell ? '卖出' : '买入'}</button>
+        </div>
       </form>
     </div>`);
   const form = $('#paperForm');
   if (!form) return;
+
+  // 快捷标的
+  $$('[data-paper-pick]').forEach((btn) => btn.addEventListener('click', () => {
+    pickPaperSymbol({
+      secid: btn.dataset.paperPick,
+      code: btn.dataset.paperCode,
+      name: btn.dataset.paperName,
+    }, { presetShares: isSell ? paperHeldShares(btn.dataset.paperPick) : 0 });
+  }));
+
+  // 搜索（代码或名称）
+  const symbolInput = $('#paperSymbol');
+  const pop = $('#paperSymbolPop');
+  const runPaperSearch = async (q) => {
+    const kw = String(q || '').trim();
+    if (!kw) { if (pop) pop.hidden = true; return; }
+    try {
+      const data = await api(`/api/search?q=${encodeURIComponent(kw)}`, 9000);
+      const items = (data.items || [])
+        .filter((x) => /^[01]\.\d{6}$/.test(String(x.secid || '')))
+        .slice(0, 8);
+      if (!pop) return;
+      if (!items.length) {
+        pop.hidden = false;
+        pop.innerHTML = '<div class="search-empty">没有找到匹配的 A 股 / 场内 ETF</div>';
+        return;
+      }
+      pop.hidden = false;
+      pop.innerHTML = items.map((x) => `<button type="button" class="search-item" data-pick-secid="${esc(x.secid)}" data-pick-code="${esc(x.code)}" data-pick-name="${esc(x.name)}">
+          <span><span class="s-name">${esc(cleanName(x.name))}</span> <span class="s-code">${esc(x.code)}</span></span>
+          <span class="s-type">${esc(x.type || '')}</span>
+        </button>`).join('');
+      pop.querySelectorAll('[data-pick-secid]').forEach((btn) => btn.addEventListener('click', () => {
+        pickPaperSymbol({ secid: btn.dataset.pickSecid, code: btn.dataset.pickCode, name: btn.dataset.pickName });
+      }));
+    } catch (err) {
+      if (pop) { pop.hidden = false; pop.innerHTML = `<div class="search-empty">${esc(err.message)}</div>`; }
+    }
+  };
+  if (symbolInput) {
+    symbolInput.addEventListener('input', debounce(() => runPaperSearch(symbolInput.value), 260));
+    symbolInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const first = pop && pop.querySelector('[data-pick-secid]');
+      if (first) {
+        pickPaperSymbol({ secid: first.dataset.pickSecid, code: first.dataset.pickCode, name: first.dataset.pickName });
+      } else {
+        runPaperSearch(symbolInput.value);
+      }
+    });
+    symbolInput.focus();
+  }
+
+  // 股数 / 比例
+  const sharesInput = $('#paperShares');
+  if (sharesInput) {
+    sharesInput.addEventListener('input', () => {
+      if (state.paperTrade) state.paperTrade.ratio = null;
+      $$('#paperRatioSeg button').forEach((b) => b.classList.remove('is-active'));
+      renderPaperPreview();
+    });
+  }
+  $$('#paperRatioSeg [data-paper-ratio]').forEach((btn) => btn.addEventListener('click', () => {
+    const t = state.paperTrade;
+    if (!t || !t.target || !t.quote || !(Number(t.quote.price) > 0)) {
+      toast('先选择标的，等报价出来再按比例下单', 'warn');
+      return;
+    }
+    const ratio = Number(btn.dataset.paperRatio) || 1;
+    t.ratio = ratio;
+    $$('#paperRatioSeg button').forEach((b) => b.classList.toggle('is-active', b === btn));
+    const est = paperRatioShares({
+      side: t.side,
+      ratio,
+      price: t.quote.price,
+      cash: (state.paper || {}).cash,
+      held: paperHeldShares(t.target.secid),
+      lot: paperLotOf(t.target.secid),
+    });
+    if (sharesInput) sharesInput.value = String(est || '');
+    if (!est) toast(t.side === 'sell' ? '该标的没有可卖持仓' : '可用资金不足一手', 'warn');
+    renderPaperPreview();
+  }));
+
+  // 从持仓表点「卖出」进来：直接定位标的与全仓股数
+  if (preset.secid) {
+    pickPaperSymbol({ secid: preset.secid, code: preset.code || '', name: preset.name || '' }, { presetShares: isSell ? Number(preset.shares) || 0 : 0 });
+  } else if (isSell && picks.length === 1) {
+    pickPaperSymbol(picks[0], { presetShares: paperHeldShares(picks[0].secid) });
+  }
+
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    const secid = preset.secid || ($('#paperSecid') ? $('#paperSecid').value : '');
-    const shares = Number($('#paperShares').value);
+    const t = state.paperTrade;
+    if (!t || !t.target) { toast('请先选择标的', 'warn'); return; }
     const note = $('#paperNote') ? $('#paperNote').value : '';
-    if (!secid) { toast('请选择标的', 'warn'); return; }
+    const payload = { secid: t.target.secid, side, note };
+    if (t.ratio) {
+      payload.ratio = t.ratio;
+    } else {
+      const shares = Math.floor(Number(sharesInput ? sharesInput.value : 0));
+      if (!Number.isFinite(shares) || shares <= 0) { toast('股数必须是正整数', 'warn'); return; }
+      payload.shares = shares;
+    }
     const btn = $('#paperSubmit');
     btn.disabled = true;
     btn.textContent = '提交中…';
     try {
-      const res = await apiPost('/api/paper/trade', { secid, side, shares, note });
+      const res = await apiPost('/api/paper/trade', payload);
       state.paper = res.account;
       closeOverlay();
       renderPaper();
-      loadPaperRanking(true);
-      toast(`${side === 'buy' ? '买入' : '卖出'}成功：${shares} 股 @ ${nf(res.trade.price, 3)}`, 'ok');
+      if (state.paperRankOpen) loadPaperRanking(true);
+      toast(`${isSell ? '卖出' : '买入'}成功：${res.trade.shares} 股 @ ${nf(res.trade.price, 3)}`, 'ok');
     } catch (err) {
       toast(`下单失败：${err.message}`, 'err');
       btn.disabled = false;
-      btn.textContent = `确认${side === 'buy' ? '买入' : '卖出'}`;
+      btn.textContent = `确认${isSell ? '卖出' : '买入'}`;
     }
   });
 }
@@ -4327,6 +4640,27 @@ function shanghaiDateShift(dstr, days) {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
+/**
+ * 「今天」这一点的组合市值：用 /api/funds/watch 的实时价（与「我的持仓」同一份数据）。
+ * 场外基金今日净值未出时 watch 给的是估算净值，所以这等于把今天接上曲线。
+ */
+function liveFundPoint(series) {
+  const items = (state.fundWatchData && state.fundWatchData.items) || [];
+  const byCode = new Map(items.map((x) => [String(x.code), x]));
+  let total = 0;
+  let covered = 0;
+  for (const s of series) {
+    const x = byCode.get(String(s.code));
+    if (!x) continue;
+    const price = Number(x.price);
+    if (!Number.isFinite(price) || price <= 0) continue;
+    total += price * Number((s.h && s.h.shares) || 0);
+    covered += 1;
+  }
+  if (!covered || !(total > 0)) return null;
+  return { d: shanghaiTodayKey(), v: Math.round(total * 100) / 100, covered };
+}
+
 /** 多只基金的净值序列 → 组合市值曲线 + 日/月/年盈亏 */
 function computeFundPnl(data) {
   const held = fundHeldList();
@@ -4358,6 +4692,14 @@ function computeFundPnl(data) {
     if (complete && total > 0) rows.push({ d, v: Math.round(total * 100) / 100 });
   }
   if (rows.length < 2) return null;
+  // v2.9.0 口径统一：把「今天」的实时市值接到序列末尾（或替换今天那一根），
+  // 这样「盈亏统计」的今日 / 累计 / 区间与上方「我的持仓」用同一时点，不再差一天。
+  const live = liveFundPoint(series);
+  if (live) {
+    const tail = rows[rows.length - 1];
+    if (tail && tail.d === live.d) rows[rows.length - 1] = { d: live.d, v: live.v };
+    else if (live.d > tail.d) rows.push({ d: live.d, v: live.v });
+  }
   const costValue = series.reduce((sum, s) => sum + (Number(s.h.cost) > 0 ? Number(s.h.cost) * s.h.shares : 0), 0);
   const last = rows[rows.length - 1];
   const prev = rows[rows.length - 2];
@@ -4467,23 +4809,25 @@ function renderFundPnl() {
   const cutoff = shanghaiDateShift(calc.asOf, -days);
   const rangeRows = calc.rows.filter((r) => r.d >= cutoff);
   const chartRows = rangeRows.length >= 2 ? rangeRows : calc.rows.slice(-2);
+  // v2.9.0：今日盈亏 / 累计收益 / 组合市值 直接取「我的持仓」同一个 fundPortfolio()，
+  // 两处面板从此逐分一致（此前盈亏面板用已公布净值序列，场外 T+1 会差一天）。
+  const pf = fundPortfolio();
   kpis.innerHTML = [
-    pnlKpi('今日盈亏', calc.todayPnl, calc.todayPct),
+    pnlKpi('今日盈亏', pf.dayProfit, pf.dayPct, '当日涨跌还没出来，暂不计算'),
     pnlKpi('近1月盈亏', calc.m1Pnl, calc.m1Pct),
     pnlKpi('今年至今', calc.ytdPnl, calc.ytdPct),
     pnlKpi('近1年盈亏', calc.y1Pnl, calc.y1Pct),
-    `<div class="summary-card"><div class="sc-label">累计收益</div><div class="sc-value ${toneClass(calc.cumulative)}">${calc.cumulative === null ? '--' : signedFmt(calc.cumulative, 2)}</div><div class="sc-sub">${calc.cumulative === null ? '未录成本净值' : `${calc.cumulativePct >= 0 ? '+' : ''}${Number(calc.cumulativePct).toFixed(2)}%`}</div></div>`,
-    `<div class="summary-card"><div class="sc-label">组合市值</div><div class="sc-value">${nf(calc.marketValue, 2)}</div><div class="sc-sub">${calc.holdings} 只 · 截至 ${esc(calc.asOf)}</div></div>`,
+    `<div class="summary-card"><div class="sc-label">累计收益</div><div class="sc-value ${toneClass(pf.profit)}">${pf.profit === null ? '--' : signedFmt(pf.profit, 2)}</div><div class="sc-sub ${toneClass(pf.profitPct)}">${isNum(pf.profitPct) ? `${pf.profitPct >= 0 ? '+' : ''}${Number(pf.profitPct).toFixed(2)}%` : '需录入成本净值'}</div></div>`,
+    `<div class="summary-card"><div class="sc-label">组合市值</div><div class="sc-value">${nf(pf.marketValue, 2)}</div><div class="sc-sub">${pf.counted} 只 · 截至 ${esc(calc.asOf)}</div></div>`,
   ].join('');
-  fundPnlAreaChart($('#fundPnlChart'), chartRows, { cost: calc.costValue > 0 ? calc.costValue : null });
+  fundPnlAreaChart($('#fundPnlChart'), chartRows, { cost: pf.costValue > 0 ? pf.costValue : null });
   fundPnlMonthlyBars($('#fundPnlBars'), calc.monthly);
   if ($('#fundPnlChartMeta')) $('#fundPnlChartMeta').textContent = `${chartRows[0].d} → ${calc.asOf}`;
   if (note) {
-    const parts = [`净值口径：${calc.holdings} 只持仓基金按份额加权`];
-    if (calc.costValue <= 0) parts.push('未录成本净值，累计收益为空');
-    if (calc.missingCount) parts.push(`${calc.missingCount} 只未取到净值已跳过`);
+    const parts = ['今日盈亏 / 累计收益 / 组合市值 与上方「我的持仓」同一口径（含今日估算净值）'];
+    if (calc.missingCount) parts.push(`${calc.missingCount} 只未取到净值历史，未计入区间曲线`);
     if (calc.rangeDays < 300) parts.push(`历史仅 ${calc.rangeDays} 天，年区间不完整`);
-    parts.push('场外净值 T+1、QDII 滞后；不含申赎费');
+    parts.push('区间收益按净值序列 + 今日估算点；场外净值 T+1、QDII 滞后；不含申赎费');
     note.textContent = parts.join(' · ');
   }
 }
@@ -7192,11 +7536,11 @@ function loadView(view) {
     renderAlerts();
     renderWatchTips();
     renderPaper();
-    renderPaperRanking();
     loadWatchData();
     loadCloudAlerts();
     loadPaper();
-    loadPaperRanking();
+    // 排行榜默认收起：只有用户点开过才请求（v2.9.0）
+    if (state.paperRankOpen) loadPaperRanking();
   }
 }
 
@@ -7244,7 +7588,7 @@ async function refreshFast() {
     await loadOverview();
     await loadWatchData(true);
     if (state.view === 'fundwatch') loadFundWatch();
-    if (state.view === 'stockwatch') loadPaperRanking();
+    if (state.view === 'stockwatch' && state.paperRankOpen) loadPaperRanking();
     if (state.view === 'china') {
       await loadChinaStock();
       loadChinaDistribution();
@@ -7287,7 +7631,10 @@ async function refreshAll(manual = false) {
   if (state.view === 'global') await loadGlobalChart(true);
   if (state.view === 'us') { await loadUS(true); await loadUSChart(true); await loadUSMinutes(true); }
   if (state.view === 'fundwatch') { await loadFundWatch(true); await loadFundPnl(true); }
-  if (state.view === 'stockwatch') { await loadPaper(true); await loadPaperRanking(true); }
+  if (state.view === 'stockwatch') {
+    await loadPaper(true);
+    if (state.paperRankOpen) await loadPaperRanking(true);
+  }
   if (state.view === 'commodities') await loadCommodityChart(true);
   if (state.view === 'commodities') await loadMetalsIntraday(true);
   if (state.view === 'funds') {

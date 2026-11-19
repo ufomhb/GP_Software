@@ -8,8 +8,8 @@
   <meta name="robots" content="noindex,nofollow">
   <title>寰球智投 · 后台管理</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.8.0">
-  <link rel="stylesheet" href="/css/admin.css?v=2.8.0">
+  <link rel="stylesheet" href="/css/app.css?v=2.9.0">
+  <link rel="stylesheet" href="/css/admin.css?v=2.9.0">
 </head>
 <body class="admin-body">
   <!-- 登录 -->
@@ -57,6 +57,7 @@
         <button type="button" data-sec="logs">系统日志</button>
         <button type="button" data-sec="deploy">部署到 NAS</button>
         <button type="button" data-sec="strategy">持仓策略</button>
+        <button type="button" data-sec="paper">模拟交易</button>
         <button type="button" data-sec="push">定时推送</button>
         <button type="button" data-sec="source">数据源</button>
         <button type="button" data-sec="net">手机访问</button>
@@ -280,8 +281,57 @@
         </article>
 
         <article class="admin-card">
-          <div class="admin-card-head"><h2>历史记录</h2><span class="muted small" id="stHistoryMeta">—</span></div>
+          <div class="admin-card-head"><h2>近半年回测</h2><span class="muted small" id="stBfMeta">还没有跑过回测</span></div>
+          <div class="admin-actions">
+            <button type="button" class="admin-btn primary" id="stBackfillRun">回测最近半年</button>
+          </div>
+          <div id="stBfStats" class="admin-kv-list" style="margin-top:10px"><div class="admin-empty">还没有回测记录</div></div>
+          <div id="stBfAction" class="admin-table-wrap"></div>
+          <p class="admin-note" id="stBfNote">—</p>
+        </article>
+
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>历史记录</h2>
+            <div class="admin-actions">
+              <div class="seg" id="stHistorySource">
+                <button type="button" data-st-source="all" class="is-active">全部</button>
+                <button type="button" data-st-source="live">实盘</button>
+                <button type="button" data-st-source="backfill">回测</button>
+              </div>
+              <span class="muted small" id="stHistoryMeta">—</span>
+            </div>
+          </div>
           <div id="stHistory" class="st-history"><div class="admin-empty">加载中…</div></div>
+        </article>
+      </section>
+
+      <!-- 模拟交易（v2.9.0） -->
+      <section class="admin-section" id="sec-paper">
+        <div class="admin-cards" id="paperCards"></div>
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>全局设置</h2>
+            <span class="muted small">初始资金只影响新账号与后续「重置」；已有账户保留自己的初始资金，避免改写历史盈亏。</span>
+          </div>
+          <div class="admin-actions">
+            <label class="admin-inline-field"><span>初始资金（元）</span><input type="number" id="paperInitial" min="10000" max="100000000" step="10000"></label>
+            <button type="button" class="admin-btn primary" id="paperSaveInitial">保存</button>
+          </div>
+        </article>
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>用户模拟盘</h2>
+            <span class="muted small" id="paperMeta">—</span>
+          </div>
+          <div id="paperUsers" class="admin-table-wrap"><div class="admin-empty">加载中…</div></div>
+        </article>
+        <article class="admin-card" id="paperDetailWrap" hidden>
+          <div class="admin-card-head">
+            <h2 id="paperDetailTitle">持仓明细</h2>
+            <button type="button" class="admin-link" id="paperDetailClose">收起</button>
+          </div>
+          <div id="paperDetail" class="admin-table-wrap"></div>
         </article>
       </section>
 
@@ -436,6 +486,6 @@
     </div>
   </div>
 
-  <script src="/js/admin.js?v=2.8.0"></script>
+  <script src="/js/admin.js?v=2.9.0"></script>
 </body>
 </html>

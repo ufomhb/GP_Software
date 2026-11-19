@@ -261,3 +261,141 @@ test('排行榜：本系统所有账号互相可见，且不透出账号 ID', as
   assert.equal(rank.body.items[0].rank, 1);
   assert.ok(rank.body.items[0].total >= rank.body.items[1].total, '默认按总资产降序');
 });
+
+/* ---------------- v2.9.0 模拟盘：比例下单 / 后台控制 ---------------- */
+
+test('模拟交易：比例参数非法时在取行情之前就拒绝', async () => {
+  await withApp(async (c) => {
+    const over = await c.req('/api/paper/trade', { method: 'POST', json: { secid: '1.600519', side: 'buy', ratio: 2 } });
+    assert.equal(over.status, 400);
+    assert.match(String(JSON.stringify(over.body)), /0~1/);
+
+    const zero = await c.req('/api/paper/trade', { method: 'POST', json: { secid: '1.600519', side: 'buy', ratio: 0 } });
+    assert.equal(zero.status, 400);
+
+    const negative = await c.req('/api/paper/trade', { method: 'POST', json: { secid: '1.600519', side: 'buy', ratio: -0.5 } });
+    assert.equal(negative.status, 400);
+
+    // 空仓时按比例卖出：明确提示（或取不到行情），不能 500
+    const sell = await c.req('/api/paper/trade', { method: 'POST', json: { secid: '1.600519', side: 'sell', ratio: 1 } });
+    assert.equal(sell.status, 400);
+    assert.match(String(JSON.stringify(sell.body)), /持仓|行情/);
+  });
+});
+
+test('模拟交易：按比例买入成交在整手，按「全部」能一次卖光（无行情则跳过）', async (t) => {
+  await withApp(async (c) => {
+    const buy = await c.req('/api/paper/trade', { method: 'POST', json: { secid: '1.600519', side: 'buy', ratio: 0.25 } });
+    if (buy.status !== 200) {
+      t.diagnostic(`跳过：比例买入需要实时行情（${buy.status} ${JSON.stringify(buy.body)}）`);
+      return;
+    }
+    const acc = buy.body.account;
+    assert.equal(acc.positions.length, 1);
+    assert.equal(acc.positions[0].shares % 100, 0, 'A 股按 100 股整手');
+    assert.ok(acc.positions[0].shares > 0);
+    assert.ok(acc.cash < 1000000, '买入后现金减少');
+    assert.equal(buy.body.trade.ratio, 0.25, '成交记录保留比例，便于复盘');
+
+    const sellAll = await c.req('/api/paper/trade', { method: 'POST', json: { secid: '1.600519', side: 'sell', ratio: 1 } });
+    assert.equal(sellAll.status, 200, '「全部」卖出应成功');
+    assert.equal(sellAll.body.account.positions.length, 0, '清仓后没有持仓');
+  });
+});
+
+test('模拟交易：卖出零股只允许「全部」，部分卖出仍要求整手', async () => {
+  await withApp(async (c) => {
+    const partial = await c.req('/api/paper/trade', { method: 'POST', json: { secid: '1.600519', side: 'sell', shares: 150 } });
+    assert.equal(partial.status, 400);
+    assert.match(String(JSON.stringify(partial.body)), /100 股/);
+  });
+});
+
+test('后台模拟盘：非管理员 403，管理员可改初始资金 / 按指定金额重置', async (t) => {
+  const app = await startApp({ env: { ALLOW_REGISTER: '1' } });
+  t.after(() => app.stop());
+  const admin = app.client();
+  const regAdmin = await admin.post('/api/auth/register', { username: 'adminA', password: 'admin-pw-111' });
+  assert.equal(regAdmin.status, 200);
+  const user = app.client();
+  const regUser = await user.post('/api/auth/register', { username: 'userB', password: 'user-pw-222' });
+  assert.equal(regUser.status, 200);
+
+  const deny = await user.get('/api/admin/paper');
+  assert.equal(deny.status, 403, '普通用户不能看后台模拟盘');
+  const denySet = await user.post('/api/admin/paper/config', { initial: 200000 });
+  assert.equal(denySet.status, 403);
+
+  const set = await admin.post('/api/admin/paper/config', { initial: 500000 });
+  assert.equal(set.status, 200);
+  assert.equal(set.body.config.initial, 500000);
+
+  const list = await admin.get('/api/admin/paper');
+  assert.equal(list.status, 200);
+  assert.equal(list.body.config.initial, 500000);
+  const u = (list.body.users || []).find((x) => x.username === 'userB');
+  assert.ok(u, '后台列表应包含全部账号');
+  assert.ok(Array.isArray(u.positions));
+  assert.ok(!('hash' in u) && !('salt' in u), '后台列表不能透出密码字段');
+
+  // 先按 50 万开一个账户，再把全局改成 70 万：已有账户必须保留自己的 50 万
+  const open = await admin.post('/api/admin/paper/reset', { id: u.id });
+  assert.equal(open.status, 200);
+  assert.equal(open.body.initial, 500000);
+  const bumped = await admin.post('/api/admin/paper/config', { initial: 700000 });
+  assert.equal(bumped.body.config.initial, 700000);
+  const list2 = await admin.get('/api/admin/paper');
+  const u1 = list2.body.users.find((x) => x.username === 'userB');
+  assert.equal(u1.initial, 500000, '已有账户保留原初始资金（改全局不改写历史盈亏）');
+
+  const reset = await admin.post('/api/admin/paper/reset', { id: u.id, initial: 200000 });
+  assert.equal(reset.status, 200);
+  const after = await admin.get('/api/admin/paper');
+  const u2 = after.body.users.find((x) => x.username === 'userB');
+  assert.equal(u2.initial, 200000);
+  assert.equal(u2.cash, 200000);
+
+  // 夹取：太小 / 太大都落回边界
+  const tooSmall = await admin.post('/api/admin/paper/config', { initial: 1 });
+  assert.equal(tooSmall.body.config.initial, 10000);
+  const tooBig = await admin.post('/api/admin/paper/config', { initial: 9e12 });
+  assert.equal(tooBig.body.config.initial, 100000000);
+  // 重置不存在的用户 → 404
+  const missing = await admin.post('/api/admin/paper/reset', { id: 'u-not-exist' });
+  assert.equal(missing.status, 404);
+});
+
+test('排行榜：黑名单用户不在榜上，但仍能自己交易；隐藏数一并返回', async (t) => {
+  const app = await startApp({ env: { ALLOW_REGISTER: '1' } });
+  t.after(() => app.stop());
+  const admin = app.client();
+  await admin.post('/api/auth/register', { username: 'rankAdmin', password: 'rank-pw-111' });
+  const other = app.client();
+  await other.post('/api/auth/register', { username: 'rankHidden', password: 'rank-pw-222' });
+
+  const before = await admin.get('/api/paper/ranking');
+  assert.equal(before.status, 200);
+  assert.equal(before.body.items.length, 2);
+  assert.equal(before.body.hidden, 0);
+
+  const list = await admin.get('/api/admin/paper');
+  const target = list.body.users.find((x) => x.username === 'rankHidden');
+  const patched = await admin.post('/api/admin/paper/config', { hiddenUserIds: [target.id] });
+  assert.equal(patched.status, 200);
+  assert.deepEqual(patched.body.config.hiddenUserIds, [target.id]);
+
+  const after = await admin.get('/api/paper/ranking');
+  assert.equal(after.body.items.length, 1, '隐藏后榜上只剩 1 个账号');
+  assert.equal(after.body.items[0].username, 'rankAdmin');
+  assert.equal(after.body.hidden, 1, '应返回被隐藏的账号数');
+
+  // 被隐藏的用户仍可查看自己的账户并下单（只是不进排行榜）
+  const own = await other.get('/api/paper');
+  assert.equal(own.status, 200);
+  assert.equal(own.body.initial, 1000000);
+
+  // 取消隐藏 → 重新出现
+  await admin.post('/api/admin/paper/config', { hiddenUserIds: [] });
+  const back = await admin.get('/api/paper/ranking');
+  assert.equal(back.body.items.length, 2);
+});
