@@ -8545,6 +8545,9 @@ export {
   renderPaper, loadCloudAlerts,
   // v2.8.0：自选基金盈亏统计与模拟账户排行榜
   loadFundPnl, renderFundPnl, computeFundPnl, loadPaperRanking, renderPaperRanking,
+  // v2.9.0：模拟买卖弹窗（搜索 / 比例 / 报价与分时）与盈亏口径统一的共用函数
+  openPaperTrade, paperRatioShares, paperHeldShares, renderPaperQuote, renderPaperPreview,
+  fundPortfolio,
   // v2.7.0：叠层（个股详情之上再开 F10 / 资讯）与席位明细区块
   mountOverlay, pushOverlay, topLayer, closeOverlay, renderSeatsBlock, openStrategyInNewTab,
 };

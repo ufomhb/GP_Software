@@ -1096,6 +1096,9 @@ test('DOM：旧 #watchlist 书签落到自选股票，新视图 hash 正常', ()
 test('DOM：自选基金盈亏按份额加权，日/月/年口径都对', () => {
   const prevWatch = app.state.fundWatchlist;
   const prevHold = app.state.fundHoldings;
+  const prevLive = app.state.fundWatchData;
+  // 清掉实时行情：这里只验「净值序列」口径（实时点由下一条用例单独覆盖）
+  app.state.fundWatchData = { items: [] };
   app.state.fundWatchlist = [
     { code: 'A1', name: '基金A', type: 'open' },
     { code: 'B1', name: '基金B', type: 'open' },
@@ -1124,6 +1127,7 @@ test('DOM：自选基金盈亏按份额加权，日/月/年口径都对', () => 
   assert.equal(app.computeFundPnl(data), null);
   app.state.fundWatchlist = prevWatch;
   app.state.fundHoldings = prevHold;
+  app.state.fundWatchData = prevLive;
 });
 
 test('DOM：盈亏面板无持仓给引导，有持仓渲染 KPI 与说明', () => {
@@ -1149,7 +1153,7 @@ test('DOM：盈亏面板无持仓给引导，有持仓渲染 KPI 与说明', () 
   const kpi = document.querySelector('#fundPnlKpis').textContent;
   assert.match(kpi, /今日盈亏/);
   assert.match(kpi, /组合市值/);
-  assert.match(document.querySelector('#fundPnlNote').textContent, /净值口径/);
+  assert.match(document.querySelector('#fundPnlNote').textContent, /同一口径/, '说明要写清与「我的持仓」同口径');
 
   app.state.fundWatchlist = prevWatch;
   app.state.fundHoldings = prevHold;
@@ -1192,4 +1196,128 @@ test('DOM：模拟账户排行榜按总资产排序、标出自己并转义用�
   app.state.paper = prevPaper;
   app.state.paperRank = prevRank;
   app.state.paperRankSort = 'total';
+});
+
+/* ---------------------------------------------------------
+   v2.9.0：排行榜默认收起 / 比例下单 / 两处盈亏同口径
+   --------------------------------------------------------- */
+
+test('DOM：模拟账户排行榜默认收起，点按钮才展开并请求', () => {
+  const prevRank = app.state.paperRank;
+  const prevOpen = app.state.paperRankOpen;
+  app.state.paper = {
+    initial: 1000000, cash: 1000000, marketValue: 0, total: 1000000,
+    profit: 0, profitPct: 0, positions: [], trades: [], rules: {},
+  };
+  app.state.paperRank = null;
+  app.state.paperRankOpen = false;
+  app.renderPaper();
+
+  const box = document.querySelector('#paperRankBody');
+  const toggle = document.querySelector('#paperRankToggle');
+  assert.ok(box, '排行榜容器应存在');
+  assert.equal(box.hidden, true, '默认必须收起（用户要求默认不显示）');
+  assert.match(toggle.textContent, /展开排行榜/);
+  assert.match(document.querySelector('#paperPanel').textContent, /默认收起/);
+
+  // 点开：容器显示、按钮变成收起（数据由 loadPaperRanking 负责，这里只验交互）
+  app.state.paperRank = { items: [] };
+  toggle.click();
+  assert.equal(app.state.paperRankOpen, true);
+  assert.equal(document.querySelector('#paperRankBody').hidden, false);
+  assert.match(document.querySelector('#paperRankToggle').textContent, /收起/);
+
+  // 再点收起
+  document.querySelector('#paperRankToggle').click();
+  assert.equal(app.state.paperRankOpen, false);
+  assert.equal(document.querySelector('#paperRankBody').hidden, true);
+
+  app.state.paper = null;
+  app.state.paperRank = prevRank;
+  app.state.paperRankOpen = prevOpen;
+});
+
+test('DOM：模拟买卖按比例估算股数（买入按可用资金、卖出按持仓）', () => {
+  // 买入：10 万可用、价格 10 元、1/4 → 25000 / (10×1.00025) ≈ 2499 股 → 向下取整到 2400 股
+  assert.equal(app.paperRatioShares({ side: 'buy', ratio: 0.25, price: 10, cash: 100000, lot: 100 }), 2400);
+  // 1/3、1/2 同理按整手取整
+  assert.equal(app.paperRatioShares({ side: 'buy', ratio: 0.3333, price: 10, cash: 100000, lot: 100 }), 3300);
+  assert.equal(app.paperRatioShares({ side: 'buy', ratio: 0.5, price: 10, cash: 100000, lot: 100 }), 4900);
+  // 全部：不能超过可用资金（含最低 5 元佣金）
+  const all = app.paperRatioShares({ side: 'buy', ratio: 1, price: 10, cash: 100000, lot: 100 });
+  assert.equal(all, 9900);
+  assert.ok(all * 10 + 5 <= 100000, '含佣金后不能超过可用资金');
+  // 资金不足一手 → 0
+  assert.equal(app.paperRatioShares({ side: 'buy', ratio: 1, price: 5000, cash: 1000, lot: 100 }), 0);
+  // 卖出：持仓 1234 股，1/4 → 300 股；全部 → 1234 股（允许零股清仓）
+  assert.equal(app.paperRatioShares({ side: 'sell', ratio: 0.25, price: 10, held: 1234, lot: 100 }), 300);
+  assert.equal(app.paperRatioShares({ side: 'sell', ratio: 1, price: 10, held: 1234, lot: 100 }), 1234);
+  assert.equal(app.paperRatioShares({ side: 'sell', ratio: 0.5, price: 10, held: 0, lot: 100 }), 0);
+});
+
+test('DOM：模拟买卖弹窗显示报价、预计金额与费用', () => {
+  const prevPaper = app.state.paper;
+  app.state.paper = {
+    initial: 1000000, cash: 100000, marketValue: 0, total: 100000,
+    profit: 0, profitPct: 0, positions: [], trades: [], rules: {},
+  };
+  app.openPaperTrade('buy');
+  assert.ok(document.querySelector('#paperForm'), '应打开买入弹窗');
+  assert.ok(document.querySelector('#paperSymbol'), '要有代码/名称搜索框');
+  assert.ok(document.querySelector('#paperSymbolPop'), '要有搜索候选层');
+  assert.ok(document.querySelector('#paperIntraday'), '要有分时图容器');
+  assert.equal(document.querySelectorAll('#paperRatioSeg [data-paper-ratio]').length, 4, '1/4、1/3、1/2、全部 四个按钮');
+  assert.match(document.querySelector('#paperPreview').textContent, /预计|选择标的/);
+
+  // 选中标的（不联网，直接塞报价）+ 填股数 → 预览金额与佣金
+  app.state.paperTrade.target = { secid: '1.600519', code: '600519', name: '贵州茅台' };
+  app.state.paperTrade.quote = { secid: '1.600519', code: '600519', name: '贵州茅台', price: 1500, pct: 1.2 };
+  document.querySelector('#paperShares').value = '100';
+  app.renderPaperQuote();
+  app.renderPaperPreview();
+  const preview = document.querySelector('#paperPreview').textContent;
+  assert.match(preview, /150,000/, '预计金额 = 100 × 1500');
+  assert.match(preview, /佣金/);
+  assert.match(document.querySelector('#paperQuote').textContent, /1,500|1500/, '报价卡要显示现价');
+  assert.match(document.querySelector('#paperQuote').textContent, /可用资金/, '买入要显示可用资金');
+
+  app.closeOverlay();
+  app.state.paper = prevPaper;
+});
+
+test('DOM：盈亏统计与我的持仓用同一口径（今日盈亏 / 累计收益 / 组合市值一致）', () => {
+  const prevWatch = app.state.fundWatchlist;
+  const prevHold = app.state.fundHoldings;
+  const prevLive = app.state.fundWatchData;
+  const prevPnl = app.state.fundPnl;
+
+  app.state.fundWatchlist = [{ code: 'A1', name: '基金A', type: 'open' }];
+  app.state.fundHoldings = { A1: { shares: 100, cost: 1 } };
+  // 实时价 1.6（今日 +1.27%），序列只到 1.5 → 旧口径会拿 1.5 当今日，两处对不上
+  app.state.fundWatchData = {
+    items: [{ code: 'A1', name: '基金A', price: 1.6, pct: 1.2658, pctKind: 'nav', pctStale: false, date: '2026-11-19' }],
+    today: '2026-11-19',
+  };
+  app.state.fundPnl = {
+    codes: 'A1',
+    items: [{ code: 'A1', points: [{ d: '2026-11-18', c: 1.5 }, { d: '2026-11-19', c: 1.5 }] }],
+    missing: [],
+  };
+  app.renderFundPnl();
+  const pf = app.fundPortfolio();
+  assert.equal(pf.marketValue, 160, '持有市值 = 100 × 1.6');
+  assert.equal(pf.profit, 60);
+  const kpi = document.querySelector('#fundPnlKpis').textContent;
+  assert.ok(kpi.includes(app.esc('160.00')) || /160/.test(kpi), '组合市值要与持仓面板一致（含今日）');
+  assert.match(kpi, /60\.00/, '累计收益 = 160 - 100，与持仓面板同一口径');
+  assert.match(kpi, /今日盈亏/);
+  // 曲线末尾也接上了今天的实时点
+  const calc = app.computeFundPnl(app.state.fundPnl);
+  assert.equal(calc.rows[calc.rows.length - 1].v, 160);
+  assert.equal(calc.asOf, calc.rows[calc.rows.length - 1].d);
+
+  app.state.fundWatchlist = prevWatch;
+  app.state.fundHoldings = prevHold;
+  app.state.fundWatchData = prevLive;
+  app.state.fundPnl = prevPnl;
 });

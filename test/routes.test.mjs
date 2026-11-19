@@ -115,3 +115,23 @@ test('基金：pnl-series 需要登录，且最多 12 只', async (t) => {
   assert.equal(tooMany.status, 400);
   assert.match(String(tooMany.body.error || ''), /12/);
 });
+
+test('后台模拟盘 / 回测接口：未登录 401，参数被夹取', async (t) => {
+  const app = await startApp();
+  t.after(() => app.stop());
+  const anon = app.client();
+  for (const path of ['/api/admin/paper']) {
+    const res = await anon.get(path);
+    assert.equal(res.status, 401, `${path} 应为 401`);
+  }
+  for (const path of ['/api/admin/paper/config', '/api/admin/paper/reset', '/api/admin/strategy/backfill']) {
+    const res = await anon.req(path, { method: 'POST', json: {} });
+    assert.equal(res.status, 401, `${path} 应为 401`);
+  }
+
+  const admin = await bootstrapAdmin(app, 'paperroute', 'paperpass1');
+  // 回测：没有持仓时给出可读的 400，而不是 5xx
+  const bf = await admin.req('/api/admin/strategy/backfill', { method: 'POST', json: { days: 999 } });
+  assert.ok([200, 400].includes(bf.status), `回测应 200/400，实际 ${bf.status}`);
+  if (bf.status === 400) assert.ok(bf.body.error);
+});

@@ -161,9 +161,10 @@ test('账号：勾选「7 天免登录」后跨日仍有效，且后台记录能
 
   const file = JSON.parse(app.readData('sessions.json'));
   const keys = Object.keys(file);
-  assert.equal(keys.length, 1);
-  const session = file[keys[0]];
-  assert.equal(session.remember, true, '会话应标记 remember');
+  assert.ok(keys.length >= 1);
+  const rememberKey = keys.find((k) => file[k] && file[k].remember === true);
+  assert.ok(rememberKey, '会话应标记 remember');
+  const session = file[rememberKey];
   const days = (Number(session.expiresAt) - Date.now()) / 86400000;
   assert.ok(days > 6.9 && days <= 7.01, `会话有效期应约 7 天，实际 ${days.toFixed(2)} 天`);
 

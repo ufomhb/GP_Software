@@ -564,7 +564,9 @@ function createStrategyLog(deps) {
     if (typeof getFundPnlSeries !== 'function' || typeof estimateFundHistPctBatch !== 'function') {
       throw Object.assign(new Error('回测依赖未就绪'), { status: 503 });
     }
-    const port = await collectPortfolio();
+    const port = await collectPortfolio().catch((err) => {
+      throw bad(`读不到持仓：${(err && err.message) || '请先在基金页同步自选基金与持仓'}`);
+    });
     const held = (port && (port.heldRows || (port.rows || []).filter((r) => r.held))) || [];
     if (!held.length) throw bad('还没有录入持仓：先在「自选基金」表格点「仓」填份额，再回测');
 
@@ -620,11 +622,14 @@ function createStrategyLog(deps) {
       dates: plan,
     });
 
-    // ETF 真实日线（技术评分要用真实高低价）
+    // ETF 真实日线（技术评分要用真实高低价）。判定与实盘一致：按代码前缀，
+    // 不按名称（「XX ETF 联接 C」名称里有 ETF，但它是场外基金，走估值而不是场内价）。
     const etfSet = new Set();
     for (const r of held) {
       const code = String(r.code);
-      if (r.type === 'etf' || (typeof isEtfLike === 'function' && isEtfLike(code, r.name || ''))) etfSet.add(code);
+      const byCode = typeof isEtfLike === 'function' ? isEtfLike(code, '') : false;
+      const byType = String(r.type) === 'etf' && typeof fundSecid === 'function' && Boolean(fundSecid(code));
+      if (byCode || byType) etfSet.add(code);
     }
     const etfCandles = new Map();
     if (typeof getKline === 'function') {
