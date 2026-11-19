@@ -3796,14 +3796,15 @@ function renderPaperRanking() {
   const items = (d.items || []).slice();
   const sort = state.paperRankSort || 'total';
   if (sort === 'profit') items.sort((a, b) => (Number(b.profitPct) || 0) - (Number(a.profitPct) || 0));
+  else items.sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0));
   const me = state.auth && state.auth.username;
-  const rows = items.map((item) => {
+  const rows = items.map((item, i) => {
     const held = (item.positions || []).slice(0, 3)
       .map((p) => `${esc(cleanName(p.name) || p.code)} <span class="t-sub">${nf(p.shares, 0)} 股</span>`)
       .join('<br>') || '<span class="muted">空仓</span>';
     const more = (item.positionCount || 0) > 3 ? `<div class="t-sub">等 ${item.positionCount} 只</div>` : '';
     return `<tr class="${item.username === me ? 'is-me' : ''}">
-      <td class="num">${item.rank}</td>
+      <td class="num">${i + 1}</td>
       <td><span class="t-name">${esc(item.username)}</span>${item.username === me ? ' <span class="badge">我</span>' : ''}</td>
       <td class="t-price">${nf(item.total, 2)}</td>
       <td class="t-chg ${toneClass(item.profit)}">${signedFmt(item.profit, 2)}</td>

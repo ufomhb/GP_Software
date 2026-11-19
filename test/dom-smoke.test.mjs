@@ -1061,3 +1061,135 @@ test('DOM：龙虎榜席位明细区块按日期分组并标出机构与股通',
   assert.match(app.renderSeatsBlock({ items: [] }), /近期没有可用的席位明细/);
 });
 
+
+/* ---------------- v2.8.0：自选基金 / 自选股票 / 盈亏 / 排行榜 ---------------- */
+
+test('DOM：导航拆成自选基金与自选股票，基金页不再有自选子页', () => {
+  const tabs = [...document.querySelectorAll('.nav-tab')].map((b) => b.dataset.view);
+  assert.ok(tabs.includes('fundwatch'), '缺少自选基金导航');
+  assert.ok(tabs.includes('stockwatch'), '缺少自选股票导航');
+  assert.ok(!tabs.includes('watchlist'), '旧「自选·预警」导航应移除');
+
+  assert.ok(document.querySelector('#view-fundwatch #fundWatchTable'), '自选基金板块要有自选表');
+  assert.ok(document.querySelector('#view-fundwatch #fundPnlKpis'), '自选基金板块要有盈亏 KPI');
+  assert.ok(document.querySelector('#view-fundwatch #fundPnlChart'), '自选基金板块要有市值曲线');
+  assert.ok(document.querySelector('#view-fundwatch #fundPnlBars'), '自选基金板块要有月度盈亏');
+  assert.ok(document.querySelector('#view-stockwatch #paperPanel'), '模拟交易应在自选股票');
+  assert.ok(document.querySelector('#view-stockwatch #watchTable'), '我的自选应在自选股票');
+  assert.ok(document.querySelector('#view-stockwatch #alertsPanel'), '条件预警跟着自选股票');
+
+  assert.equal(document.querySelector('#fundWatchView'), null, '基金页不再有自选基金子页');
+  assert.equal(document.querySelector('[data-fund-view="watch"]'), null, '基金子页导航不再有自选基金');
+  assert.ok(document.querySelector('[data-goto="fundwatch"]'), '基金页要有跳到自选基金的入口');
+});
+
+test('DOM：旧 #watchlist 书签落到自选股票，新视图 hash 正常', () => {
+  location.hash = '#watchlist';
+  assert.equal(app.parseHashRoute().view, 'stockwatch');
+  location.hash = '#fundwatch';
+  assert.equal(app.parseHashRoute().view, 'fundwatch');
+  location.hash = '#stockwatch';
+  assert.equal(app.parseHashRoute().view, 'stockwatch');
+  location.hash = '';
+});
+
+test('DOM：自选基金盈亏按份额加权，日/月/年口径都对', () => {
+  const prevWatch = app.state.fundWatchlist;
+  const prevHold = app.state.fundHoldings;
+  app.state.fundWatchlist = [
+    { code: 'A1', name: '基金A', type: 'open' },
+    { code: 'B1', name: '基金B', type: 'open' },
+  ];
+  app.state.fundHoldings = { A1: { shares: 100, cost: 1 }, B1: { shares: 50, cost: 2 } };
+  const data = {
+    items: [
+      { code: 'A1', points: [{ d: '2026-01-02', c: 1 }, { d: '2026-06-01', c: 1.2 }, { d: '2026-11-18', c: 1.5 }, { d: '2026-11-19', c: 1.6 }] },
+      { code: 'B1', points: [{ d: '2026-01-02', c: 2 }, { d: '2026-06-01', c: 2.2 }, { d: '2026-11-18', c: 2.4 }, { d: '2026-11-19', c: 2.5 }] },
+    ],
+    missing: [],
+  };
+  const calc = app.computeFundPnl(data);
+  assert.ok(calc, '应能算出组合曲线');
+  assert.equal(calc.rows.length, 4);
+  assert.equal(calc.marketValue, 285, '100×1.6 + 50×2.5');
+  assert.equal(calc.todayPnl, 15, '较前一交易日 +15');
+  assert.equal(calc.todayPct, 5.56);
+  assert.equal(calc.costValue, 200, '100×1 + 50×2');
+  assert.equal(calc.cumulative, 85);
+  assert.equal(calc.holdings, 2);
+  assert.ok(calc.monthly.length >= 2, '应按月聚合出月度盈亏');
+
+  // 没有持仓时返回 null，让渲染层走空态
+  app.state.fundHoldings = {};
+  assert.equal(app.computeFundPnl(data), null);
+  app.state.fundWatchlist = prevWatch;
+  app.state.fundHoldings = prevHold;
+});
+
+test('DOM：盈亏面板无持仓给引导，有持仓渲染 KPI 与说明', () => {
+  const prevWatch = app.state.fundWatchlist;
+  const prevHold = app.state.fundHoldings;
+  const prevPnl = app.state.fundPnl;
+
+  app.state.fundWatchlist = [];
+  app.state.fundHoldings = {};
+  app.state.fundPnl = null;
+  app.renderFundPnl();
+  assert.match(document.querySelector('#fundPnlKpis').textContent, /未录持仓/);
+  assert.match(document.querySelector('#fundPnlNote').textContent, /份额与成本/);
+
+  app.state.fundWatchlist = [{ code: 'A1', name: '基金A', type: 'open' }];
+  app.state.fundHoldings = { A1: { shares: 100, cost: 1 } };
+  app.state.fundPnl = {
+    codes: 'A1',
+    items: [{ code: 'A1', points: [{ d: '2026-11-18', c: 1.5 }, { d: '2026-11-19', c: 1.6 }] }],
+    missing: [],
+  };
+  app.renderFundPnl();
+  const kpi = document.querySelector('#fundPnlKpis').textContent;
+  assert.match(kpi, /今日盈亏/);
+  assert.match(kpi, /组合市值/);
+  assert.match(document.querySelector('#fundPnlNote').textContent, /净值口径/);
+
+  app.state.fundWatchlist = prevWatch;
+  app.state.fundHoldings = prevHold;
+  app.state.fundPnl = prevPnl;
+});
+
+test('DOM：模拟账户排行榜按总资产排序、标出自己并转义用户名', () => {
+  const prevAuth = app.state.auth;
+  const prevPaper = app.state.paper;
+  const prevRank = app.state.paperRank;
+  app.state.auth = { username: 'me' };
+  app.state.paperRankSort = 'total';
+  app.state.paper = {
+    initial: 1000000, cash: 1000000, marketValue: 0, total: 1000000,
+    profit: 0, profitPct: 0, positions: [], trades: [], rules: {},
+  };
+  app.state.paperRank = {
+    items: [
+      { username: 'me', total: 100, profit: 0, profitPct: 0, positionCount: 0, positions: [] },
+      { username: '<b>x</b>', total: 200, profit: 100, profitPct: 100, positionCount: 1, positions: [{ name: '<i>坏', code: '600000', shares: 100 }] },
+    ],
+  };
+  app.renderPaper();
+  app.renderPaperRanking();
+  const box = document.querySelector('#paperRankBody');
+  assert.ok(box, '排行榜容器应存在');
+  const rows = box.querySelectorAll('tbody tr');
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /<b>x<\/b>/, '总资产高的排第一（文本被转义后原样显示）');
+  assert.equal(box.querySelectorAll('b').length, 0, '用户名里的标签必须被转义');
+  assert.ok(box.querySelector('tr.is-me'), '当前用户要高亮');
+  assert.match(document.querySelector('#paperPanel').textContent, /所有登录用户都能看到/, '要写明可见性');
+
+  // 切到按收益率排序：高收益率排第一
+  app.state.paperRankSort = 'profit';
+  app.renderPaperRanking();
+  assert.match(document.querySelector('#paperRankBody tbody tr').textContent, /<b>x<\/b>/);
+
+  app.state.auth = prevAuth;
+  app.state.paper = prevPaper;
+  app.state.paperRank = prevRank;
+  app.state.paperRankSort = 'total';
+});

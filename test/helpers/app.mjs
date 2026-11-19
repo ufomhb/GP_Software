@@ -113,33 +113,52 @@ export async function startApp(opts = {}) {
     store.close();
   }
 
-  const port = await pickFreePort();
-  const child = spawn(process.execPath, ['server.js', `--port=${port}`, '--host=127.0.0.1'], {
-    cwd: work,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      NODE_OPTIONS: '--disable-warning=ExperimentalWarning',
-      ...(mode === 'sqlite' ? { STORE: 'sqlite' } : { STORE: 'json' }),
-      ...env,
-    },
-  });
+  /*
+   * 端口冲突重试：多个测试文件并行时，pickFreePort 的「探测-释放-再占」之间
+   * 仍可能被兄弟实例抢先。此时子进程会 EADDRINUSE 直接退出，而 /api/health
+   * 会被兄弟实例应答、把「别人的服务」误判成就绪（表现为 403/ECONNRESET 之类的怪失败）。
+   * 这里用子进程自己的启动横幅（含本次端口）校验身份：日志里没有自己的端口，
+   * 说明应答的是兄弟实例，就换端口重来。/api/health 仍只暴露状态与版本。
+   */
+  let child = null;
   let logs = '';
-  child.stdout.on('data', (c) => { logs += c; });
-  child.stderr.on('data', (c) => { logs += c; });
-
-  const base = `http://127.0.0.1:${port}`;
+  let base = '';
   let ready = false;
-  for (let i = 0; i < 120; i += 1) {
-    await new Promise((r) => setTimeout(r, 100));
-    try {
-      const res = await fetch(`${base}/api/health`);
-      if (res.ok) { ready = true; break; }
-    } catch { /* 还没起来 */ }
+  let lastError = '';
+  for (let attempt = 0; attempt < 6 && !ready; attempt += 1) {
+    const port = await pickFreePort();
+    base = `http://127.0.0.1:${port}`;
+    logs = '';
+    child = spawn(process.execPath, ['server.js', `--port=${port}`, '--host=127.0.0.1'], {
+      cwd: work,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        NODE_OPTIONS: '--disable-warning=ExperimentalWarning',
+        ...(mode === 'sqlite' ? { STORE: 'sqlite' } : { STORE: 'json' }),
+        ...env,
+      },
+    });
+    child.stdout.on('data', (c) => { logs += c; });
+    child.stderr.on('data', (c) => { logs += c; });
+
+    for (let i = 0; i < 120; i += 1) {
+      if (child.exitCode !== null) break;
+      await new Promise((r) => setTimeout(r, 100));
+      try {
+        const res = await fetch(`${base}/api/health`);
+        if (res.ok && logs.includes(`:${port}`)) { ready = true; break; }
+      } catch { /* 还没起来 */ }
+    }
+    if (!ready) {
+      lastError = logs;
+      try { child.kill(); } catch { /* 已经退出 */ }
+      await new Promise((r) => setTimeout(r, 150));
+    }
   }
   if (!ready) {
-    child.kill();
-    throw new Error(`实例启动超时（:${port}）\n${logs}`);
+    try { rmSync(work, { recursive: true, force: true }); } catch { /* 清理失败不影响报错 */ }
+    throw new Error(`实例启动超时（已重试）：\n${lastError}`);
   }
 
   return {
