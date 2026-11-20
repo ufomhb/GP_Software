@@ -24,6 +24,10 @@ logs/*
 data/auction-*.json
 data/us-sessions.json
 
+# ===== 持仓审计与快照（v2.9.2，运行时数据，含账号与仓位）=====
+data/portfolio-writes.jsonl
+data/portfolio-history/
+
 # ===== 环境与备份 =====
 .dsh/
 .dsh-project-memory/

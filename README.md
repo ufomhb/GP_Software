@@ -209,6 +209,20 @@ npm run selfcheck                         # 安全基线 39 项 + 存储层 23 �
 - 前端渲染约定：**外部文本进 `innerHTML` 前必须 `esc()`；进 `href`/`src` 前必须再过 `safeUrl()`**（`esc` 挡不住 `javascript:` 协议）。2026-11-15 审计了 225 处模板插值，35 处文本型全部安全，并补了 `safeUrl` 覆盖快讯链接等 2 处 href。
 - CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
 
+### v2.9.2 更新（2026-11-20）
+
+> 主题是「持仓不再回滚」：本机与线上是两套 `data/`，以前在一边改的持仓另一边看不到、同步失败还没提示。本版把服务端变成唯一真源 + 审计快照 + 两端互通，并顺手修掉开盘前价格 0、基金盈亏口径看不清、模拟盘金额不动这几件事。**只在本地 8090 验证，未推 NAS。**
+
+- **修复：持仓「昨天改了今天回滚」**。实测证据：11-19 之后本机 `logs/server.log` 里没有任何 `/api/portfolio` 写入，`data/push-config.json` 与 `data/userdata/<主账号>.json` 的 mtime 停在 11-17 01:28，而线上 `gp.ufomhb.xyz` 一直是 2.9.1 正常服务 → 说明改动写进了线上（NAS）那一套数据。三层根因：① 部署只同步代码、**不动线上 `data/`**，两边各记一套；② 前端 `syncPushWatchlist` 用 `catch {}` 静默吞错；③ 启动时只在「本机压根没有该账号数据」才拉服务端。现在每次启动都对齐服务端，本机未同步改动按条目时间戳合并后上推，失败时面板显示「本机已保存 · 未同步（点击重试）」并自动重试 3 次。
+- **新增：持仓写入审计与历史快照**。`data/portfolio-writes.jsonl`（时间/账号/IP/条数/变更摘要）+ `data/portfolio-history/<账号>/<rev>.json`（每账号 20 份）。后台「模拟交易」页可查保存历史并一键恢复。
+- **新增：条目级合并 + 删除墓碑**。多设备/多标签页同时改不再互相覆盖；删除写 `shares=0` 墓碑（SQLite schema **v4** 加 `portfolio_holdings.removed_at`，部署时自动迁移）；自选基金/自选股用 `baseRev` 做冲突检测（过期提交返回 `conflict` + 服务器快照，前端对齐后重试一次）。
+- **新增：本机 ⇄ NAS 持仓数据互通**。后台按钮走现有 SSH 私钥与 `scripts/portfolio-{export,import}.mjs`，单向推送/拉取（merge / replace），前后留备份与快照，账号 ID 不一致直接中止。
+- **修复：开盘前价格 0 / 模拟盘全亏**。行情统一出口（`fetchQuoteList`）新增价格归一：无成交价但有昨收 → 现价=昨收、涨跌幅 0、标 `prevClose`，前端显示「昨收」；都没有才置空。模拟盘按昨收估值、开盘前禁止模拟成交；基金估值跳过「昨收顶替」的报价。
+- **改进：基金「今日盈亏」口径可视化**。两面板统一叫法，常驻标签「按前日净值 / 按当日估值 14:32 / 按 15:00 估值终值 / 按今日净值」+ 时间点说明；`/api/funds/watch` 新增 `phase`。
+- **修复：模拟盘顶部金额盘中不动**。15 秒刷新纳入 `/api/paper`；累计盈亏拆成「持仓浮盈 + 已实现」，显示更新时刻；排行榜缓存 30s→15s 并显示截至时刻；三处金额共用同一套计算。
+- **文案**：登录页去掉「每天登录会被记录在后台」；排行榜保留「N 个账号」、去掉「另有 N 个账号被管理员隐藏」。
+- **测试**：新增 `test/quotes-fallback.test.mjs`（价格归一四态 + 互通导入导出）、扩展 `portfolio.test.mjs`（合并/墓碑/冲突/审计恢复/sqlite）与 `dom-smoke`（口径标签、榜单文案、模拟盘 KPI），全套保持通过。
+
 ### v2.7.0 更新（2026-11-19）
 
 > 修掉「点一下就没了」的三个交互坑，把自选列表统一成同一套表格，并补上打新与席位这两块复盘数据。**本版同时部署到本机 8090 与 NAS（/data/gp）。**
@@ -686,6 +700,11 @@ node server.js --port=8091
 | `GET /api/kline?secid=...&klt=101&limit=2600` | K 线 + 技术指标；日/周/月支持近 10 年，分时只返回最近交易日 |
 | `GET /api/funds/stock-rank?type=zq&sort=month` | 债券型基金排行 |
 | `GET /api/watchlist?secids=...` | 自选股批量评分 |
+| `GET /api/portfolio` | 当前账号的自选股 / 自选基金 / 持仓（含 `rev`，供多端冲突检测） |
+| `POST /api/portfolio` | 保存持仓：条目级合并 + 删除墓碑；可带 `baseRev`，过期提交返回 `conflict` 与服务器快照 |
+| `GET /api/admin/portfolio/history?userId=&limit=` | 某账号最近的持仓写入快照（后台「持仓保存历史」） |
+| `POST /api/admin/portfolio/restore` | 恢复到指定快照 `{userId, rev}`（先自动留一份当前快照） |
+| `POST /api/admin/portfolio/transfer` | 本机 ⇄ NAS 持仓互通 `{direction: push\|pull, userId, mode: merge\|replace, dryRun}`（超级管理员） |
 | `GET /api/news?limit=40` | 财经快讯 + 情绪统计 |
 | `GET /api/search?q=茅台` | 股票搜索 |
 | `GET /api/flow?secid=1.000001` | 分时主力资金流 |

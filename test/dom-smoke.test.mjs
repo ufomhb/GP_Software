@@ -1361,3 +1361,92 @@ test('DOM：模拟买卖股数输入不再用 step 原生校验，100 股可直�
   app.closeOverlay();
   app.state.paper = prevPaper;
 });
+
+/* ---------------------------------------------------------
+   v2.9.2：口径标签 / 排行榜统计行 / 模拟盘实时 KPI / 登录页文案
+   --------------------------------------------------------- */
+
+test('DOM：基金两个面板都标出「今日盈亏」当前口径与时间点说明', () => {
+  const loginHtml = readFileSync(join(ROOT, 'public', 'login.html'), 'utf8');
+  assert.equal(/每天登录会被记录/.test(loginHtml), false, '登录页不该再出现「每天登录会被记录」');
+  assert.match(loginHtml, /公用电脑请勿勾选/);
+
+  const prevWatch = app.state.fundWatchlist;
+  const prevHold = app.state.fundHoldings;
+  const prevLive = app.state.fundWatchData;
+  const prevPnl = app.state.fundPnl;
+
+  app.state.fundWatchlist = [{ code: 'A1', name: '基金A', type: 'open' }];
+  app.state.fundHoldings = { A1: { shares: 1000, cost: 1, updatedAt: Date.now() } };
+  // 盘中：只有估值，没有今日净值
+  app.state.fundWatchData = {
+    items: [{ code: 'A1', name: '基金A', price: 1.2, pct: 0.8, pctKind: 'holdings', pctStale: false, estimatePct: 0.8, estimateFrozen: false, estimateKind: 'holdings', date: '2026-11-19' }],
+    updatedAt: Date.now(),
+    phase: 'open',
+  };
+  app.state.fundPnl = { codes: 'A1', items: [{ code: 'A1', points: [{ d: '2026-11-18', c: 1.1 }, { d: '2026-11-19', c: 1.1 }] }], missing: [] };
+  app.renderFundHoldSummary();
+  app.renderFundPnl();
+
+  const holdCard = document.querySelector('#fundHoldSummary').textContent;
+  assert.match(holdCard, /今日盈亏/, '我的持仓卡片要叫「今日盈亏」');
+  assert.match(holdCard, /按当日估值/, '卡片副标题要写清当前口径');
+  const holdBasis = document.querySelector('#fundHoldBasis').textContent;
+  assert.match(holdBasis, /按当日估值/, '我的持仓面板要有口径标签');
+  const pnlBasis = document.querySelector('#fundPnlBasis').textContent;
+  assert.match(pnlBasis, /按当日估值/, '盈亏统计面板要有同一份口径标签');
+  assert.match(document.querySelector('#fundPnlKpis').textContent, /今日盈亏/);
+
+  // 收盘后已冻结 → 标签改成「按 15:00 估值终值」
+  app.state.fundWatchData = {
+    items: [{ code: 'A1', name: '基金A', price: 1.2, pct: 0.8, pctKind: 'holdings', pctStale: false, estimatePct: 0.8, estimateFrozen: true, estimateKind: 'holdings', date: '2026-11-19' }],
+    updatedAt: Date.now(),
+    phase: 'closed',
+  };
+  app.renderFundHoldSummary();
+  assert.match(document.querySelector('#fundHoldBasis').textContent, /15:00 估值终值/);
+
+  app.state.fundWatchlist = prevWatch;
+  app.state.fundHoldings = prevHold;
+  app.state.fundWatchData = prevLive;
+  app.state.fundPnl = prevPnl;
+});
+
+test('DOM：排行榜统计行保留账号数，但不显示被管理员隐藏的数量', () => {
+  const prevRank = app.state.paperRank;
+  app.state.paperRankSort = 'total';
+  app.state.paperRank = {
+    items: [{ username: 'alice', total: 100, profit: 10, profitPct: 10, positions: [], positionCount: 0 }],
+    hidden: 3,
+    estimated: false,
+    truncated: false,
+    updatedAt: Date.now(),
+  };
+  app.renderPaperRanking();
+  const text = document.querySelector('#paperRankBody').textContent;
+  assert.match(text, /1 个账号/, '保留可见账号数');
+  assert.equal(/被管理员隐藏/.test(text), false, '不再显示「另有 N 个账号被管理员隐藏」');
+  app.state.paperRank = prevRank;
+});
+
+test('DOM：模拟盘 KPI 显示更新时刻、持仓浮盈与已实现，昨收仓带标记', () => {
+  const prevPaper = app.state.paper;
+  app.state.paper = {
+    initial: 1000000, cash: 500000, marketValue: 520000, total: 1020000,
+    profit: 20000, profitPct: 2, positionProfit: 22000, realizedProfit: -2000,
+    pricesAsOf: Date.now(), anyPrevClose: true, prevCloseCount: 1,
+    positions: [
+      { secid: '1.600519', code: '600519', name: '贵州茅台', shares: 100, cost: 10, price: 12, priceMode: 'prevClose', pct: 0, marketValue: 1200, profit: 200, profitPct: 20 },
+    ],
+    trades: [], rules: {},
+  };
+  app.renderPaper();
+  const panel = document.querySelector('#paperPanel');
+  const kpis = panel.querySelector('.paper-kpis').textContent;
+  assert.match(kpis, /更新/, '总资产要写更新时刻');
+  assert.match(kpis, /持仓浮盈/, '累计盈亏要拆出持仓浮盈');
+  assert.match(kpis, /已实现/, '累计盈亏要拆出已实现');
+  assert.match(kpis, /按昨收估/, '有昨收估值时要写出来');
+  assert.match(panel.querySelector('.paper-pos-table').textContent, /昨收/, '持仓现价旁要标昨收');
+  app.state.paper = prevPaper;
+});

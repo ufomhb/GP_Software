@@ -3975,10 +3975,11 @@ function renderPaperQuote() {
     return;
   }
   const tone = toneClass(q.pct);
+  const prevMode = q.priceMode === 'prevClose';
   box.innerHTML = `<div class="paper-quote-main">
       <div class="paper-quote-id"><b>${esc(cleanName(q.name || target.name) || target.code || '')}</b> <span class="t-code">${esc(q.code || target.code || '')}</span></div>
       <div class="paper-quote-price ${tone}">${priceFmt(q.price)}<span>${q.pct === null || q.pct === undefined ? '--' : pctFmt(q.pct)}</span></div>
-      <div class="paper-quote-meta">${side === 'buy'
+      <div class="paper-quote-meta">${prevMode ? '<span class="muted">开盘前暂无成交价：现价与涨跌幅按昨收显示，开盘后才能下单</span>' : ''}${prevMode ? ' · ' : ''}${side === 'buy'
         ? `可用资金 ${nf(d.cash, 2)} 元`
         : `当前模拟持仓 ${nf(held, 0)} 股`}</div>
     </div>`;
@@ -4866,7 +4867,9 @@ function renderFundPnl() {
   // v2.9.0：今日盈亏 / 累计收益 / 组合市值 直接取「我的持仓」同一个 fundPortfolio()，
   // 两处面板从此逐分一致（此前盈亏面板用已公布净值序列，场外 T+1 会差一天）。
   const pf = fundPortfolio();
-  const basis = fundDayBasis(held);
+  // 口径要看「自选基金行情」里的字段（pctKind / estimatePct / navPctToday），持仓结构里没有这些
+  const watched = (state.fundWatchData && state.fundWatchData.items) || [];
+  const basis = fundDayBasis(watched.filter((x) => getFundHolding(x.code)));
   kpis.innerHTML = [
     pnlKpi('今日盈亏', pf.dayProfit, pf.dayPct, pf.dayProfit === null ? `${basis.label} · 今日数据未出` : `按${basis.label.replace(/^按/, '')}口径`),
     pnlKpi('近1月盈亏', calc.m1Pnl, calc.m1Pct),
@@ -5677,15 +5680,18 @@ function normalizePortfolioFunds(funds) {
     .map((f) => ({ ...f, type: f.type || fundTypeOf(f.code, f.name) }));
 }
 
-function normalizePortfolioHoldings(holdings) {
+function normalizePortfolioHoldings(holdings, { keepTombstones = false } = {}) {
   const out = {};
   if (!holdings || typeof holdings !== 'object') return out;
   for (const [code, v] of Object.entries(holdings)) {
     const shares = Number(v && v.shares);
-    if (!code || !Number.isFinite(shares) || shares <= 0) continue;
-    const entry = { shares, cost: Number(v && v.cost) || 0 };
+    if (!code || !Number.isFinite(shares)) continue;
+    // shares<=0 是删除墓碑：显示层要过滤掉，但合并/上推时必须留着，否则删除会丢
+    if (shares <= 0 && !keepTombstones) continue;
+    const entry = { shares: shares > 0 ? shares : 0, cost: Number(v && v.cost) || 0 };
     const stamp = Number(v && v.updatedAt);
     if (Number.isFinite(stamp) && stamp > 0) entry.updatedAt = stamp;
+    if (shares <= 0) entry.removedAt = Number(v && v.removedAt) || entry.updatedAt || Date.now();
     out[String(code)] = entry;
   }
   return out;
@@ -5798,7 +5804,8 @@ function adoptPortfolioFromServer(data, { mode = 'server' } = {}) {
       const cur = merged[code];
       if (!cur || (Number(h && h.updatedAt) || 0) >= (Number(cur.updatedAt) || 0)) merged[code] = h;
     }
-    state.fundHoldings = normalizePortfolioHoldings(merged);
+    // 墓碑要保留到上推完成之后，所以这里 keepTombstones（渲染层会自动忽略 shares<=0）
+    state.fundHoldings = normalizePortfolioHoldings(merged, { keepTombstones: true });
     state.fundWatchlist = unionPortfolioList(serverFunds, state.fundWatchlist, 'code');
     state.watchlist = unionPortfolioList(serverWatch, state.watchlist, 'secid');
   } else {
@@ -5886,6 +5893,12 @@ async function reconcilePortfolioOnBoot() {
   }
   const localNewer = Number(meta.savedAt) > serverRev + 1000;
   if (pending || meta.pending || localNewer) {
+    // 上次同步失败的快照可能比 localStorage 还新（换浏览器/清了缓存），先并回内存再合并上推
+    if (pending) {
+      if (Array.isArray(pending.funds)) state.fundWatchlist = normalizePortfolioFunds(pending.funds);
+      if (Array.isArray(pending.watchlist)) state.watchlist = normalizePortfolioWatchlist(pending.watchlist);
+      if (pending.holdings) state.fundHoldings = normalizePortfolioHoldings(pending.holdings, { keepTombstones: true });
+    }
     adoptPortfolioFromServer(data, { mode: 'merge' });
     const ok = await syncPushWatchlist();
     if (ok && (pending || localNewer)) toast('本机有未同步的持仓改动，已合并到服务端', 'ok', 4200);
