@@ -22,7 +22,7 @@ import {
   fundPnlAreaChart,
   fundPnlMonthlyBars,
   COLORS,
-} from './charts.js?v=2.9.1';
+} from './charts.js?v=2.9.2';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -40,20 +40,21 @@ import {
   esc,
   safeUrl,
   timeText,
-} from './util.js?v=2.9.1';
+} from './util.js?v=2.9.2';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.9.1';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.9.1';
+import { $, $$, toast, debounce } from './dom.js?v=2.9.2';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.9.2';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
   APP_VERSION, WATCH_KEY, ALERTS_KEY, SETTINGS_KEY, FUND_WATCH_KEY, FUND_HOLD_KEY, MONITOR_SECTORS_KEY,
+  PORTFOLIO_META_KEY, PORTFOLIO_PENDING_KEY,
   DEFAULT_WATCH, DEFAULT_FUNDS,
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.9.1';
+} from './core.js?v=2.9.2';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -61,6 +62,8 @@ import {
   getFundHolding,
   fundHoldingRow,
   fundPortfolio,
+  fundDayBasis,
+  fundDayBasisLine,
   fundDayPctCell,
   fundEstimateCell,
   renderFundSummary,
@@ -68,7 +71,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.9.1';
+} from './views/funds.js?v=2.9.2';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -78,7 +81,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.9.1';
+} from './views/market.js?v=2.9.2';
 
 
 /* =========================================================
@@ -3490,8 +3493,8 @@ function renderWatchTable() {
       const q = quote || {};
       return `<tr draggable="true" data-drag-secid="${esc(q.secid)}" data-stock-secid="${esc(q.secid)}" title="拖动行排序，点击查看详情">
         <td><span class="fund-drag-grip">⋮⋮</span><span class="t-name">${esc(cleanName(q.name))}</span><span class="t-code">${esc(q.code)}</span></td>
-        <td data-col="last" class="t-price">${stockFmt(q.price)}</td>
-        <td class="t-chg ${toneClass(q.pct)}">${pctFmt(q.pct)}</td>
+        <td data-col="last" class="t-price">${stockFmt(q.price)}${q.priceMode === 'prevClose' ? '<div class="t-sub">昨收</div>' : ''}</td>
+        <td class="t-chg ${toneClass(q.pct)}"${q.priceMode === 'prevClose' ? ' title="开盘前没有成交价，现价与涨跌幅按昨收计算"' : ''}>${pctFmt(q.pct)}</td>
         <td data-col="flow" class="t-chg ${toneClass(q.mainYi)}">${yiFmt(q.mainYi)}</td>
         <td data-col="score" class="t-price ${av && av.score >= 60 ? 'tone-up' : av && av.score < 45 ? 'tone-down' : ''}">${av ? av.score : '--'}</td>
         <td data-col="rating">${av ? `<span class="badge tone-${av.rating.tone}">${esc(av.rating.label)}</span><div class="t-sub">${esc(av.position.text)}</div>` : '--'}</td>
@@ -3678,6 +3681,7 @@ async function loadPaper(force = false) {
   if (!force && state.paper) { renderPaper(); return; }
   try {
     state.paper = await api('/api/paper', 20000);
+    state.paperAt = Date.now();
   } catch (err) {
     if ($('#paperPanel')) {
       $('#paperPanel').innerHTML = `<div class="panel-head"><h3>模拟交易</h3></div><div class="empty">加载失败：${esc(err.message)}</div>`;
@@ -3694,12 +3698,13 @@ function renderPaper() {
   if (!d) { el.innerHTML = '<div class="empty">加载模拟交易账户…</div>'; return; }
   // 0 收益用中性色，避免"平盘也标红"
   const tone = d.profit > 0 ? 'tone-up' : d.profit < 0 ? 'tone-down' : 'muted';
-  const posRows = (d.positions || []).map((p) => `<tr>
+  const priceUpdated = d.pricesAsOf ? timeText(d.pricesAsOf) : (d.updatedAt ? timeText(d.updatedAt) : '--:--:--');
+  const posRows = (d.positions || []).map((p) => `<tr data-paper-secid="${esc(p.secid)}">
     <td><span class="t-name">${esc(cleanName(p.name))}</span><span class="t-sub">${esc(p.code)}</span></td>
     <td>${nf(p.shares, 0)}</td>
     <td>${nf(p.cost, 3)}</td>
-    <td>${nf(p.price, 3)}</td>
-    <td class="${toneClass(p.pct)}">${p.pct === null ? '--' : pctFmt(p.pct)}</td>
+    <td>${nf(p.price, 3)}${p.priceMode === 'prevClose' ? '<div class="t-sub">昨收</div>' : p.priceMode === 'cost' ? '<div class="t-sub">按成本估</div>' : ''}</td>
+    <td class="${toneClass(p.pct)}"${p.priceMode === 'prevClose' ? ' title="开盘前没有成交价，按昨收估"' : ''}>${p.pct === null ? '--' : pctFmt(p.pct)}</td>
     <td>${nf(p.marketValue, 0)}</td>
     <td class="${toneClass(p.profit)}">${nf(p.profit, 0)}</td>
     <td class="${toneClass(p.profitPct)}">${p.profitPct === null ? '--' : `${nf(p.profitPct, 2)}%`}</td>
@@ -3730,10 +3735,10 @@ function renderPaper() {
       </div>
     </div>
     <div class="fund-summary-grid paper-kpis">
-      <div class="summary-card"><div class="sc-label">总资产</div><div class="sc-value">${nf(d.total, 0)}</div><div class="sc-sub">初始 ${nf(d.initial, 0)}</div></div>
+      <div class="summary-card"><div class="sc-label">总资产</div><div class="sc-value">${nf(d.total, 0)}</div><div class="sc-sub">初始 ${nf(d.initial, 0)} · 更新 ${esc(priceUpdated)}</div></div>
       <div class="summary-card"><div class="sc-label">可用资金</div><div class="sc-value">${nf(d.cash, 0)}</div><div class="sc-sub">现金</div></div>
-      <div class="summary-card"><div class="sc-label">持仓市值</div><div class="sc-value">${nf(d.marketValue, 0)}</div><div class="sc-sub">${(d.positions || []).length} 只</div></div>
-      <div class="summary-card"><div class="sc-label">累计盈亏</div><div class="sc-value ${tone}">${nf(d.profit, 0)}</div><div class="sc-sub">${nf(d.profitPct, 2)}%</div></div>
+      <div class="summary-card"><div class="sc-label">持仓市值</div><div class="sc-value">${nf(d.marketValue, 0)}</div><div class="sc-sub">${(d.positions || []).length} 只${d.anyPrevClose ? ` · ${d.prevCloseCount || 0} 只按昨收估` : ''}</div></div>
+      <div class="summary-card"><div class="sc-label">累计盈亏</div><div class="sc-value ${tone}">${nf(d.profit, 0)}</div><div class="sc-sub">${nf(d.profitPct, 2)}%${d.positionProfit === undefined ? '' : ` · 持仓浮盈 ${signedFmt(d.positionProfit, 0)}`}${d.realizedProfit === undefined ? '' : ` · 已实现 ${signedFmt(d.realizedProfit, 0)}`}</div></div>
     </div>
     <div class="table-scroll mt12"><table class="table paper-pos-table">
       <thead><tr><th>持仓</th><th>股数</th><th>成本</th><th>现价</th><th>当日</th><th>市值</th><th>浮盈</th><th>收益率</th><th></th></tr></thead>
@@ -3824,7 +3829,7 @@ function renderPaperRanking() {
   const me = state.auth && state.auth.username;
   const rows = items.map((item, i) => {
     const held = (item.positions || []).slice(0, 3)
-      .map((p) => `${esc(cleanName(p.name) || p.code)} <span class="t-sub">${nf(p.shares, 0)} 股</span>`)
+      .map((p) => `${esc(cleanName(p.name) || p.code)} <span class="t-sub">${nf(p.shares, 0)} 股${p.priceMode === 'prevClose' ? ' · 昨收' : ''}</span>`)
       .join('<br>') || '<span class="muted">空仓</span>';
     // 前 3 只看不下时，悬浮能看到这一户的全部标的（服务端最多给 10 只）
     const heldTitle = (item.positions || [])
@@ -3850,7 +3855,7 @@ function renderPaperRanking() {
         <button class="${sort === 'total' ? 'is-active' : ''}" data-rank-sort="total">按总资产</button>
         <button class="${sort === 'profit' ? 'is-active' : ''}" data-rank-sort="profit">按收益率</button>
       </div>
-      <span class="muted small">${items.length} 个账号${d.hidden ? ` · 另有 ${d.hidden} 个账号被管理员隐藏` : ''}${d.estimated ? ' · 部分持仓按成本价估算' : ''}${d.truncated ? ' · 仅显示前 200 个账号' : ''}</span>
+      <span class="muted small">${items.length} 个账号${d.estimated ? ' · 部分持仓按成本价估算' : ''}${d.truncated ? ' · 仅显示前 200 个账号' : ''}${d.updatedAt ? ` · 截至 ${esc(timeText(d.updatedAt))}` : ''}</span>
     </div>
     <div class="table-scroll tall-table mt8"><table class="table paper-rank-table">
       <thead><tr><th>排名</th><th>用户</th><th>总资产</th><th>累计盈亏</th><th>收益率</th><th>持仓（前 3）</th><th>最近操作</th></tr></thead>
@@ -4825,7 +4830,9 @@ function pnlKpi(label, pnl, pct, sub) {
   const tone = pnl === null || pnl === undefined ? '' : toneClass(pnl);
   const main = pnl === null || pnl === undefined ? '--' : signedFmt(pnl, 2);
   const percent = isNum(pct) ? `${pct >= 0 ? '+' : ''}${Number(pct).toFixed(2)}%` : '';
-  return `<div class="summary-card"><div class="sc-label">${esc(label)}</div><div class="sc-value ${tone}">${main}</div><div class="sc-sub">${esc(percent || sub || '')}</div></div>`;
+  // v2.9.2：百分比与口径说明同时显示（例如「+0.83% · 按当日估值」）
+  const line = [percent, sub].filter(Boolean).join(' · ');
+  return `<div class="summary-card"><div class="sc-label">${esc(label)}</div><div class="sc-value ${tone}">${main}</div><div class="sc-sub">${esc(line)}</div></div>`;
 }
 
 function renderFundPnl() {
@@ -4840,7 +4847,7 @@ function renderFundPnl() {
     if ($('#fundPnlChart')) $('#fundPnlChart').innerHTML = '<div class="empty small">先在下方「我的自选基金」表格点「仓」录入份额与成本</div>';
     if ($('#fundPnlBars')) $('#fundPnlBars').innerHTML = '<div class="empty small">还没有持仓，暂无月度盈亏</div>';
     if ($('#fundPnlChartMeta')) $('#fundPnlChartMeta').textContent = '';
-    if (note) note.textContent = '盈亏统计按已录入份额与成本计算；份额与成本只保存在本机浏览器，不上传。';
+    if (note) note.textContent = '盈亏统计按已录入份额与成本计算；份额与成本保存在你的账号里（服务端），换设备自动恢复。';
     return;
   }
   const calc = computeFundPnl(state.fundPnl);
@@ -4859,14 +4866,18 @@ function renderFundPnl() {
   // v2.9.0：今日盈亏 / 累计收益 / 组合市值 直接取「我的持仓」同一个 fundPortfolio()，
   // 两处面板从此逐分一致（此前盈亏面板用已公布净值序列，场外 T+1 会差一天）。
   const pf = fundPortfolio();
+  const basis = fundDayBasis(held);
   kpis.innerHTML = [
-    pnlKpi('今日盈亏', pf.dayProfit, pf.dayPct, '当日涨跌还没出来，暂不计算'),
+    pnlKpi('今日盈亏', pf.dayProfit, pf.dayPct, pf.dayProfit === null ? `${basis.label} · 今日数据未出` : `按${basis.label.replace(/^按/, '')}口径`),
     pnlKpi('近1月盈亏', calc.m1Pnl, calc.m1Pct),
     pnlKpi('今年至今', calc.ytdPnl, calc.ytdPct),
     pnlKpi('近1年盈亏', calc.y1Pnl, calc.y1Pct),
     `<div class="summary-card"><div class="sc-label">累计收益</div><div class="sc-value ${toneClass(pf.profit)}">${pf.profit === null ? '--' : signedFmt(pf.profit, 2)}</div><div class="sc-sub ${toneClass(pf.profitPct)}">${isNum(pf.profitPct) ? `${pf.profitPct >= 0 ? '+' : ''}${Number(pf.profitPct).toFixed(2)}%` : '需录入成本净值'}</div></div>`,
     `<div class="summary-card"><div class="sc-label">组合市值</div><div class="sc-value">${nf(pf.marketValue, 2)}</div><div class="sc-sub">${pf.counted} 只 · 截至 ${esc(calc.asOf)}</div></div>`,
   ].join('');
+  // v2.9.2：口径标签与「我的持仓」同一份文案（前日净值 / 当日估值 / 15:00 估值终值 / 今日净值）
+  const basisLine = $('#fundPnlBasis');
+  if (basisLine) basisLine.innerHTML = fundDayBasisLine(basis);
   fundPnlAreaChart($('#fundPnlChart'), chartRows, { cost: pf.costValue > 0 ? pf.costValue : null });
   fundPnlMonthlyBars($('#fundPnlBars'), calc.monthly);
   if ($('#fundPnlChartMeta')) $('#fundPnlChartMeta').textContent = `${chartRows[0].d} → ${calc.asOf}`;
@@ -5599,9 +5610,20 @@ function renderStockFundModal(data, fallbackName) {
 function saveFundHolding(code, shares, cost) {
   const key = String(code);
   if (!state.fundHoldings || typeof state.fundHoldings !== 'object') state.fundHoldings = {};
-  if (!shares || shares <= 0) delete state.fundHoldings[key];
-  else state.fundHoldings[key] = { shares: Number(shares), cost: Number(cost) || 0 };
+  const now = Date.now();
+  if (!shares || shares <= 0) {
+    // v2.9.2：删除写成「墓碑」（shares=0 + 时间戳）而不是直接消失，
+    // 否则另一台设备合并时会把删掉的条目又带回来。渲染层会忽略 shares<=0 的条目。
+    state.fundHoldings[key] = { shares: 0, cost: 0, updatedAt: now };
+  } else {
+    state.fundHoldings[key] = { shares: Number(shares), cost: Number(cost) || 0, updatedAt: now };
+  }
   saveJSON(FUND_HOLD_KEY, state.fundHoldings);
+  const meta = portfolioMeta();
+  meta.savedAt = now;
+  meta.pending = true; // 服务端确认前先标成「未同步」
+  savePortfolioMeta();
+  renderFundSyncState();
   schedulePushSync();
   renderFundHoldSummary();
   renderFundWatchTable();
@@ -5661,7 +5683,10 @@ function normalizePortfolioHoldings(holdings) {
   for (const [code, v] of Object.entries(holdings)) {
     const shares = Number(v && v.shares);
     if (!code || !Number.isFinite(shares) || shares <= 0) continue;
-    out[String(code)] = { shares, cost: Number(v && v.cost) || 0 };
+    const entry = { shares, cost: Number(v && v.cost) || 0 };
+    const stamp = Number(v && v.updatedAt);
+    if (Number.isFinite(stamp) && stamp > 0) entry.updatedAt = stamp;
+    out[String(code)] = entry;
   }
   return out;
 }
@@ -5676,30 +5701,76 @@ function normalizePortfolioWatchlist(list) {
     .filter((w) => w.secid);
 }
 
-async function adoptServerPortfolio({ silent = false } = {}) {
-  const data = await api('/api/portfolio', 20000);
-  const funds = normalizePortfolioFunds(data && data.funds);
-  const holdings = normalizePortfolioHoldings(data && data.holdings);
-  const watchlist = normalizePortfolioWatchlist(data && data.watchlist);
-  if (!funds.length && !watchlist.length && !Object.keys(holdings).length) {
-    if (!silent) toast('服务端还没有这个账号的数据：先在任意设备上操作一次，数据会自动同步上去', 'warn', 4200);
-    return false;
+/* ---------------------------------------------------------
+   持仓同步状态（v2.9.2）
+   ---------------------------------------------------------
+   背景：2026-11-19 在另一台设备/线上改过的持仓，本机完全不知道；
+   同步失败又是静默吞掉的，用户只能看到「昨天改的今天回滚了」。
+   现在：服务端是唯一真源，本机只做缓存 + 未同步兜底，并且把
+   「哪台服务器、最后保存于何时、有没有未同步改动」直接显示出来。
+   --------------------------------------------------------- */
+function portfolioMeta() {
+  if (!state.portfolioMeta || typeof state.portfolioMeta !== 'object') {
+    state.portfolioMeta = { rev: 0, savedAt: 0, pending: false, serverLabel: '' };
   }
-  if (watchlist.length) {
-    state.watchlist = watchlist;
-    saveJSON(WATCH_KEY, watchlist);
-    renderWatchTable();
-    renderDashWatch();
+  return state.portfolioMeta;
+}
+
+function loadPortfolioMetaFromStore() {
+  const raw = loadJSON(PORTFOLIO_META_KEY, null);
+  const m = raw && typeof raw === 'object' ? raw : {};
+  state.portfolioMeta = {
+    rev: Number(m.rev) || 0,
+    savedAt: Number(m.savedAt) || 0,
+    pending: Boolean(m.pending),
+    serverLabel: String(m.serverLabel || ''),
+  };
+  return state.portfolioMeta;
+}
+
+function savePortfolioMeta() {
+  saveJSON(PORTFOLIO_META_KEY, portfolioMeta());
+}
+
+function portfolioServerLabel() {
+  return String(location.host || '本机');
+}
+
+function readPortfolioPending() {
+  const raw = loadJSON(PORTFOLIO_PENDING_KEY, null);
+  return raw && typeof raw === 'object' ? raw : null;
+}
+
+function writePortfolioPending(snap) {
+  if (snap) saveJSON(PORTFOLIO_PENDING_KEY, snap);
+  else {
+    try { localStorage.removeItem(scopedKey(PORTFOLIO_PENDING_KEY)); } catch { /* 忽略 */ }
   }
-  if (funds.length) {
-    state.fundWatchlist = funds;
-    saveJSON(FUND_WATCH_KEY, funds);
+}
+
+function fmtPortfolioTime(ts) {
+  const n = Number(ts) || 0;
+  if (!n) return '--';
+  return new Date(n).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+/** 自选列表求并集（服务端顺序在前，本机独有的追加在后） */
+function unionPortfolioList(a, b, key) {
+  const out = [];
+  const seen = new Set();
+  for (const item of [...(a || []), ...(b || [])]) {
+    const k = String((item && item[key]) || '');
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(item);
   }
-  if (Object.keys(holdings).length) {
-    state.fundHoldings = holdings;
-    saveJSON(FUND_HOLD_KEY, holdings);
-  }
+  return out;
+}
+
+function refreshFundPanelsAfterPortfolioChange() {
   state.fundWatchData = null;
+  renderWatchTable();
+  renderDashWatch();
   renderFundWatchSummary();
   renderFundWatchTable();
   renderFundHoldSummary();
@@ -5707,26 +5778,125 @@ async function adoptServerPortfolio({ silent = false } = {}) {
   loadFundWatch();
   loadFundPnl(true);
   loadWatchData(true).catch(() => {});
+}
+
+/**
+ * 把服务端返回的持仓应用到本机。
+ * mode='server'：服务端为准（普通启动）
+ * mode='merge'：保留本机更新过的持仓条目与自选（本机有未同步改动时）
+ */
+function adoptPortfolioFromServer(data, { mode = 'server' } = {}) {
+  const serverFunds = normalizePortfolioFunds(data && data.funds);
+  const serverHoldings = normalizePortfolioHoldings(data && data.holdings);
+  const serverWatch = normalizePortfolioWatchlist(data && data.watchlist);
+  const rev = Number((data && (data.rev || data.updatedAt)) || 0) || Date.now();
+  if (mode === 'merge') {
+    // 持仓：服务端条目按 rev 当时间戳，与本机条目比 updatedAt，取更新的那份
+    const merged = {};
+    for (const [code, h] of Object.entries(serverHoldings)) merged[code] = { ...h, updatedAt: rev };
+    for (const [code, h] of Object.entries(state.fundHoldings || {})) {
+      const cur = merged[code];
+      if (!cur || (Number(h && h.updatedAt) || 0) >= (Number(cur.updatedAt) || 0)) merged[code] = h;
+    }
+    state.fundHoldings = normalizePortfolioHoldings(merged);
+    state.fundWatchlist = unionPortfolioList(serverFunds, state.fundWatchlist, 'code');
+    state.watchlist = unionPortfolioList(serverWatch, state.watchlist, 'secid');
+  } else {
+    state.fundWatchlist = serverFunds;
+    state.fundHoldings = serverHoldings;
+    state.watchlist = serverWatch;
+  }
+  saveJSON(FUND_WATCH_KEY, state.fundWatchlist);
+  saveJSON(FUND_HOLD_KEY, state.fundHoldings);
+  saveJSON(WATCH_KEY, state.watchlist);
+  const meta = portfolioMeta();
+  meta.rev = rev;
+  meta.savedAt = Date.now();
+  meta.pending = false;
+  meta.serverLabel = portfolioServerLabel();
+  savePortfolioMeta();
+  writePortfolioPending(null);
+  renderFundSyncState();
+  refreshFundPanelsAfterPortfolioChange();
+}
+
+/** 「已同步 21:03:12 · 数据源 127.0.0.1:8090」/「未同步」标识（我的持仓面板） */
+function renderFundSyncState(errMessage = '') {
+  const el = $('#fundSyncState');
+  if (!el) return;
+  const meta = portfolioMeta();
+  const at = meta.savedAt ? new Date(meta.savedAt).toLocaleTimeString('zh-CN', { hour12: false }) : '--';
+  if (meta.pending) {
+    el.className = 'badge tone-down';
+    el.textContent = `本机已保存 ${at} · 未同步`;
+    el.title = `同步失败${errMessage ? `：${errMessage}` : ''}；改动已留在本机，点这里立即重试`;
+    el.style.cursor = 'pointer';
+    el.onclick = () => syncPushWatchlist();
+  } else {
+    el.className = 'badge';
+    el.textContent = `已同步 ${at} · 数据源 ${meta.serverLabel || portfolioServerLabel()}`;
+    el.title = '持仓以服务端为准：换设备/换浏览器打开会自动恢复；线上与本机是两套数据，可在后台做「持仓数据互通」';
+    el.style.cursor = '';
+    el.onclick = null;
+  }
+}
+
+/** 手动「从服务端恢复」：本机有未同步改动时二次确认 */
+async function adoptServerPortfolio({ silent = false } = {}) {
+  const data = await api('/api/portfolio', 20000);
+  const hasData = (data && data.funds && data.funds.length)
+    || (data && data.holdings && Object.keys(data.holdings).length)
+    || (data && data.watchlist && data.watchlist.length);
+  if (!hasData) {
+    if (!silent) toast('服务端还没有这个账号的数据：先在本机操作一次，数据会自动同步上去', 'warn', 4200);
+    return false;
+  }
+  adoptPortfolioFromServer(data, { mode: 'server' });
   if (!silent) {
-    toast(
-      `已同步：${watchlist.length} 只自选股票 · ${funds.length} 只自选基金 · ${Object.keys(holdings).length} 只持仓`,
-      'ok',
-      3600,
-    );
+    toast(`已从服务端恢复（保存于 ${fmtPortfolioTime(Number(data.rev || data.updatedAt) || 0)}）`, 'ok', 3600);
   }
   return true;
 }
 
-async function adoptServerPortfolioIfNewDevice() {
+/**
+ * 启动时对齐（替代原来的「只有新设备才拉服务端」）：
+ *  - 服务端没有数据 → 把本机推上去
+ *  - 本机有未同步改动 / 本机保存时间比服务端新 → 合并后上推
+ *  - 否则以服务端为准（昨天在另一台设备/线上改的持仓会在这里被拉回来）
+ */
+async function reconcilePortfolioOnBoot() {
+  loadPortfolioMetaFromStore();
+  let data = null;
   try {
-    // 「新设备」= 本机从来没保存过这个账号的自选（股票或基金），不是空列表而是压根没有这个键。
-    if (
-      localStorage.getItem(scopedKey(FUND_WATCH_KEY)) !== null ||
-      localStorage.getItem(scopedKey(WATCH_KEY)) !== null
-    ) return;
-    const ok = await adoptServerPortfolio({ silent: true });
-    if (ok) toast('已从服务端载入自选基金与持仓', 'ok', 3600);
-  } catch { /* 拉取失败就继续用默认自选 */ }
+    data = await api('/api/portfolio', 20000);
+  } catch {
+    // 服务没起来（例如刚开机还没启动）：先用本机缓存，失败不阻塞页面
+    renderFundSyncState('读取服务端失败');
+    return false;
+  }
+  const meta = portfolioMeta();
+  const serverRev = Number((data && (data.rev || data.updatedAt)) || 0);
+  const serverHas = (data.funds || []).length || Object.keys(data.holdings || {}).length || (data.watchlist || []).length;
+  const localHas = state.fundWatchlist.length || Object.keys(state.fundHoldings || {}).length || state.watchlist.length;
+  const pending = readPortfolioPending();
+  if (!serverHas) {
+    if (localHas) await syncPushWatchlist();
+    else renderFundSyncState();
+    return true;
+  }
+  const localNewer = Number(meta.savedAt) > serverRev + 1000;
+  if (pending || meta.pending || localNewer) {
+    adoptPortfolioFromServer(data, { mode: 'merge' });
+    const ok = await syncPushWatchlist();
+    if (ok && (pending || localNewer)) toast('本机有未同步的持仓改动，已合并到服务端', 'ok', 4200);
+    return true;
+  }
+  const serverNewer = !meta.rev || Math.abs(serverRev - Number(meta.rev)) > 1;
+  adoptPortfolioFromServer(data, { mode: 'server' });
+  if (serverNewer && meta.rev) {
+    toast(`已从服务端载入最新持仓（保存于 ${fmtPortfolioTime(serverRev)}）`, 'ok', 4200);
+  }
+  return true;
 }
 
 
@@ -6631,22 +6801,76 @@ async function openSourceStatus() {
 
 /* ---------------------------------------------------------
    自选/持仓同步到服务端（推送配置与手机访问地址已移到后台管理 /admin.html）
+   v2.9.2：带 baseRev 做冲突检测；失败不再静默——写 pending、显示「未同步」、自动重试三次。
    --------------------------------------------------------- */
 let pushSyncTimer = null;
+let pushSyncRetry = 0;
+
 // 自选股票 + 自选基金 + 持仓统一同步到服务端（按账号隔离存储，换设备可恢复）。
 async function syncPushWatchlist() {
+  const meta = portfolioMeta();
+  const payload = {
+    watchlist: state.watchlist.map((w) => ({ secid: w.secid, code: w.code, name: w.name })),
+    funds: state.fundWatchlist.map((f) => ({ code: f.code, name: f.name, type: f.type })),
+    holdings: state.fundHoldings || {},
+    source: 'web',
+    ...(meta.rev ? { baseRev: meta.rev } : {}),
+  };
   try {
-    await apiPost('/api/portfolio', {
-      watchlist: state.watchlist.map((w) => ({ secid: w.secid, code: w.code, name: w.name })),
-      funds: state.fundWatchlist.map((f) => ({ code: f.code, name: f.name, type: f.type })),
+    const res = await apiPost('/api/portfolio', payload, 20000);
+    if (res && res.conflict) {
+      // 另一台设备刚改过自选：以服务端为底 + 保留本机条目，再用新 rev 重推一次
+      const server = res.server ? { ...res.server, rev: res.rev } : await api('/api/portfolio', 20000);
+      adoptPortfolioFromServer(server, { mode: 'merge' });
+      portfolioMeta().pending = true;
+      savePortfolioMeta();
+      if (pushSyncRetry < 1) {
+        pushSyncRetry += 1;
+        const ok = await syncPushWatchlist();
+        pushSyncRetry = 0;
+        if (ok) return true;
+      }
+      toast('另一台设备刚改过自选，已载入最新数据', 'warn', 4200);
+      return false;
+    }
+    const m = portfolioMeta();
+    m.rev = Number(res && res.rev) || Date.now();
+    m.savedAt = Date.now();
+    m.pending = false;
+    m.serverLabel = portfolioServerLabel();
+    savePortfolioMeta();
+    writePortfolioPending(null);
+    pushSyncRetry = 0;
+    renderFundSyncState();
+    return true;
+  } catch (err) {
+    const m = portfolioMeta();
+    m.pending = true;
+    m.savedAt = m.savedAt || Date.now();
+    savePortfolioMeta();
+    writePortfolioPending({
+      at: Date.now(),
+      funds: state.fundWatchlist,
       holdings: state.fundHoldings || {},
-    }, 20000);
-  } catch { /* 同步失败不打断主流程 */ }
+      watchlist: state.watchlist,
+    });
+    renderFundSyncState(err && err.message);
+    if (pushSyncRetry < 3) {
+      const wait = [5000, 15000, 45000][pushSyncRetry] || 45000;
+      pushSyncRetry += 1;
+      clearTimeout(pushSyncTimer);
+      pushSyncTimer = setTimeout(() => { syncPushWatchlist(); }, wait);
+    } else {
+      pushSyncRetry = 0;
+      toast(`持仓同步失败：${err.message}（已保存在本机，点面板上的「未同步」可重试）`, 'err', 6000);
+    }
+    return false;
+  }
 }
 
 function schedulePushSync() {
   clearTimeout(pushSyncTimer);
-  pushSyncTimer = setTimeout(() => { syncPushWatchlist(); }, 1500);
+  pushSyncTimer = setTimeout(() => { syncPushWatchlist(); }, 800);
 }
 
 // 顶栏账号菜单：账号信息、密码、数据源、后台、履历与退出登录（退出按钮从顶栏移入这里）。
@@ -7635,7 +7859,11 @@ async function refreshFast() {
     await loadOverview();
     await loadWatchData(true);
     if (state.view === 'fundwatch') loadFundWatch();
-    if (state.view === 'stockwatch' && state.paperRankOpen) loadPaperRanking();
+    // v2.9.2：模拟盘账户也跟 15 秒刷新走（此前只有切页/手动刷新才拉，盘中看着「上面的金额不会变」）
+    if (state.view === 'stockwatch') {
+      if (Date.now() - (state.paperAt || 0) > 10000) loadPaper(true);
+      if (state.paperRankOpen) loadPaperRanking(true);
+    }
     if (state.view === 'china') {
       await loadChinaStock();
       loadChinaDistribution();
@@ -8089,15 +8317,21 @@ function bindEvents() {
   });
   $('#fundSync') && $('#fundSync').addEventListener('click', async (e) => {
     const btn = e.currentTarget;
+    const meta = portfolioMeta();
+    if (meta.pending) {
+      const ok = window.confirm('本机还有未同步的持仓改动。\n「从服务端恢复」会用服务端那份覆盖本机未同步的改动（服务端已保存的仓位不会丢）。\n\n继续？');
+      if (!ok) return;
+    }
     btn.disabled = true;
-    btn.textContent = '同步中…';
+    btn.textContent = '读取中…';
     try {
       await adoptServerPortfolio({ silent: false });
+      renderFundSyncState();
     } catch (err) {
-      toast(`同步失败：${err.message}`, 'err');
+      toast(`恢复失败：${err.message}`, 'err');
     } finally {
       btn.disabled = false;
-      btn.textContent = '同步到本机';
+      btn.textContent = '从服务端恢复';
     }
   });
 
@@ -8552,7 +8786,10 @@ async function init() {
   setTimeout(loadMiniSeries, 1600);
   // v2.8.0：?fundview=watch 已迁移成「自选基金」板块，其余 fundview 取值仍留在基金页
   if (['flow', 'stock', 'sector', 'bond', 'openflow', 'proxy'].includes(params.get('fundview'))) state.fundView = params.get('fundview');
-  await adoptServerPortfolioIfNewDevice();
+  // v2.9.2：每次启动都和服务端对齐一次（不再只在「新设备」才拉），
+  // 这样在另一台设备/线上改过的持仓会被拉回来，本机未同步的改动也会被推上去。
+  await reconcilePortfolioOnBoot();
+  renderFundSyncState();
   loadView(initial);
 
   if (params.get('stock')) setTimeout(() => openStock(params.get('stock')), 1800);

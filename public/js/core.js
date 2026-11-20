@@ -2,7 +2,7 @@
    版本号、本地存储键、账号命名空间、按账号读写的 localStorage、全局 state。
    视图模块可以 import { state } 与这些读写函数，不再依赖 app.js。 */
 
-const APP_VERSION = '2.9.1';
+const APP_VERSION = '2.9.2';
 
 const WATCH_KEY = 'gp.watchlist.v1';
 const ALERTS_KEY = 'gp.alerts.v1';
@@ -10,6 +10,9 @@ const SETTINGS_KEY = 'gp.settings.v1';
 const FUND_WATCH_KEY = 'gp.fundWatchlist.v1';
 const FUND_HOLD_KEY = 'gp.fundHoldings.v1';
 const MONITOR_SECTORS_KEY = 'gp.monitorSectors.v1';
+// v2.9.2：持仓同步元信息（服务端 rev / 本机最后保存时间 / 待同步标记），按账号命名空间存放
+const PORTFOLIO_META_KEY = 'gp.portfolioMeta.v1';
+const PORTFOLIO_PENDING_KEY = 'gp.portfolioPending.v1';
 
 const DEFAULT_WATCH = [
   { secid: '1.600519', code: '600519', name: '贵州茅台' },
@@ -85,6 +88,8 @@ const state = {
   alerts: [],
   fundWatchlist: [],
   fundHoldings: {},
+  // v2.9.2：持仓与服务端的同步状态（rev / 本机保存时间 / 是否有未同步改动）
+  portfolioMeta: { rev: 0, savedAt: 0, pending: false, serverLabel: '' },
   fundWatchData: null,
   watchFundSort: 'manual',
   fundFlow: null,
@@ -316,6 +321,7 @@ function normalizeAlerts(list, seq = 0) {
 export {
   APP_VERSION,
   WATCH_KEY, ALERTS_KEY, SETTINGS_KEY, FUND_WATCH_KEY, FUND_HOLD_KEY, MONITOR_SECTORS_KEY,
+  PORTFOLIO_META_KEY, PORTFOLIO_PENDING_KEY,
   DEFAULT_WATCH, DEFAULT_FUNDS,
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,

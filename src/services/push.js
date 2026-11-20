@@ -1151,7 +1151,9 @@ async function handlePushApi(req, res, url) {
     requireAdmin(req);
     const body = req.body || {};
     const patch = {};
-    for (const key of ['enabled', 'channel', 'token', 'webhook', 'weekdaysOnly', 'funds', 'holdings']) {
+    // v2.9.2：funds / holdings 属于账号数据，统一走 /api/portfolio（条目级合并 + 审计），
+    // 这个接口只改推送渠道相关字段，避免后台保存推送设置时把持仓整份覆盖。
+    for (const key of ['enabled', 'channel', 'token', 'webhook', 'weekdaysOnly']) {
       if (body[key] !== undefined) patch[key] = body[key];
     }
     if (body.time && isValidClockTime(body.time)) patch.time = String(body.time).slice(0, 5);
@@ -1186,9 +1188,13 @@ async function handlePushApi(req, res, url) {
     const cleaned = sanitizePortfolio(body);
     const current = loadPortfolio(user);
     const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+    // v2.9.2：持仓按条目时间戳合并，旧客户端整份提交也不会把新改动冲掉。
+    const holdings = has('holdings')
+      ? store.mergePortfolioHoldings(current.holdings || {}, cleaned.holdings, { stampMissing: true })
+      : (current.holdings || {});
     savePortfolio(user, {
       funds: has('funds') ? cleaned.funds : current.funds,
-      holdings: has('holdings') ? cleaned.holdings : current.holdings,
+      holdings,
       watchlist: current.watchlist,
     });
     return { ok: true, funds: (has('funds') ? cleaned.funds : current.funds).length };

@@ -13,7 +13,7 @@
   <meta name="description" content="寰球智投：A股、全球指数、期货、黄金白银实时行情，板块资金流向与规则化策略终端。">
   <title>寰球智投 · 全球行情与智能策略终端</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.9.1">
+  <link rel="stylesheet" href="/css/app.css?v=2.9.2">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icon.svg">
 </head>
@@ -1303,6 +1303,7 @@
             <div class="eyebrow">PROFIT &amp; LOSS</div>
             <h3>盈亏统计 · 日 / 月 / 年</h3>
             <span class="muted small">与下方「我的持仓」同一口径：今日按实时 / 估算净值，区间按净值序列（不含申赎费）</span>
+            <div class="muted small" id="fundPnlBasis" style="margin-top:4px">口径：9:00 前（含开盘前）按前日净值 · 9:00–15:00 按当日估值（重仓/ETF 穿透） · 15:00 后估值冻结 · 今日净值公布后按今日净值</div>
           </div>
           <div class="seg" id="fundPnlRangeSeg">
             <button class="is-active" data-pnl-range="year">近1年</button>
@@ -1329,7 +1330,9 @@
           <div>
             <div class="eyebrow">MY PORTFOLIO</div>
             <h3>我的持仓 · 收益与结构</h3>
-            <span class="muted small">录入份额与成本净值后自动计算持有收益、当日盈亏与仓位占比（仅存本机）</span>
+            <span class="muted small">录入份额与成本净值后自动计算持有收益、今日盈亏与仓位占比（保存在你的账号里，换设备自动恢复）</span>
+            <div class="muted small" id="fundHoldBasis" style="margin-top:4px">口径：9:00 前（含开盘前）按前日净值 · 9:00–15:00 按当日估值（重仓/ETF 穿透） · 15:00 后估值冻结 · 今日净值公布后按今日净值</div>
+            <div style="margin-top:6px"><span class="badge" id="fundSyncState" title="持仓以服务端为准">同步状态读取中…</span></div>
           </div>
           <span class="badge">份额 + 成本</span>
         </div>
@@ -1341,7 +1344,7 @@
         <div class="panel-head">
           <div><h3>我的自选基金</h3><span class="muted small" id="fundWatchCount">0 只</span><span class="muted small" style="margin-left:10px">拖动行或点击 ↑↓ 排序（手机长按行拖动）</span></div>
           <div class="table-tools"><select id="watchFundSort" title="自选基金排序"><option value="manual">手动顺序</option><option value="day">按日涨跌</option><option value="name">按名称</option></select>
-            <button class="text-link" id="fundSync" title="从服务端拉取电脑上录入的自选基金与持仓（手机换设备时用）">同步到本机</button>
+            <button class="text-link" id="fundSync" title="以服务端为准恢复自选基金与持仓（本机有未同步改动时会先确认）">从服务端恢复</button>
             <button class="text-link" id="fundExport">导出 JSON</button>
           </div>
         </div>
@@ -1392,7 +1395,7 @@
   <div id="toastRoot" class="toasts" aria-live="polite"></div>
 
   <script src="/vendor/echarts.min.js"></script>
-  <script type="module" src="/js/app.js?v=2.9.1"></script>
+  <script type="module" src="/js/app.js?v=2.9.2"></script>
   <script>
     // PWA：注册「网络优先」的 Service Worker（发版后刷新即拿到新版本，离线时回退缓存壳）
     // file:// 打开时跳过，避免在本地直接双击 HTML 时报错。

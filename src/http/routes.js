@@ -46,6 +46,12 @@ function createHttpRoutes(deps) {
     paperTrade,
     resetPaper,
     savePaperConfig,
+    // v2.9.2：持仓多端合并 + 写入审计/快照
+    portfolioRevOf,
+    recordPortfolioWrite,
+    listPortfolioHistory,
+    restorePortfolioSnapshot,
+    transferPortfolio,
     fetchQuoteList,
     flushStats,
     fs,
@@ -418,9 +424,66 @@ async function handleAdmin(req, res, url) {
     return { ok: true, id: target.id, username: target.username, initial: res.initial };
   }
 
+  /* ---------------------------------------------------------
+     持仓保存历史与恢复（v2.9.2）
+     - GET  /api/admin/portfolio/history?userId=&limit=  最近 N 次写入快照
+     - POST /api/admin/portfolio/restore                 恢复到某一版快照
+     - POST /api/admin/portfolio/transfer                本机 ⇄ NAS 数据互通（只看超级管理员）
+     --------------------------------------------------------- */
+  if (p === '/api/admin/portfolio/history' && req.method === 'GET') {
+    const id = String(q.get('userId') || '').trim();
+    if (!id) throw Object.assign(new Error('缺少 userId'), { status: 400 });
+    const target = loadUsers().users.find((u) => u.id === id);
+    if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
+    const limit = Math.max(1, Math.min(50, Number(q.get('limit') || 20)));
+    const items = listPortfolioHistory(target.id, limit);
+    return {
+      ok: true,
+      user: { id: target.id, username: target.username },
+      items,
+      rev: portfolioRevOf(target),
+      // 当前这份数据最后一次保存时间（与前端「数据来源」那行同一个口径）
+      updatedAt: portfolioRevOf(target) || null,
+    };
+  }
+  if (p === '/api/admin/portfolio/restore' && req.method === 'POST') {
+    const body = req.body || {};
+    const id = String(body.userId || '').trim();
+    if (!id) throw Object.assign(new Error('缺少 userId'), { status: 400 });
+    // 恢复会覆盖该账号的持仓，但操作本身与「重置模拟盘 / 重置密码」同级：管理员即可
+    const target = loadUsers().users.find((u) => u.id === id);
+    if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
+    const out = restorePortfolioSnapshot({ user: target, rev: body.rev, ip: clientIp(req) });
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'portfolio',
+      reason: `恢复 ${target.username} 的持仓到快照 ${out.restoredFrom}`,
+    });
+    return out;
+  }
+  if (p === '/api/admin/portfolio/transfer' && req.method === 'POST') {
+    if (!isSuperUser(actor)) throw Object.assign(new Error('需要超级管理员权限'), { status: 403 });
+    const body = req.body || {};
+    const out = await transferPortfolio({
+      direction: body.direction === 'pull' ? 'pull' : 'push',
+      userId: String(body.userId || '').trim(),
+      mode: body.mode === 'replace' ? 'replace' : 'merge',
+      dryRun: body.dryRun === true,
+      actor,
+      ip: clientIp(req),
+    });
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'portfolio',
+      reason: `持仓${out.direction === 'pull' ? '从 NAS 拉取到本机' : '从本机推送到 NAS'}${out.dryRun ? '（预检）' : ''}：${out.message || ''}`,
+    });
+    return out;
+  }
+
   // 概览：今日汇总 + 最近 N 天曲线 + 当前在线 + 最近登录事件
-  if (p === '/api/admin/overview' && req.method === 'GET') {
-    const days = Math.max(1, Math.min(30, Number(q.get('days') || 14)));
+  if (p === '/api/admin/overview' && req.method === 'GET') {    const days = Math.max(1, Math.min(30, Number(q.get('days') || 14)));
     const keys = lastDateKeys(days);
     const series = keys.map((date) => {
       const day = statsStore.days[date] || {};
@@ -789,25 +852,17 @@ async function handleApi(req, res, url) {
   if (p === '/api/portfolio' && req.method === 'GET') {
     const user = currentUser(req);
     const portfolio = loadPortfolio(user);
-    let updatedAt = null;
-    try {
-      if (STORE_MODE === 'sqlite') {
-        updatedAt = fs.statSync(dataStore.DB_FILE).mtimeMs;
-      } else {
-        updatedAt = user && user.primary
-          ? fs.statSync(PUSH_FILE).mtimeMs
-          : fs.statSync(userDataFile(user.id)).mtimeMs;
-      }
-    } catch {
-      updatedAt = null;
-    }
+    const updatedAt = portfolioRevOf(user) || null;
     return {
       ok: true,
       user: user ? publicUser(user) : null,
       funds: portfolio.funds,
-      holdings: portfolio.holdings,
+      // v2.9.2：对外只给还持有的条目（删除墓碑与内部时间戳不外泄）
+      holdings: dataStore.publicHoldings(portfolio.holdings),
       watchlist: portfolio.watchlist,
       updatedAt,
+      // 客户端拿 rev 做「基于哪一版提交」，用来发现两个标签页/两台设备同时改
+      rev: updatedAt,
     };
   }
   if (p === '/api/portfolio' && req.method === 'POST') {
@@ -817,17 +872,59 @@ async function handleApi(req, res, url) {
     const cleaned = sanitizePortfolio(body);
     const current = loadPortfolio(user);
     const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
-    // 只更新前端明确传上来的字段，避免某个客户端少传 watchlist 就把服务器数据清空。
-    savePortfolio(user, {
-      funds: has('funds') ? cleaned.funds : current.funds,
-      holdings: has('holdings') ? cleaned.holdings : current.holdings,
-      watchlist: has('watchlist') ? cleaned.watchlist : current.watchlist,
+    const curRev = portfolioRevOf(user) || 0;
+    const baseRev = body.baseRev === undefined || body.baseRev === null || body.baseRev === ''
+      ? null
+      : Number(body.baseRev);
+    // v2.9.2：自选基金 / 自选股是整份列表，冲突就用 409 让前端先对齐再重试，
+    // 避免「另一台设备刚加的自选被这一台整份覆盖」。
+    if (Number.isFinite(baseRev) && baseRev > 0 && curRev > 0 && Math.abs(baseRev - curRev) > 1) {
+      const sameFunds = !has('funds') || JSON.stringify(cleaned.funds) === JSON.stringify(current.funds || []);
+      const sameWatch = !has('watchlist') || JSON.stringify(cleaned.watchlist) === JSON.stringify(current.watchlist || []);
+      if (!sameFunds || !sameWatch) {
+        return {
+          ok: false,
+          conflict: true,
+          error: '数据已在其它设备更新，请先同步再试',
+          rev: curRev,
+          server: {
+            funds: current.funds || [],
+            holdings: dataStore.publicHoldings(current.holdings || {}),
+            watchlist: current.watchlist || [],
+          },
+        };
+      }
+    }
+    // 持仓：条目级合并（按 updatedAt 取新、墓碑删旧），不再是「整份覆盖」
+    const holdings = has('holdings')
+      ? dataStore.mergePortfolioHoldings(current.holdings || {}, cleaned.holdings, {
+        stampMissing: Number.isFinite(baseRev) && baseRev > 0,
+      })
+      : (current.holdings || {});
+    const next = {
+      funds: has('funds') ? cleaned.funds : (current.funds || []),
+      holdings,
+      watchlist: has('watchlist') ? cleaned.watchlist : (current.watchlist || []),
+    };
+    savePortfolio(user, next);
+    const saved = loadPortfolio(user);
+    const rev = portfolioRevOf(user) || 0;
+    recordPortfolioWrite({
+      user,
+      ip: clientIp(req),
+      action: body.action === 'sync' ? 'sync' : 'save',
+      before: current,
+      after: saved,
+      rev,
+      source: String(body.source || 'web').slice(0, 40),
     });
     return {
       ok: true,
-      funds: has('funds') ? cleaned.funds.length : current.funds.length,
-      holdings: Object.keys(has('holdings') ? cleaned.holdings : current.holdings).length,
-      watchlist: has('watchlist') ? cleaned.watchlist.length : current.watchlist.length,
+      conflict: false,
+      rev,
+      funds: (has('funds') ? cleaned.funds : (current.funds || [])).length,
+      holdings: Object.keys(dataStore.publicHoldings(holdings)).length,
+      watchlist: (has('watchlist') ? cleaned.watchlist : (current.watchlist || [])).length,
     };
   }
   if (p === '/api/source/status') return sourceStatus();

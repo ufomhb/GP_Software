@@ -1,9 +1,9 @@
 /* 基金页渲染（P2 从 app.js 抽出，第一个按视图拆的模块）
    只负责把 state 里的数据渲染成 DOM；数据加载与交互仍留在 app.js。
    依赖：core.js（state）、util.js（格式化/转义）、dom.js（$）。 */
-import { state } from '../core.js?v=2.9.1';
-import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.9.1';
-import { $ } from '../dom.js?v=2.9.1';
+import { state } from '../core.js?v=2.9.2';
+import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.9.2';
+import { $ } from '../dom.js?v=2.9.2';
 
 
 function fundCategoryOf(name = '') {
@@ -84,6 +84,73 @@ function fundPortfolio() {
     dayPending: pending,
   };
 }
+
+/* 「今日盈亏 / 当日盈亏」当前是按什么口径算的（2026-11-20 用户要求）：
+   以前只有表格单元格里有小字，上方汇总卡片没有说明，9:00 前（前日净值）、
+   盘中（当日估值）、收盘后（估值终值 / 今日净值）看起来一模一样。
+   这里把「当前口径」抽成一个纯函数，两个面板共用同一份文案。 */
+const FUND_PHASE_LABEL = {
+  preopen: '开盘前',
+  call: '集合竞价',
+  open: '盘中',
+  closed: '收盘后',
+  weekend: '周末休市',
+};
+
+function fundDayBasis(items) {
+  const list = Array.isArray(items) ? items : [];
+  const data = state.fundWatchData || {};
+  const at = Number(data.updatedAt) || 0;
+  const hm = at
+    ? new Date(at).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })
+    : '';
+  const phase = String(data.phase || '');
+  const phaseText = FUND_PHASE_LABEL[phase] || '';
+  let nav = 0;
+  let frozen = 0;
+  let est = 0;
+  for (const x of list) {
+    if (x.navPctIsToday === true || isNum(x.navPctToday)) nav += 1;
+    if (x.estimateFrozen === true) frozen += 1;
+    if (isNum(x.estimatePct)) est += 1;
+  }
+  if (nav) {
+    return {
+      key: 'nav',
+      label: '按今日净值',
+      sub: `今日净值已公布${hm ? ` · ${hm}` : ''}`,
+      tip: '今天公布的净值已经出来了，今日盈亏按「今日净值涨跌幅」计算（不是盘中估值）。',
+    };
+  }
+  if (frozen) {
+    return {
+      key: 'frozen',
+      label: '按 15:00 估值终值',
+      sub: `15:00 估值已冻结${hm ? ` · ${hm}` : ''}`,
+      tip: '已过 15:00：今日盈亏按收盘那一刻冻结的估值终值计算，等晚上净值公布后会自动切到今日净值。',
+    };
+  }
+  if (est) {
+    return {
+      key: 'estimate',
+      label: '按当日估值',
+      sub: `当日估值${hm ? ` · ${hm}` : ''}`,
+      tip: '盘中：今日盈亏按当日估值（前十大重仓 / 目标 ETF 穿透）计算，估值会随行情变动，15:00 后冻结。',
+    };
+  }
+  return {
+    key: 'prev',
+    label: '按前日净值',
+    sub: `今日数据未出${phaseText ? ` · ${phaseText}` : ''}`,
+    tip: '9:00 前（或今天还没出成交价 / 净值）没有今日口径，今日盈亏先按前日净值处理；9:00–15:00 用当日估值，15:00 后用估值终值，今日净值公布后按今日净值。',
+  };
+}
+
+function fundDayBasisLine(basis) {
+  if (!basis) return '';
+  return `<span class="badge" title="${esc(basis.tip)}">${esc(basis.label)}</span><span class="muted small" style="margin-left:8px">${esc(basis.sub)}</span>`;
+}
+
 
 /* 「当日涨跌」列 = 真实净值涨跌幅（不是估值）。
    口径（2026-11-17 按用户要求改）：只要有一期准确净值就填上；
@@ -272,13 +339,17 @@ function renderFundHoldSummary() {
       <div class="summary-card"><div class="sc-label">自选基金</div><div class="sc-value">${items.length}</div><div class="sc-sub">ETF + 场外基金</div></div>`;
     return;
   }
+  const basis = fundDayBasis(held);
+  // v2.9.2：两个面板统一叫「今日盈亏」，并在卡片副标题写清当前口径（前日净值 / 当日估值 / 今日净值）
   el.innerHTML = `
     <div class="summary-card"><div class="sc-label">持有市值</div><div class="sc-value">${nf(p.marketValue, 2)}</div><div class="sc-sub">${held.length} 只已录入份额的基金</div></div>
     <div class="summary-card"><div class="sc-label">累计收益</div><div class="sc-value ${toneClass(p.profit)}">${signedFmt(p.profit, 2)}</div><div class="sc-sub ${toneClass(p.profitPct)}">${isNum(p.profitPct) ? `${p.profitPct >= 0 ? '+' : ''}${Number(p.profitPct).toFixed(2)}%` : '需录入成本净值'}</div></div>
-    <div class="summary-card"><div class="sc-label">当日盈亏</div><div class="sc-value ${toneClass(p.dayProfit)}">${p.dayProfit === null ? '--' : signedFmt(p.dayProfit, 2)}</div><div class="sc-sub">${p.dayProfit === null
-      ? '当日涨跌还没出来，暂不计算'
-      : `${isNum(p.dayPct) ? `${p.dayPct >= 0 ? '+' : ''}${Number(p.dayPct).toFixed(2)}%` : ''}${p.dayPending ? ` · 其中 ${p.dayPending} 只当日未出` : ''}`}</div></div>
+    <div class="summary-card"><div class="sc-label">今日盈亏</div><div class="sc-value ${toneClass(p.dayProfit)}">${p.dayProfit === null ? '--' : signedFmt(p.dayProfit, 2)}</div><div class="sc-sub">${p.dayProfit === null
+      ? `${esc(basis.label)} · 今日数据未出`
+      : `${isNum(p.dayPct) ? `${p.dayPct >= 0 ? '+' : ''}${Number(p.dayPct).toFixed(2)}%` : ''}${p.dayPending ? ` · 其中 ${p.dayPending} 只当日未出` : ''} · ${esc(basis.label)}`}</div></div>
     <div class="summary-card"><div class="sc-label">投入本金</div><div class="sc-value">${nf(p.costValue, 2)}</div><div class="sc-sub">份额 × 成本净值</div></div>`;
+  const note = $('#fundHoldBasis');
+  if (note) note.innerHTML = fundDayBasisLine(basis);
 }
 
 function renderFundHoldTable() {
@@ -293,7 +364,7 @@ function renderFundHoldTable() {
   const withR = rows.map((x) => ({ x, r: fundHoldingRow(x) })).filter((o) => o.r.marketValue !== null);
   const total = withR.reduce((s, o) => s + o.r.marketValue, 0);
   el.innerHTML = `<div class="table-scroll"><table class="table fund-hold-table">
-    <thead><tr><th>基金</th><th data-col="shares">份额</th><th data-col="cost">成本净值</th><th data-col="nav">最新</th><th>市值</th><th>持有收益</th><th data-col="ret">收益率</th><th>当日盈亏</th><th data-col="weight">占比</th></tr></thead>
+    <thead><tr><th>基金</th><th data-col="shares">份额</th><th data-col="cost">成本净值</th><th data-col="nav">最新</th><th>市值</th><th>持有收益</th><th data-col="ret">收益率</th><th title="口径随时间变：9:00 前按前日净值，9:00–15:00 按当日估值，15:00 后按估值终值，今日净值公布后按今日净值">今日盈亏</th><th data-col="weight">占比</th></tr></thead>
     <tbody>${withR.sort((a, b) => b.r.marketValue - a.r.marketValue).map(({ x, r }) => {
       const type = x.type || 'open';
       const share = total > 0 ? (r.marketValue / total) * 100 : null;
@@ -312,7 +383,7 @@ function renderFundHoldTable() {
       </tr>`;
     }).join('')}</tbody>
   </table></div>
-  <div class="fund-hold-actions"><button class="btn small" id="fundHoldExport">导出持仓 JSON</button><span class="muted small">份额与成本只保存在本机浏览器，不会上传。当日涨跌还没出的基金不给当日盈亏，避免拿昨天的净值冒充今天。</span></div>`;
+  <div class="fund-hold-actions"><button class="btn small" id="fundHoldExport">导出持仓 JSON</button><span class="muted small">份额与成本保存在你的账号里（服务端），换设备会自动恢复；当日涨跌还没出的基金不给今日盈亏，避免拿昨天的净值冒充今天。</span></div>`;
 }
 
 export {
@@ -320,6 +391,8 @@ export {
   getFundHolding,
   fundHoldingRow,
   fundPortfolio,
+  fundDayBasis,
+  fundDayBasisLine,
   fundPctCell,
   fundDayPctCell,
   fundEstimateCell,

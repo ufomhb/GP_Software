@@ -67,6 +67,22 @@
   outline: none;
 }
 .admin-field input:focus { border-color: rgba(56, 189, 248, 0.62); box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12); }
+/* v2.9.2：持仓保存历史 / 本机⇄NAS 数据互通卡片里的下拉与按钮行 */
+.admin-field select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  background: rgba(7, 11, 18, 0.72);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  outline: none;
+}
+.admin-field select:focus { border-color: rgba(56, 189, 248, 0.62); box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12); }
+.admin-form-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-bottom: 12px; }
+.admin-form-row .admin-field { margin-bottom: 0; min-width: 180px; }
 /* v2.9.0：登录框「7 天免登录」复选框 */
 .admin-check {
   display: flex;

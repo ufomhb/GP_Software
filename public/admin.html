@@ -8,8 +8,8 @@
   <meta name="robots" content="noindex,nofollow">
   <title>寰球智投 · 后台管理</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.9.1">
-  <link rel="stylesheet" href="/css/admin.css?v=2.9.1">
+  <link rel="stylesheet" href="/css/app.css?v=2.9.2">
+  <link rel="stylesheet" href="/css/admin.css?v=2.9.2">
 </head>
 <body class="admin-body">
   <!-- 登录 -->
@@ -343,6 +343,36 @@
           </div>
           <div id="paperDetail" class="admin-table-wrap"></div>
         </article>
+
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>持仓保存历史</h2>
+            <span class="muted small">每次保存持仓都会留一份快照，可在这里查「到底存没存进去」并回滚</span>
+          </div>
+          <div class="admin-form-row">
+            <label class="admin-field"><span>账号</span><select id="phUser"></select></label>
+            <button type="button" class="admin-btn" id="phReload">刷新</button>
+            <span class="muted small" id="phMeta">—</span>
+          </div>
+          <div id="phList" class="admin-table-wrap"><div class="admin-empty">加载中…</div></div>
+        </article>
+
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>持仓数据互通（本机 ⇄ NAS）</h2>
+            <span class="muted small">部署只同步代码、不动线上 data/，两边持仓是两套；需要时在这里单向覆盖</span>
+          </div>
+          <div class="admin-form-row">
+            <label class="admin-field"><span>账号</span><select id="ptUser"></select></label>
+            <label class="admin-field"><span>模式</span><select id="ptMode">
+              <option value="merge">合并（推荐）</option>
+              <option value="replace">整体覆盖</option>
+            </select></label>
+            <button type="button" class="admin-btn" id="ptPush">本机 → NAS</button>
+            <button type="button" class="admin-btn" id="ptPull">NAS → 本机</button>
+          </div>
+          <p class="muted small" id="ptResult">推送前会先备份线上 data/；拉取前会先备份本机数据；两边账号 ID 必须一致。</p>
+        </article>
       </section>
 
       <!-- 定时推送 -->
@@ -496,6 +526,6 @@
     </div>
   </div>
 
-  <script src="/js/admin.js?v=2.9.1"></script>
+  <script src="/js/admin.js?v=2.9.2"></script>
 </body>
 </html>

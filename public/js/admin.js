@@ -16,7 +16,7 @@ const ROLE_LABELS = { super: '超级管理员', admin: '管理员', user: '普�
 const ACTION_LABELS = {
   login: '登录', register: '注册', password: '修改密码', reset: '重置密码',
   role: '角色变更', kick: '强制下线', clear: '清空日志', deploy: '推送部署', strategy: '策略记录',
-  paper: '模拟交易',
+  paper: '模拟交易', portfolio: '持仓数据',
 };
 
 const state = {
@@ -2049,6 +2049,7 @@ async function loadPaper() {
     const box = $('#paperUsers');
     if (box) box.innerHTML = `<div class="admin-empty">读取失败：${esc(err.message)}</div>`;
   }
+  loadPortfolioHistory();
 }
 
 function renderPaperAdmin(data) {
@@ -2196,6 +2197,131 @@ function bindPaper() {
   if (save) save.addEventListener('click', savePaperInitial);
   const close = $('#paperDetailClose');
   if (close) close.addEventListener('click', () => { const wrap = $('#paperDetailWrap'); if (wrap) wrap.hidden = true; });
+  bindPortfolioCards();
+}
+
+/* ---------------- 持仓保存历史 / 本机 ⇄ NAS 数据互通（v2.9.2） ----------------
+   背景：本机与线上 NAS 是两套 data/，用户在一边改的持仓另一边看不到；
+   以前同步失败也没有任何提示。这里把「每次保存的快照」和「两边单向同步」
+   做成两个可操作的卡片，先解释再动手，每次操作都留痕。
+   -------------------------------------------------------------------------- */
+
+async function loadPortfolioUsers(force = false) {
+  if (!force && state.portfolioUsers && Date.now() - (state.portfolioUsersAt || 0) < 30000) {
+    return state.portfolioUsers;
+  }
+  const data = await api('/api/admin/users');
+  state.portfolioUsers = data.users || [];
+  state.portfolioUsersAt = Date.now();
+  return state.portfolioUsers;
+}
+
+function fillPortfolioUserSelect(sel, users) {
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = users
+    .map((u) => `<option value="${esc(u.id)}">${esc(u.username)}${u.primary ? '（主账号）' : ''}</option>`)
+    .join('');
+  if (prev && users.some((u) => u.id === prev)) sel.value = prev;
+}
+
+async function loadPortfolioHistory() {
+  const sel = $('#phUser');
+  const box = $('#phList');
+  const meta = $('#phMeta');
+  if (!box) return;
+  try {
+    const users = await loadPortfolioUsers();
+    fillPortfolioUserSelect(sel, users);
+    const uid = (sel && sel.value) || (users[0] && users[0].id);
+    if (!uid) {
+      box.innerHTML = '<div class="admin-empty">还没有账号</div>';
+      return;
+    }
+    if (sel && !sel.value) sel.value = uid;
+    const data = await api(`/api/admin/portfolio/history?userId=${encodeURIComponent(uid)}`);
+    if (meta) {
+      meta.textContent = `${data.user.username} · 当前版本 ${data.rev ? fmtClock(data.rev) : '未知'} · 共 ${(data.items || []).length} 份快照`;
+    }
+    if (!data.items || !data.items.length) {
+      box.innerHTML = '<div class="admin-empty">还没有保存记录（升级后每次保存持仓都会留一份快照）</div>';
+      return;
+    }
+    box.innerHTML = `<table class="admin-table"><thead><tr>
+        <th>保存时间</th><th>动作</th><th>来源</th><th>自选基金</th><th>持仓</th><th>操作</th>
+      </tr></thead><tbody>${data.items.map((it) => `<tr>
+        <td class="nowrap">${esc(fmtClock(it.savedAt))}</td>
+        <td>${esc(it.action || 'save')}</td>
+        <td class="muted">${esc(it.source || '-')}</td>
+        <td class="num">${n(it.funds)}</td>
+        <td class="num">${n(it.holdings)}</td>
+        <td><button type="button" class="admin-btn" data-ph-restore="${esc(String(it.rev))}" data-name="${esc(data.user.username)}">恢复</button></td>
+      </tr>`).join('')}</tbody></table>`;
+    $$('[data-ph-restore]', box).forEach((btn) => btn.addEventListener('click', () => {
+      restorePortfolioSnapshot(uid, btn.getAttribute('data-ph-restore'), btn.getAttribute('data-name'));
+    }));
+  } catch (err) {
+    box.innerHTML = `<div class="admin-empty">读取失败：${esc(err.message)}</div>`;
+  }
+}
+
+async function restorePortfolioSnapshot(userId, rev, name) {
+  const at = fmtClock(Number(rev));
+  if (!window.confirm(`把「${name}」的持仓恢复到 ${at} 那一版？\n当前数据会先留一份快照，可再恢复回来。`)) return;
+  try {
+    const out = await apiPost('/api/admin/portfolio/restore', { userId, rev: Number(rev) }, 30000);
+    toast(`已恢复：自选基金 ${out.counts.funds} 只 / 持仓 ${out.counts.holdings} 只`, 'ok', 4000);
+    await loadPortfolioHistory();
+  } catch (err) {
+    toast(`恢复失败：${err.message}`, 'err', 6000);
+  }
+}
+
+async function transferPortfolioData(direction) {
+  const sel = $('#ptUser');
+  const result = $('#ptResult');
+  try {
+    const users = await loadPortfolioUsers();
+    fillPortfolioUserSelect(sel, users);
+    const uid = (sel && sel.value) || (users[0] && users[0].id);
+    if (!uid) { toast('还没有账号', 'warn'); return; }
+    const mode = ($('#ptMode') && $('#ptMode').value) || 'merge';
+    const label = direction === 'pull' ? 'NAS → 本机' : '本机 → NAS';
+    const modeText = mode === 'replace' ? '整体覆盖（以来源为准）' : '合并（推荐）';
+    if (!window.confirm(`${label}\n账号：${sel.options[sel.selectedIndex].textContent}\n模式：${modeText}\n\n操作前后都会留备份/快照，继续？`)) return;
+    if (result) result.textContent = '正在执行…（首次连接 NAS 可能需要 10~30 秒）';
+    const out = await apiPost('/api/admin/portfolio/transfer', { direction, userId: uid, mode }, 180000);
+    if (result) result.textContent = `${new Date().toLocaleTimeString('zh-CN', { hour12: false })} · ${out.message || '完成'}`;
+    toast(out.message || '数据互通完成', 'ok', 5000);
+    await loadPortfolioHistory();
+  } catch (err) {
+    if (result) result.textContent = `失败：${err.message}`;
+    toast(`数据互通失败：${err.message}`, 'err', 7000);
+  }
+}
+
+function bindPortfolioCards() {
+  const sel = $('#phUser');
+  if (sel && !sel.dataset.bound) {
+    sel.dataset.bound = '1';
+    sel.addEventListener('change', loadPortfolioHistory);
+  }
+  const reload = $('#phReload');
+  if (reload && !reload.dataset.bound) {
+    reload.dataset.bound = '1';
+    reload.addEventListener('click', loadPortfolioHistory);
+  }
+  const push = $('#ptPush');
+  if (push && !push.dataset.bound) {
+    push.dataset.bound = '1';
+    push.addEventListener('click', () => transferPortfolioData('push'));
+  }
+  const pull = $('#ptPull');
+  if (pull && !pull.dataset.bound) {
+    pull.dataset.bound = '1';
+    pull.addEventListener('click', () => transferPortfolioData('pull'));
+  }
+  loadPortfolioHistory();
 }
 
 /* ---------------- 启动 ---------------- */

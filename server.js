@@ -37,8 +37,10 @@ const {
   sinaRank,
   emNews,
   sinaNews,
+  applyQuotePriceFallback,
 } = require('./lib/marketdata');
 const dataStore = require('./lib/store');
+const portfolioTransfer = require('./src/lib/portfolio-transfer');
 const { createLogFiles } = require('./src/lib/log-files');
 
 /* =========================================================
@@ -67,7 +69,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.9.1';
+const VERSION = '2.9.2';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -242,7 +244,7 @@ function cached(key, ttl, fn) {
 function normalizeQuote(d, group) {
   const amount = num(d.f6);
   const main = num(d.f62);
-  return {
+  return applyQuotePriceFallback({
     group,
     secid: `${d.f13}.${d.f12}`,
     code: String(d.f12),
@@ -270,7 +272,7 @@ function normalizeQuote(d, group) {
     up: num(d.f104),
     down: num(d.f105),
     flat: num(d.f106),
-  };
+  });
 }
 
 const QUOTE_SOURCE = new Map();
@@ -282,7 +284,7 @@ async function fetchQuoteList(secids, group) {
   QUOTE_SOURCE.set(group, source);
   const merged = new Map(data.map((q) => [q.secid, q]));
   let missing = unique.filter((id) => !merged.has(id));
-  if (!missing.length) return unique.map((id) => merged.get(id)).filter(Boolean);
+  if (!missing.length) return unique.map((id) => applyQuotePriceFallback(merged.get(id))).filter(Boolean);
   // 单一数据源常常只覆盖部分品种（如腾讯只覆盖 6 个全球指数），
   // 这里用其它数据源补齐缺的那些，行情页不至于大面积空白。
   for (const provider of ['eastmoney', 'tencent', 'sina']) {
@@ -294,7 +296,9 @@ async function fetchQuoteList(secids, group) {
       for (const q of extra.data) merged.set(q.secid, q);
     } catch { /* 该源不支持这些品种时忽略 */ }
   }
-  return unique.map((id) => merged.get(id)).filter(Boolean);
+  // v2.9.2：开盘前 / 停牌时上游可能给 price=0，这里统一归一成「昨收」，
+  // 否则模拟盘会把 0 当成现价、把持仓算成 -100%。所有行情出口都经过这里。
+  return unique.map((id) => applyQuotePriceFallback(merged.get(id))).filter(Boolean);
 }
 
 function zonedParts(timeZone) {
@@ -319,6 +323,19 @@ function zonedParts(timeZone) {
     minutes: Number(parts.hour) * 60 + Number(parts.minute),
     text: `${parts.hour}:${parts.minute}`,
   };
+}
+
+/* 当前 A 股 / 场外基金时段（v2.9.2）：
+   前端用它给「今日盈亏 / 当日估值」标时间口径，避免分不清是按前日净值还是当日估值。
+   preopen 9:15 前（没有成交价）· call 集合竞价 · open 连续竞价 · closed 收盘后 · weekend 周末 */
+function cnMarketPhase(clock) {
+  const c = clock || zonedParts('Asia/Shanghai');
+  if (c.weekday === 0 || c.weekday === 6) return 'weekend';
+  const m = c.minutes;
+  if (m < 9 * 60 + 15) return 'preopen';
+  if (m < 9 * 60 + 30) return 'call';
+  if (m < CN_CLOSE_MINUTES) return 'open';
+  return 'closed';
 }
 
 /* =========================================================
@@ -3417,6 +3434,8 @@ async function getFundWatch(codes, risk = 'balanced') {
       items,
       today,
       updatedAt: Date.now(),
+      // v2.9.2：给前端标注「今日盈亏」当前口径用（前日净值 / 当日估值 / 今日净值）
+      phase: cnMarketPhase(),
     };
   });
 }
@@ -3851,6 +3870,9 @@ async function estimateFundDayPctBatch(list) {
   // 历史回测（estimateFundHistPctBatch）用同一个函数、把实时行情换成历史日线。
   const pctByCode = new Map();
   for (const [code, q] of qmap) {
+    // v2.9.2：只有真实成交价才能参与估值。开盘前 / 停牌时 quote 是「昨收顶替」，
+    // 它的 pct 我们记 0，如果拿来算估值会得出「今天涨跌 0%」的假结论。
+    if (q && q.priceMode && q.priceMode !== 'live') continue;
     if (q && Number.isFinite(Number(q.pct))) pctByCode.set(String(code), Number(q.pct));
   }
   for (const f of plans) {
@@ -7458,8 +7480,289 @@ function savePortfolio(user, portfolio) {
   dataStore.savePortfolio(user, portfolio);
 }
 
+/* ---------------------------------------------------------
+   持仓写入审计与快照（v2.9.2）
+   ---------------------------------------------------------
+   背景：2026-11-19 用户调整过的持仓没有出现在本机服务端，事后无从追溯。
+   现在每次写入都做两件事：
+   1) data/portfolio-writes.jsonl 追加一行（谁、什么时候、从哪个 IP、改了什么）；
+   2) data/portfolio-history/<userId>/<rev>.json 留一份快照（最近 20 份），
+      后台可以按时间回滚。两边都是运行时数据，不进仓库。
+   --------------------------------------------------------- */
+const PORTFOLIO_AUDIT_FILE = path.join(__dirname, 'data', 'portfolio-writes.jsonl');
+const PORTFOLIO_HISTORY_DIR = path.join(__dirname, 'data', 'portfolio-history');
+const PORTFOLIO_AUDIT_MAX_LINES = 1000;
+
+/** 当前持仓数据的「版本」：JSON 模式取文件 mtime，SQLite 取库 mtime（与 GET 的 updatedAt 一致） */
+function portfolioRevOf(user) {
+  try {
+    if (STORE_MODE === 'sqlite') return Math.trunc(fs.statSync(dataStore.DB_FILE).mtimeMs);
+    if (user && user.primary) return Math.trunc(fs.statSync(PUSH_FILE).mtimeMs);
+    return Math.trunc(fs.statSync(userDataFile(user.id)).mtimeMs);
+  } catch {
+    return 0;
+  }
+}
+
+function portfolioCounts(doc) {
+  const holdings = (doc && doc.holdings) || {};
+  return {
+    funds: Array.isArray(doc && doc.funds) ? doc.funds.length : 0,
+    holdings: Object.values(holdings).filter((h) => h && Number(h.shares) > 0).length,
+    watchlist: Array.isArray(doc && doc.watchlist) ? doc.watchlist.length : 0,
+  };
+}
+
+/** 变更摘要：哪只基金的份额/成本从多少变成多少（最多 50 条） */
+function diffPortfolioHoldings(before, after) {
+  const a = (before && before.holdings) || {};
+  const b = (after && after.holdings) || {};
+  const out = [];
+  for (const code of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    const x = a[code] || null;
+    const y = b[code] || null;
+    const xs = x ? Number(x.shares) || 0 : 0;
+    const ys = y ? Number(y.shares) || 0 : 0;
+    const xc = x ? Number(x.cost) || 0 : 0;
+    const yc = y ? Number(y.cost) || 0 : 0;
+    if (xs === ys && Math.abs(xc - yc) < 1e-9) continue;
+    out.push({ code, from: xs, to: ys });
+  }
+  return out.slice(0, 50);
+}
+
+function portfolioHistoryDir(userId) {
+  return path.join(PORTFOLIO_HISTORY_DIR, String(userId).replace(/[^a-zA-Z0-9_-]/g, ''));
+}
+
+function listPortfolioSnapshots(userId) {
+  const dir = portfolioHistoryDir(userId);
+  try {
+    return fs.readdirSync(dir)
+      .filter((f) => /^\d+\.json$/.test(f))
+      .map((f) => Number(f.slice(0, -5)))
+      .filter((n) => n > 0)
+      .sort((x, y) => x - y);
+  } catch {
+    return [];
+  }
+}
+
+function savePortfolioSnapshot(user, doc, meta) {
+  if (!user || !user.id) return;
+  const dir = portfolioHistoryDir(user.id);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const pub = {
+      funds: doc.funds || [],
+      holdings: dataStore.publicHoldings(doc.holdings || {}),
+      watchlist: doc.watchlist || [],
+    };
+    const sig = JSON.stringify([pub.funds, pub.holdings, pub.watchlist]);
+    const exists = listPortfolioSnapshots(user.id);
+    const lastRev = exists[exists.length - 1];
+    if (lastRev) {
+      try {
+        const prev = JSON.parse(fs.readFileSync(path.join(dir, `${lastRev}.json`), 'utf8'));
+        const prevSig = JSON.stringify([
+          prev.funds || [],
+          dataStore.publicHoldings(prev.holdings || {}),
+          prev.watchlist || [],
+        ]);
+        if (prevSig === sig) return; // 内容没变就不重复写
+      } catch { /* 旧快照坏了就照写新的一份 */ }
+    }
+    const rev = Number(meta && meta.rev) || Date.now();
+    fs.writeFileSync(path.join(dir, `${rev}.json`), JSON.stringify({
+      savedAt: Date.now(),
+      rev,
+      action: (meta && meta.action) || 'save',
+      source: (meta && meta.source) || 'web',
+      user: { id: user.id, username: user.username || '' },
+      ...pub,
+    }, null, 2), 'utf8');
+    const all = listPortfolioSnapshots(user.id);
+    for (const old of all.slice(0, Math.max(0, all.length - 20))) {
+      try { fs.unlinkSync(path.join(dir, `${old}.json`)); } catch { /* 删不掉不影响主流程 */ }
+    }
+  } catch { /* 快照失败不能影响正常保存 */ }
+}
+
+function appendPortfolioAudit(line) {
+  try {
+    fs.mkdirSync(path.dirname(PORTFOLIO_AUDIT_FILE), { recursive: true });
+    fs.appendFileSync(PORTFOLIO_AUDIT_FILE, `${JSON.stringify(line)}\n`, 'utf8');
+    const st = fs.statSync(PORTFOLIO_AUDIT_FILE);
+    if (st.size > 512 * 1024) {
+      const rows = fs.readFileSync(PORTFOLIO_AUDIT_FILE, 'utf8').split('\n').filter(Boolean);
+      fs.writeFileSync(PORTFOLIO_AUDIT_FILE, `${rows.slice(-PORTFOLIO_AUDIT_MAX_LINES).join('\n')}\n`, 'utf8');
+    }
+  } catch { /* 审计失败不能影响正常保存 */ }
+}
+
+/** 记录一次持仓写入：审计行 + 快照（before/after 都用 loadPortfolio 的原始形态） */
+function recordPortfolioWrite({ user, ip, action, before, after, rev, source } = {}) {
+  const line = {
+    at: Date.now(),
+    userId: (user && user.id) || '',
+    username: (user && user.username) || '',
+    ip: ip || '',
+    rev: Number(rev) || 0,
+    action: action || 'save',
+    source: source || 'web',
+    counts: portfolioCounts(after),
+    changed: diffPortfolioHoldings(before, after),
+  };
+  appendPortfolioAudit(line);
+  savePortfolioSnapshot(user, after || {}, { rev: line.rev, action: line.action, source: line.source });
+  return line;
+}
+
+/** 后台：某账号最近 N 次持仓快照（倒序，只给摘要，不含完整持仓） */
+function listPortfolioHistory(userId, limit = 20) {
+  const dir = portfolioHistoryDir(userId);
+  const all = listPortfolioSnapshots(userId).slice().reverse().slice(0, Math.max(1, Math.min(50, Number(limit) || 20)));
+  return all.map((rev) => {
+    try {
+      const snap = JSON.parse(fs.readFileSync(path.join(dir, `${rev}.json`), 'utf8'));
+      const counts = portfolioCounts(snap);
+      return {
+        rev,
+        savedAt: Number(snap.savedAt) || rev,
+        action: snap.action || 'save',
+        source: snap.source || '',
+        username: (snap.user && snap.user.username) || '',
+        counts,
+        funds: counts.funds,
+        holdings: counts.holdings,
+      };
+    } catch {
+      return { rev, savedAt: rev, action: 'unknown', counts: { funds: 0, holdings: 0, watchlist: 0 } };
+    }
+  });
+}
+
+/** 后台：把某个账号恢复到某一版快照（墓碑/时间戳按恢复时刻重写，确保覆盖其它设备） */
+function restorePortfolioSnapshot({ user, rev, ip } = {}) {
+  if (!user) throw Object.assign(new Error('用户不存在'), { status: 404 });
+  const idx = Number(rev);
+  if (!Number.isFinite(idx) || idx <= 0) throw Object.assign(new Error('快照版本不合法'), { status: 400 });
+  const file = path.join(portfolioHistoryDir(user.id), `${Math.trunc(idx)}.json`);
+  let snap;
+  try {
+    snap = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    throw Object.assign(new Error('该快照不存在或已过期'), { status: 404 });
+  }
+  const before = loadPortfolio(user);
+  const now = Date.now();
+  const holdings = {};
+  for (const [code, v] of Object.entries(snap.holdings || {})) {
+    const shares = Number(v && v.shares) || 0;
+    if (shares <= 0) continue;
+    holdings[code] = { shares, cost: Number(v && v.cost) || 0, updatedAt: now };
+  }
+  savePortfolio(user, {
+    funds: Array.isArray(snap.funds) ? snap.funds : [],
+    holdings,
+    watchlist: Array.isArray(snap.watchlist) ? snap.watchlist : [],
+  });
+  const after = loadPortfolio(user);
+  const nextRev = portfolioRevOf(user);
+  recordPortfolioWrite({
+    user, ip, action: 'restore', before, after, rev: nextRev, source: `snapshot:${Math.trunc(idx)}`,
+  });
+  return { ok: true, rev: nextRev, restoredFrom: Math.trunc(idx), counts: portfolioCounts(after) };
+}
+
+/**
+ * 本机 ⇄ 线上 NAS 持仓互通（v2.9.2）
+ * 部署只同步代码、不动 NAS 的 data/，所以两边持仓是两套；这里用同一把 SSH 私钥，
+ * 把某账号的持仓 JSON 推上去（NAS 上跑 scripts/portfolio-import.mjs）或拉回来。
+ * 任何写入都会留审计与快照（recordPortfolioWrite），并且账号 ID 必须一致，防止串号。
+ */
+async function transferPortfolio({ direction = 'push', userId, mode = 'merge', dryRun = false, actor, ip } = {}) {
+  const users = loadUsers().users || [];
+  const user = users.find((u) => String(u.id) === String(userId || ''))
+    || users.find((u) => u.primary)
+    || null;
+  if (!user) throw Object.assign(new Error('用户不存在'), { status: 404 });
+  const dir = String(direction) === 'pull' ? 'pull' : 'push';
+  const stamp = Date.now();
+  const localFile = path.join(os.tmpdir(), `gp-portfolio-${user.id}-${dir}-${stamp}.json`);
+  const remoteFile = `/tmp/gp-portfolio-${dir}-${stamp}.json`;
+  const before = loadPortfolio(user);
+  const base = {
+    ok: true,
+    direction: dir,
+    dryRun: Boolean(dryRun),
+    mode: mode === 'replace' ? 'replace' : 'merge',
+    user: { id: user.id, username: user.username || '' },
+  };
+  try {
+    if (dir === 'push') {
+      const doc = portfolioTransfer.buildPortfolioDoc({
+        user,
+        portfolio: before,
+        source: { host: `${HOST}:${PORT}` },
+        storeMode: STORE_MODE,
+      });
+      const counts = portfolioTransfer.summarizePortfolio(doc);
+      fs.writeFileSync(localFile, JSON.stringify(doc, null, 2), 'utf8');
+      if (dryRun) {
+        return {
+          ...base,
+          counts,
+          message: `预检：本机 基金 ${counts.funds} / 持仓 ${counts.holdings} / 自选股 ${counts.watchlist}`,
+        };
+      }
+      const res = await deployToNas.pushPortfolio({ file: localFile, remoteFile, userId: user.id, mode: base.mode });
+      recordPortfolioWrite({
+        user, ip, action: 'push-nas', before, after: before, rev: portfolioRevOf(user), source: 'transfer:push',
+      });
+      return {
+        ...base,
+        counts,
+        remote: res,
+        message: `已推送 持仓 ${counts.holdings} 只到 NAS（模式 ${base.mode}）`,
+      };
+    }
+    const res = await deployToNas.pullPortfolio({ file: localFile, remoteFile, userId: user.id });
+    const doc = portfolioTransfer.validatePortfolioDoc(JSON.parse(fs.readFileSync(localFile, 'utf8')));
+    if (String(doc.user.id) !== String(user.id)) {
+      throw new Error(`NAS 上的账号 ID 与本地不一致（${doc.user.id} ≠ ${user.id}），已中止以免串号`);
+    }
+    const countsIn = portfolioTransfer.summarizePortfolio(doc);
+    if (dryRun) {
+      return {
+        ...base,
+        counts: countsIn,
+        remote: res,
+        remoteExportedAt: doc.exportedAt || null,
+        message: `预检：NAS 上 基金 ${countsIn.funds} / 持仓 ${countsIn.holdings} / 自选股 ${countsIn.watchlist}`,
+      };
+    }
+    const next = portfolioTransfer.applyPortfolioImport(doc, before, { mode: base.mode });
+    savePortfolio(user, next);
+    const after = loadPortfolio(user);
+    recordPortfolioWrite({
+      user, ip, action: 'pull-nas', before, after, rev: portfolioRevOf(user), source: 'transfer:pull',
+    });
+    return {
+      ...base,
+      counts: portfolioCounts(after),
+      remote: res,
+      remoteExportedAt: doc.exportedAt || null,
+      message: `已从 NAS 拉取：持仓 ${portfolioCounts(after).holdings} 只（模式 ${base.mode}）`,
+    };
+  } finally {
+    try { fs.unlinkSync(localFile); } catch { /* 临时文件删不掉不影响结果 */ }
+  }
+}
+
 // 自选股票 / 自选基金 / 持仓的统一清洗：前端传什么都在这里收敛，避免脏数据落盘。
 function sanitizePortfolio(body) {
+  const now = Date.now();
   const funds = Array.isArray(body && body.funds)
     ? body.funds
         .slice(0, 30)
@@ -7474,8 +7777,14 @@ function sanitizePortfolio(body) {
   if (body && body.holdings && typeof body.holdings === 'object' && !Array.isArray(body.holdings)) {
     for (const [code, v] of Object.entries(body.holdings)) {
       const shares = Number(v && v.shares);
-      if (!String(code) || !Number.isFinite(shares) || shares <= 0) continue;
-      holdings[String(code)] = { shares, cost: Number(v && v.cost) || 0 };
+      if (!String(code) || !Number.isFinite(shares) || shares < 0) continue;
+      // updatedAt 参与多端合并：只接受合理区间（30 天前 ~ 5 分钟后），防止客户端时钟乱跳
+      const rawTs = Number(v && v.updatedAt);
+      const ts = Number.isFinite(rawTs) ? Math.min(now + 5 * 60 * 1000, Math.max(now - 30 * 86400000, rawTs)) : now;
+      const entry = { shares, cost: Number(v && v.cost) || 0, updatedAt: ts };
+      // shares === 0 是「删除墓碑」：让另一台设备也能把这一只删掉
+      if (shares === 0) entry.removedAt = Number(v && v.removedAt) || ts;
+      holdings[String(code)] = entry;
     }
   }
   const watchlist = Array.isArray(body && body.watchlist)
@@ -8121,6 +8430,22 @@ function savePaperAccount(user, account) {
   return payload;
 }
 
+/**
+ * 模拟盘取价（v2.9.2）
+ * 只认真实成交价；没有成交价时按「昨收」估值（quote 已由 applyQuotePriceFallback 归一），
+ * 连昨收都拿不到才退回成本价 —— 绝不把 0 当成现价，否则持仓市值 0、累计盈亏 -100%。
+ * priceMode: live | prevClose | cost | missing
+ */
+function paperPriceOf(q, cost) {
+  const price = Number(q && q.price);
+  if (Number.isFinite(price) && price > 0) {
+    return { price, priceMode: q && q.priceMode === 'prevClose' ? 'prevClose' : 'live' };
+  }
+  const c = Number(cost);
+  if (Number.isFinite(c) && c > 0) return { price: c, priceMode: 'cost' };
+  return { price: 0, priceMode: 'missing' };
+}
+
 /** 模拟交易看板：账户 + 持仓（带现价/浮盈）+ 最近成交 */
 async function getPaper(user) {
   const account = getPaperAccount(user);
@@ -8138,7 +8463,8 @@ async function getPaper(user) {
   let costValue = 0;
   const positions = Object.entries(account.positions).map(([secid, p]) => {
     const q = qmap.get(secid) || null;
-    const price = q && Number.isFinite(Number(q.price)) ? Number(q.price) : Number(p.cost);
+    const priced = paperPriceOf(q, p.cost);
+    const price = priced.price;
     const mv = price * Number(p.shares || 0);
     const cv = Number(p.cost || 0) * Number(p.shares || 0);
     marketValue += mv;
@@ -8150,20 +8476,33 @@ async function getPaper(user) {
       shares: Number(p.shares) || 0,
       cost: Number(p.cost) || 0,
       price,
-      pct: q ? Number(q.pct) : null,
+      priceMode: priced.priceMode,
+      pct: q && Number.isFinite(Number(q.pct)) ? Number(q.pct) : null,
       marketValue: Math.round(mv * 100) / 100,
       profit: Math.round((mv - cv) * 100) / 100,
       profitPct: cv ? Math.round(((mv - cv) / cv) * 10000) / 100 : null,
     };
   });
   const total = account.cash + marketValue;
+  const profit = Math.round((total - account.initial) * 100) / 100;
+  const positionProfit = Math.round((marketValue - costValue) * 100) / 100;
+  const prevCloseCount = positions.filter((p) => p.priceMode === 'prevClose').length;
   return {
     initial: account.initial,
     cash: Math.round(account.cash * 100) / 100,
     marketValue: Math.round(marketValue * 100) / 100,
+    costValue: Math.round(costValue * 100) / 100,
     total: Math.round(total * 100) / 100,
-    profit: Math.round((total - account.initial) * 100) / 100,
+    profit,
     profitPct: account.initial ? Math.round(((total - account.initial) / account.initial) * 10000) / 100 : 0,
+    // 累计盈亏 = 持仓浮盈 + 已实现盈亏（卖出落袋 + 手续费），分开给出，
+    // 这样「顶部累计盈亏」和「持仓浮盈合计」对不上时有明确解释。
+    positionProfit,
+    realizedProfit: Math.round((profit - positionProfit) * 100) / 100,
+    // 盘中实时性：报价时刻 + 有多少只还在用昨收估值（开盘前 / 停牌）
+    pricesAsOf: Date.now(),
+    anyPrevClose: prevCloseCount > 0,
+    prevCloseCount,
     positions: positions.sort((a, b) => b.marketValue - a.marketValue),
     trades: account.trades.slice(-50).reverse(),
     updatedAt: account.updatedAt,
@@ -8201,6 +8540,10 @@ async function paperTrade(user, payload = {}) {
   const quote = (quotes || [])[0];
   if (!quote || !Number.isFinite(Number(quote.price)) || Number(quote.price) <= 0) {
     throw bad('取不到最新价，稍后再试');
+  }
+  // v2.9.2：开盘前 / 停牌只有昨收价，不能按昨收成交（会凭空产生一笔假成交）。
+  if (quote.priceMode && quote.priceMode !== 'live') {
+    throw bad('开盘前暂无成交价，交易时间 9:30–15:00 再下单');
   }
   const price = Number(quote.price);
   const account = getPaperAccount(user);
@@ -8309,7 +8652,7 @@ const PAPER_RANK_MAX_USERS = 200;
 async function getPaperRanking() {
   // 配置（初始资金 / 排行榜黑名单）变了就换缓存键，管理端保存后立刻生效
   const config = loadPaperConfig();
-  return cached(`paperrank:v2:${config.updatedAt}`, 30000, async () => {
+  return cached(`paperrank:v2:${config.updatedAt}`, 15000, async () => {
     const users = loadUsers().users || [];
     const hiddenSet = new Set(config.hiddenUserIds);
     const visible = users.filter((u) => !hiddenSet.has(u.id));
@@ -8332,8 +8675,11 @@ async function getPaperRanking() {
         const q = qmap.get(secid) || null;
         const shares = Number(p.shares) || 0;
         const cost = Number(p.cost) || 0;
-        let price = q && Number.isFinite(Number(q.price)) ? Number(q.price) : cost;
-        if (!q) estimated = true;
+        // v2.9.2：没有真实成交价时用昨收（paperPriceOf），只有连昨收都没有才退回成本价，
+        // 不再把 price=0 当成现价（那会让排行榜的总资产/累计盈亏整列失真）。
+        const priced = paperPriceOf(q, cost);
+        let price = priced.price;
+        if (!q || priced.priceMode === 'cost' || priced.priceMode === 'missing') estimated = true;
         if (!Number.isFinite(price) || price <= 0) price = cost;
         const mv = price * shares;
         marketValue += mv;
@@ -8343,6 +8689,7 @@ async function getPaperRanking() {
           name: String(p.name || ''),
           shares,
           price: Math.round(price * 1000) / 1000,
+          priceMode: priced.priceMode,
           marketValue: Math.round(mv * 100) / 100,
           profitPct: cost > 0 ? Math.round(((price - cost) / cost) * 10000) / 100 : null,
         };
@@ -8404,8 +8751,9 @@ async function getPaperAdminOverview() {
       const q = qmap.get(secid) || null;
       const shares = Number(p.shares) || 0;
       const cost = Number(p.cost) || 0;
-      let price = q && Number.isFinite(Number(q.price)) ? Number(q.price) : cost;
-      if (!q) estimated = true;
+      const priced = paperPriceOf(q, cost);
+      let price = priced.price;
+      if (!q || priced.priceMode === 'cost' || priced.priceMode === 'missing') estimated = true;
       if (!Number.isFinite(price) || price <= 0) price = cost;
       const mv = price * shares;
       const cv = cost * shares;
@@ -8418,6 +8766,7 @@ async function getPaperAdminOverview() {
         shares,
         cost,
         price: Math.round(price * 1000) / 1000,
+        priceMode: priced.priceMode,
         pct: q ? Number(q.pct) : null,
         marketValue: Math.round(mv * 100) / 100,
         costValue: Math.round(cv * 100) / 100,
@@ -8644,15 +8993,19 @@ const httpRoutes = createHttpRoutes({
   issueSession,
   lanAddresses,
   lastDateKeys,
+  listPortfolioHistory,
   loadPortfolio,
   loadUsers,
   loginFails,
   loginKey,
   logsStore,
+  restorePortfolioSnapshot,
   num,
+  portfolioRevOf,
   probeSource,
   publicUser,
   recordLoginEvent,
+  recordPortfolioWrite,
   recordViewPing,
   registerAllowed,
   requireAdmin,
@@ -8670,6 +9023,7 @@ const httpRoutes = createHttpRoutes({
   statsStore,
   strategyLog,
   topIpOf,
+  transferPortfolio,
   userDataFile,
   userStatsSummary,
   verifyPassword,

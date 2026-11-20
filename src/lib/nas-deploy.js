@@ -560,6 +560,78 @@ function createDeployToNas(options = {}) {
     };
   }
 
+  /* ---------------------------------------------------------
+     持仓数据互通（v2.9.2）
+     ---------------------------------------------------------
+     部署只同步代码、不动 NAS 的 data/，所以本机与线上的持仓是两套。
+     这里复用同一把 SSH 私钥与同一套 scp 语义，把「本机账号的持仓 JSON」
+     推给 NAS（在 NAS 上跑 scripts/portfolio-import.mjs），或反向拉回来。
+     --------------------------------------------------------- */
+  async function nasNodeBin() {
+    const res = await ssh('command -v node', { timeoutMs: 20000 });
+    const line = String(res.output || '')
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .find((l) => /(^|\/)node$/.test(l));
+    return line || '/data/node24/bin/node';
+  }
+
+  async function scpRun(from, to, { timeoutMs = 120000 } = {}) {
+    // NAS 是 BusyBox：OpenSSH 9+ 默认走 SFTP 会失败，先用 -O 旧协议，失败再退回默认
+    let res = await run(['scp', ...scpOptions(true), from, to], { timeoutMs });
+    if (!res.ok) res = await run(['scp', ...scpOptions(false), from, to], { timeoutMs });
+    return res;
+  }
+
+  /** 本机 → NAS：把导出的持仓 JSON 交给 NAS 上的 portfolio-import.mjs */
+  async function pushPortfolio({ file, remoteFile, userId, mode = 'merge', dryRun = false } = {}) {
+    if (!supported) throw Object.assign(new Error('只有本机才能把持仓推送到 NAS'), { status: 400 });
+    if (!file || !fs.existsSync(file)) throw new Error('待推送的持仓文件不存在');
+    if (!userId) throw new Error('缺少账号 ID');
+    const remote = remoteFile || `/tmp/gp-portfolio-push-${Date.now()}.json`;
+    const probe = await ssh(`cd ${NAS_DIR} && test -f scripts/portfolio-import.mjs && echo HAS_IMPORT`, { timeoutMs: 25000 });
+    if (!/HAS_IMPORT/.test(String(probe.output || ''))) {
+      throw new Error('NAS 上还没有 scripts/portfolio-import.mjs：请先用后台「部署到 NAS」推送一次代码，再做数据互通');
+    }
+    if (dryRun) return { ok: true, dryRun: true, remoteFile: remote };
+    const up = await scpRun(file, `${NAS_USER}@${NAS_HOST}:${remote}`);
+    if (!up.ok) throw new Error(`上传持仓文件失败：${String(up.output || '').trim().split(/\r?\n/).slice(-2).join(' / ') || 'scp 退出异常'}`);
+    const node = await nasNodeBin();
+    const cmd = `cd ${NAS_DIR} && ${node} scripts/portfolio-import.mjs ${remote} --user=${userId} --mode=${mode}`;
+    const imported = await ssh(cmd, { timeoutMs: 180000 });
+    await ssh(`rm -f ${remote}`, { timeoutMs: 20000 });
+    if (!imported.ok) {
+      throw new Error(`NAS 导入持仓失败：${String(imported.output || '').trim().split(/\r?\n/).slice(-3).join(' / ') || '脚本退出异常'}`);
+    }
+    return {
+      ok: true,
+      dryRun: false,
+      remoteFile: remote,
+      output: String(imported.output || '').trim().slice(-600),
+    };
+  }
+
+  /** NAS → 本机：让 NAS 导出某账号的持仓 JSON 并拉回来 */
+  async function pullPortfolio({ file, remoteFile, userId } = {}) {
+    if (!supported) throw Object.assign(new Error('只有本机才能从 NAS 拉取持仓'), { status: 400 });
+    if (!file) throw new Error('缺少本地落盘路径');
+    if (!userId) throw new Error('缺少账号 ID');
+    const remote = remoteFile || `/tmp/gp-portfolio-pull-${Date.now()}.json`;
+    const probe = await ssh(`cd ${NAS_DIR} && test -f scripts/portfolio-export.mjs && echo HAS_EXPORT`, { timeoutMs: 25000 });
+    if (!/HAS_EXPORT/.test(String(probe.output || ''))) {
+      throw new Error('NAS 上还没有 scripts/portfolio-export.mjs：请先用后台「部署到 NAS」推送一次代码，再做数据互通');
+    }
+    const node = await nasNodeBin();
+    const exported = await ssh(`cd ${NAS_DIR} && ${node} scripts/portfolio-export.mjs --user=${userId} --out=${remote}`, { timeoutMs: 120000 });
+    if (!exported.ok) {
+      throw new Error(`NAS 导出持仓失败：${String(exported.output || '').trim().split(/\r?\n/).slice(-3).join(' / ') || '脚本退出异常'}`);
+    }
+    const down = await scpRun(`${NAS_USER}@${NAS_HOST}:${remote}`, file);
+    await ssh(`rm -f ${remote}`, { timeoutMs: 20000 });
+    if (!down.ok) throw new Error(`下载持仓文件失败：${String(down.output || '').trim().split(/\r?\n/).slice(-2).join(' / ') || 'scp 退出异常'}`);
+    return { ok: true, remoteFile: remote, output: String(exported.output || '').trim().slice(-600) };
+  }
+
   function start() {
     if (!supported) {
       throw Object.assign(new Error('本机才有源文件，NAS 上不能自行推送'), { status: 400 });
@@ -613,7 +685,16 @@ function createDeployToNas(options = {}) {
     return snap;
   }
 
-  return { start, snapshot, snapshotWithNas, nasInfo, supported, path: { keyPath, rootDir, stateFile } };
+  return {
+    start,
+    snapshot,
+    snapshotWithNas,
+    nasInfo,
+    pushPortfolio,
+    pullPortfolio,
+    supported,
+    path: { keyPath, rootDir, stateFile },
+  };
 }
 
 module.exports = { createDeployToNas, STEPS, CODE_ITEMS, NAS_HOST };
