@@ -669,7 +669,7 @@ body.admin-modal-open { overflow: hidden; }
 }
 .admin-actions .seg button:last-child { border-right: 0; }
 .admin-actions .seg button.is-active { background: rgba(56, 189, 248, .16); color: #dff1ff; }
-#sec-paper .admin-table td.num { font-family: var(--num); white-space: nowrap; }
+#sec-paper .admin-table td.num, #sec-dataops .admin-table td.num { font-family: var(--num); white-space: nowrap; }
 #paperDetailWrap .admin-kv-list { margin-bottom: 10px; }
 /* v2.9.1：参数体检候选表 */
 .st-check-best td { background: rgba(56, 189, 248, .08); }
@@ -678,6 +678,8 @@ body.admin-modal-open { overflow: hidden; }
 .mt10 { margin-top: 10px; }
 @media (max-width: 720px) {
   #sec-paper .admin-table th:nth-child(3), #sec-paper .admin-table td:nth-child(3),
-  #sec-paper .admin-table th:nth-child(4), #sec-paper .admin-table td:nth-child(4) { display: none; }
+  #sec-paper .admin-table th:nth-child(4), #sec-paper .admin-table td:nth-child(4),
+  #sec-dataops .admin-table th:nth-child(3), #sec-dataops .admin-table td:nth-child(3),
+  #sec-dataops .admin-table th:nth-child(4), #sec-dataops .admin-table td:nth-child(4) { display: none; }
 }
 
