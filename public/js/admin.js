@@ -287,6 +287,7 @@ function switchSection(section) {
   const titles = {
     overview: '概览', users: '用户管理', logins: '登录记录', stats: '使用统计',
     system: '系统状态', logs: '系统日志', deploy: '部署到 NAS', strategy: '持仓策略',
+    dataops: '持仓数据',
     paper: '模拟交易', push: '定时推送', source: '数据源', net: '手机访问', changelog: '更新履历',
   };
   $('#adminTitle').textContent = titles[section] || '后台管理';
@@ -304,6 +305,7 @@ function loadSection(section) {
     logs: loadLogs,
     deploy: loadDeploy,
     strategy: loadStrategy,
+    dataops: loadDataOps,
     paper: loadPaper,
     push: loadPush,
     source: loadSource,
@@ -2049,7 +2051,6 @@ async function loadPaper() {
     const box = $('#paperUsers');
     if (box) box.innerHTML = `<div class="admin-empty">读取失败：${esc(err.message)}</div>`;
   }
-  loadPortfolioHistory();
 }
 
 function renderPaperAdmin(data) {
@@ -2197,7 +2198,6 @@ function bindPaper() {
   if (save) save.addEventListener('click', savePaperInitial);
   const close = $('#paperDetailClose');
   if (close) close.addEventListener('click', () => { const wrap = $('#paperDetailWrap'); if (wrap) wrap.hidden = true; });
-  bindPortfolioCards();
 }
 
 /* ---------------- 持仓保存历史 / 本机 ⇄ NAS 数据互通（v2.9.2） ----------------
@@ -2321,7 +2321,23 @@ function bindPortfolioCards() {
     pull.dataset.bound = '1';
     pull.addEventListener('click', () => transferPortfolioData('pull'));
   }
-  loadPortfolioHistory();
+}
+
+/** 切到「持仓数据」页（v2.9.3 从模拟交易拆出）：先填两个账号下拉，再拉保存历史。
+    之前「数据互通」卡的账号下拉要等点了按钮才填，刚进页面是空的，这次一并补上。 */
+async function loadDataOps() {
+  await loadPortfolioHistory();
+  try {
+    const users = await loadPortfolioUsers();
+    fillPortfolioUserSelect($('#ptUser'), users);
+  } catch (err) {
+    const box = $('#ptResult');
+    if (box) box.textContent = `账号列表读取失败：${err.message}`;
+  }
+}
+
+function bindDataOps() {
+  bindPortfolioCards();
 }
 
 /* ---------------- 启动 ---------------- */
@@ -2339,6 +2355,7 @@ function bindChrome() {
   bindDeploy();
   bindStrategy();
   bindPaper();
+  bindDataOps();
   stTipBind();
   stModalBind();
   setInterval(() => {

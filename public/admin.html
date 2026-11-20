@@ -57,6 +57,7 @@
         <button type="button" data-sec="logs">系统日志</button>
         <button type="button" data-sec="deploy">部署到 NAS</button>
         <button type="button" data-sec="strategy">持仓策略</button>
+        <button type="button" data-sec="dataops">持仓数据</button>
         <button type="button" data-sec="paper">模拟交易</button>
         <button type="button" data-sec="push">定时推送</button>
         <button type="button" data-sec="source">数据源</button>
@@ -316,34 +317,10 @@
         </article>
       </section>
 
-      <!-- 模拟交易（v2.9.0） -->
-      <section class="admin-section" id="sec-paper">
-        <div class="admin-cards" id="paperCards"></div>
-        <article class="admin-card">
-          <div class="admin-card-head">
-            <h2>全局设置</h2>
-            <span class="muted small">初始资金只影响新账号与后续「重置」；已有账户保留自己的初始资金，避免改写历史盈亏。</span>
-          </div>
-          <div class="admin-actions">
-            <label class="admin-inline-field"><span>初始资金（元）</span><input type="number" id="paperInitial" min="10000" max="100000000" step="10000"></label>
-            <button type="button" class="admin-btn primary" id="paperSaveInitial">保存</button>
-          </div>
-        </article>
-        <article class="admin-card">
-          <div class="admin-card-head">
-            <h2>用户模拟盘</h2>
-            <span class="muted small" id="paperMeta">—</span>
-          </div>
-          <div id="paperUsers" class="admin-table-wrap"><div class="admin-empty">加载中…</div></div>
-        </article>
-        <article class="admin-card" id="paperDetailWrap" hidden>
-          <div class="admin-card-head">
-            <h2 id="paperDetailTitle">持仓明细</h2>
-            <button type="button" class="admin-link" id="paperDetailClose">收起</button>
-          </div>
-          <div id="paperDetail" class="admin-table-wrap"></div>
-        </article>
-
+      <!-- 持仓数据（v2.9.3）：持仓保存快照 / 回滚 / 本机 ⇄ NAS 互通。
+           从「模拟交易」移出——这两张卡操作的是持仓存储本身（data/portfolio-*），
+           与模拟盘账户、排行榜无关，单独一页更好找。 -->
+      <section class="admin-section" id="sec-dataops">
         <article class="admin-card">
           <div class="admin-card-head">
             <h2>持仓保存历史</h2>
@@ -372,6 +349,35 @@
             <button type="button" class="admin-btn" id="ptPull">NAS → 本机</button>
           </div>
           <p class="muted small" id="ptResult">推送前会先备份线上 data/；拉取前会先备份本机数据；两边账号 ID 必须一致。</p>
+        </article>
+      </section>
+
+      <!-- 模拟交易（v2.9.0） -->
+      <section class="admin-section" id="sec-paper">
+        <div class="admin-cards" id="paperCards"></div>
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>全局设置</h2>
+            <span class="muted small">初始资金只影响新账号与后续「重置」；已有账户保留自己的初始资金，避免改写历史盈亏。</span>
+          </div>
+          <div class="admin-actions">
+            <label class="admin-inline-field"><span>初始资金（元）</span><input type="number" id="paperInitial" min="10000" max="100000000" step="10000"></label>
+            <button type="button" class="admin-btn primary" id="paperSaveInitial">保存</button>
+          </div>
+        </article>
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>用户模拟盘</h2>
+            <span class="muted small" id="paperMeta">—</span>
+          </div>
+          <div id="paperUsers" class="admin-table-wrap"><div class="admin-empty">加载中…</div></div>
+        </article>
+        <article class="admin-card" id="paperDetailWrap" hidden>
+          <div class="admin-card-head">
+            <h2 id="paperDetailTitle">持仓明细</h2>
+            <button type="button" class="admin-link" id="paperDetailClose">收起</button>
+          </div>
+          <div id="paperDetail" class="admin-table-wrap"></div>
         </article>
       </section>
 
