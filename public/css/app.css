@@ -3243,3 +3243,64 @@ button[hidden] { display: none !important; }
   .paper-ratio-seg button { flex: 1; padding: 9px 0; }
 }
 
+
+/* =========================================================
+   v2.10.0：基金页新增子页 / 自选基金多组合
+   ========================================================= */
+.fund-board-table .compare-col { width: 40px; text-align: center; }
+.fund-board-table .compare-check { accent-color: #38bdf8; width: 14px; height: 14px; }
+.compare-trend-wrap { margin-bottom: 12px; }
+.compare-trend { height: 250px; }
+.fund-theme-chart { height: 240px; }
+.fund-portfolio-tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.025); overflow-x: auto; }
+.fund-portfolio-tab { flex: none; padding: 7px 12px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; white-space: nowrap; }
+.fund-portfolio-tab:hover { color: var(--text); background: rgba(255,255,255,.03); }
+.fund-portfolio-tab.is-active { background: linear-gradient(135deg, rgba(56,189,248,.16), rgba(129,140,248,.12)); color: #dff6ff; box-shadow: inset 0 0 0 1px rgba(56,189,248,.22); }
+.fund-portfolio-tab b { margin-left: 6px; color: #7f8fa8; font-family: var(--num); font-size: 9px; font-weight: 500; }
+.fund-portfolio-actions { display: flex; gap: 6px; margin-left: auto; padding-left: 8px; }
+.fund-portfolio-actions button { flex: none; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); font-size: 10px; cursor: pointer; }
+.fund-portfolio-actions button:hover { border-color: rgba(56,189,248,.32); color: var(--accent); }
+.fund-mover-tabs { display: flex; gap: 4px; }
+.fund-mover-list { display: grid; gap: 6px; margin-top: 10px; }
+.fund-mover-row { display: grid; grid-template-columns: 18px minmax(0,1fr) 92px 92px 80px; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid rgba(148,163,184,.09); border-radius: 7px; background: rgba(255,255,255,.012); cursor: pointer; }
+.fund-mover-row:hover { border-color: rgba(56,189,248,.28); }
+.fund-mover-rank { color: #5e6d84; font-family: var(--num); font-size: 11px; }
+.fund-mover-name { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.fund-mover-sub { color: #64748b; font-size: 9px; }
+.fund-mover-val { font-family: var(--num); font-size: 12px; text-align: right; }
+.pnl-calendar-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.pnl-calendar-nav { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+.pnl-calendar-nav button { width: 24px; height: 24px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.pnl-calendar { display: grid; grid-template-columns: 44px repeat(5, minmax(0,1fr)); gap: 4px; }
+.pnl-calendar-head { padding: 4px 0; color: #5e6d84; font-size: 9px; text-align: center; }
+.pnl-calendar-week { padding: 6px 0; color: #5e6d84; font-family: var(--num); font-size: 9px; text-align: center; }
+.pnl-calendar-cell { min-height: 46px; padding: 4px 5px; border: 1px solid rgba(148,163,184,.08); border-radius: 6px; background: rgba(255,255,255,.012); }
+.pnl-calendar-cell.is-empty { border-color: transparent; background: transparent; }
+.pnl-calendar-cell.is-rest { background: rgba(148,163,184,.03); }
+.pnl-calendar-cell.is-up { border-color: rgba(255,77,94,.24); background: rgba(255,77,94,.08); }
+.pnl-calendar-cell.is-down { border-color: rgba(22,199,132,.24); background: rgba(22,199,132,.08); }
+.pnl-calendar-day { color: #8fa2bb; font-family: var(--num); font-size: 9px; }
+.pnl-calendar-val { margin-top: 3px; font-family: var(--num); font-size: 10px; word-break: break-all; }
+.pnl-calendar-months { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 6px; }
+.pnl-calendar-years { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.pnl-calendar-tile { padding: 10px; border: 1px solid rgba(148,163,184,.1); border-radius: 7px; background: rgba(255,255,255,.012); }
+.pnl-calendar-tile.is-up { border-color: rgba(255,77,94,.24); background: rgba(255,77,94,.08); }
+.pnl-calendar-tile.is-down { border-color: rgba(22,199,132,.24); background: rgba(22,199,132,.08); }
+.pnl-calendar-tile span { display: block; color: #64748b; font-size: 9px; }
+.pnl-calendar-tile b { display: block; margin-top: 4px; font-family: var(--num); font-size: 13px; font-weight: 500; }
+.vs-index-chart { height: 260px; }
+.vs-index-kpis { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; margin: 10px 0; }
+@media (max-width: 1180px) {
+  .fund-mover-row { grid-template-columns: 18px minmax(0,1fr) 92px 92px; }
+  .fund-mover-row .fund-mover-weight { display: none; }
+  .vs-index-kpis { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+@media (max-width: 720px) {
+  .pnl-calendar { grid-template-columns: 34px repeat(5, minmax(0,1fr)); gap: 3px; }
+  .pnl-calendar-cell { min-height: 40px; padding: 3px; }
+  .pnl-calendar-val { font-size: 8px; }
+  .pnl-calendar-months { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  .fund-mover-row { grid-template-columns: 16px minmax(0,1fr) 76px; }
+  .fund-mover-row .fund-mover-name-cell + .fund-mover-val { display: none; }
+  .vs-index-chart { height: 200px; }
+}

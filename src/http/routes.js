@@ -57,6 +57,7 @@ function createHttpRoutes(deps) {
     fetchQuoteList,
     flushStats,
     fs,
+    fundAnalytics,
     getAdvice,
     getBattle,
     getChangelog,
@@ -1259,7 +1260,10 @@ async function handleApi(req, res, url) {
     const user = currentUser(req);
     if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
     const codes = (q.get('codes') || '').split(',').map((s) => s.trim()).filter(Boolean);
-    return getFundPnlSeries(codes, Number(q.get('days') || 400));
+    const rawIndex = q.get('index');
+    return getFundPnlSeries(codes, Number(q.get('days') || 400), {
+      index: rawIndex === '0' || rawIndex === 'none' ? false : (rawIndex || '1.000001'),
+    });
   }
   if (p === '/api/funds/stock-rank') {
     const ft = STOCK_FUND_TYPES[q.get('type')] ? q.get('type') : 'gp';
@@ -1288,6 +1292,41 @@ async function handleApi(req, res, url) {
   if (p === '/api/funds/sector-flow') return getFundSectorFlow();
   if (p === '/api/funds/hot') return getHotFunds();
   if (p === '/api/funds/warnings') return getFundWarnings();
+  /* ---------------------------------------------------------
+     v2.10.0：基金页新增子页
+     - /api/funds/distribution   基金涨跌分布（scope=equity|etf）
+     - /api/funds/themes         板块总览（基金主题口径）
+     - /api/funds/theme          某个主题的当日分时 + 历史走势 + 组内基金
+     - /api/funds/board          场外基金四榜（gain/loss/hot/etf）
+     - /api/funds/intraday-series 当日「我的组合 vs 上证」盘中估算序列
+     --------------------------------------------------------- */
+  if (p === '/api/funds/distribution') {
+    return fundAnalytics.getFundDistribution(q.get('scope') === 'etf' ? 'etf' : 'equity');
+  }
+  if (p === '/api/funds/themes') {
+    return fundAnalytics.getFundThemeOverview({ type: q.get('type') === 'etf' ? 'etf' : 'equity' });
+  }
+  if (p === '/api/funds/theme') {
+    const sector = q.get('sector');
+    if (!sector) throw Object.assign(new Error('缺少板块名称'), { status: 400 });
+    return fundAnalytics.getFundThemeDetail({ sector, days: Number(q.get('days') || 120) });
+  }
+  if (p === '/api/funds/board') {
+    return fundAnalytics.getFundBoard({
+      tab: q.get('tab') || 'gain',
+      type: q.get('type') || 'all',
+      limit: Number(q.get('limit') || 50),
+    });
+  }
+  if (p === '/api/funds/intraday-series') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    const codes = (q.get('codes') || '').split(',').map((s) => s.trim()).filter(Boolean);
+    return fundAnalytics.getFundIntradaySeries({
+      codes,
+      indexSecid: q.get('index') || '1.000001',
+    });
+  }
   const err = new Error('未知接口');
   err.status = 404;
   throw err;

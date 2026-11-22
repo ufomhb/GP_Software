@@ -61,6 +61,7 @@
         <button type="button" data-sec="paper">模拟交易</button>
         <button type="button" data-sec="push">定时推送</button>
         <button type="button" data-sec="source">数据源</button>
+        <button type="button" data-sec="ui">界面管理</button>
         <button type="button" data-sec="net">手机访问</button>
         <button type="button" data-sec="changelog">更新履历</button>
       </nav>
@@ -131,6 +132,7 @@
                 <option value="clear">清空日志</option>
                 <option value="deploy">推送部署</option>
                 <option value="strategy">策略记录</option>
+                <option value="ui">界面模块</option>
               </select>
               <button type="button" class="admin-btn" id="loginRefresh">刷新</button>
               <button type="button" class="admin-btn danger" id="loginClear" hidden>清空日志</button>
@@ -443,6 +445,23 @@
           <div id="netUrls" class="admin-net-urls"><div class="admin-empty">加载中…</div></div>
           <div class="admin-actions"><button type="button" class="admin-btn" id="netCopy">复制手机地址</button><button type="button" class="admin-btn" id="netReload">重新检测</button></div>
           <p class="admin-note">打不开时检查：① 手机与电脑是否同一 Wi-Fi；② Windows 防火墙是否放行 node；③ 只想本机访问可用 <code>--host=127.0.0.1</code> 启动。</p>
+        </article>
+      </section>
+
+      <!-- 界面管理（v2.10.0）：基金页子页显隐。用户反馈部分模块参考性不强，默认隐藏，这里可随时打开 -->
+      <section class="admin-section" id="sec-ui">
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>基金页模块显隐</h2>
+            <span class="muted small">默认隐藏「场外资金流 / 每日代理 / ETF 资金流 / 股票型基金 / 债基」；保存后前端刷新一次即生效</span>
+          </div>
+          <div id="uiModules" class="admin-ui-list"><div class="admin-empty">加载中…</div></div>
+          <div class="admin-actions">
+            <button type="button" class="admin-btn primary" id="uiSave">保存界面设置</button>
+            <button type="button" class="admin-btn" id="uiReset">恢复默认</button>
+            <span class="muted small" id="uiMeta">—</span>
+          </div>
+          <p class="admin-note">这里只是「显示 / 隐藏」，不会删除任何功能；隐藏后地址栏里的 <code>?fundview=</code> 深链也会自动回退到第一个可见子页。</p>
         </article>
       </section>
 

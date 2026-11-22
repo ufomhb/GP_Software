@@ -683,3 +683,9 @@ body.admin-modal-open { overflow: hidden; }
   #sec-dataops .admin-table th:nth-child(4), #sec-dataops .admin-table td:nth-child(4) { display: none; }
 }
 
+
+/* v2.10.0：界面管理（基金页模块显隐） */
+.admin-ui-list { display: grid; gap: 2px; margin-bottom: 12px; }
+.admin-ui-row { padding: 9px 2px; border-bottom: 1px dashed rgba(148, 163, 184, .1); }
+.admin-ui-row:last-child { border-bottom: 0; }
+.admin-ui-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: #38bdf8; }

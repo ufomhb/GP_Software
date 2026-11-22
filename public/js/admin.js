@@ -288,7 +288,7 @@ function switchSection(section) {
     overview: '概览', users: '用户管理', logins: '登录记录', stats: '使用统计',
     system: '系统状态', logs: '系统日志', deploy: '部署到 NAS', strategy: '持仓策略',
     dataops: '持仓数据',
-    paper: '模拟交易', push: '定时推送', source: '数据源', net: '手机访问', changelog: '更新履历',
+    paper: '模拟交易', push: '定时推送', source: '数据源', ui: '界面管理', net: '手机访问', changelog: '更新履历',
   };
   $('#adminTitle').textContent = titles[section] || '后台管理';
   $('#adminRefreshAt').textContent = '';
@@ -309,6 +309,7 @@ function loadSection(section) {
     paper: loadPaper,
     push: loadPush,
     source: loadSource,
+    ui: loadUi,
     net: loadNet,
     changelog: loadChangelog,
   };
@@ -2340,6 +2341,77 @@ function bindDataOps() {
   bindPortfolioCards();
 }
 
+/* ---------------- 界面管理（v2.10.0） ---------------- */
+
+const UI_FUND_MODULES = [
+  ['sector', '板块资金', 'ETF 主力净流入 + 资金主线 + 板块明细'],
+  ['theme', '板块总览', '基金主题按当日涨跌 / 连涨天数排序，点开看当日分时与历史走势'],
+  ['dist', '基金涨跌分布', '上涨 / 下跌家数与分档柱状图、净值日'],
+  ['openfund', '场外基金', '涨幅榜 / 跌幅榜 / 热门榜 / ETF 榜，含基金比较'],
+  ['openflow', '场外资金流', '基金季报申购赎回（用户反馈参考性不强，默认隐藏）'],
+  ['proxy', '每日代理', '目标 ETF 资金流按规模分摊（默认隐藏）'],
+  ['flow', 'ETF 资金流', 'ETF 当日主力净流入明细（默认隐藏）'],
+  ['stock', '股票型基金', '股票 / 指数 / 混合型基金排行与情报（默认隐藏）'],
+  ['bond', '债基', '债券型基金排行（默认隐藏）'],
+];
+const UI_FUND_DEFAULTS = {
+  sector: true, theme: true, dist: true, openfund: true,
+  openflow: false, proxy: false, flow: false, stock: false, bond: false,
+};
+
+function renderUiModules() {
+  const box = $('#uiModules');
+  if (!box) return;
+  const cfg = (state.uiConfig && state.uiConfig.fundModules) || UI_FUND_DEFAULTS;
+  box.innerHTML = UI_FUND_MODULES.map(([key, label, desc]) => `
+    <label class="admin-row admin-ui-row">
+      <span><b>${esc(label)}</b><small>${esc(desc)}</small></span>
+      <input type="checkbox" data-ui-module="${esc(key)}" ${cfg[key] !== false ? 'checked' : ''}>
+    </label>`).join('');
+}
+
+async function loadUi() {
+  const box = $('#uiModules');
+  if (box) box.innerHTML = '<div class="admin-empty">加载中…</div>';
+  try {
+    const data = await api('/api/ui/config', 12000);
+    state.uiConfig = data;
+    renderUiModules();
+    if ($('#uiMeta')) {
+      $('#uiMeta').textContent = data.updatedAt
+        ? `最后保存 ${new Date(data.updatedAt).toLocaleString('zh-CN', { hour12: false })}`
+        : '尚未保存过（当前为代码内置默认）';
+    }
+  } catch (err) {
+    if (box) box.innerHTML = `<div class="admin-empty">读取失败：${esc(err.message)}</div>`;
+  }
+}
+
+async function saveUi(fundModules) {
+  const patch = fundModules || {};
+  if (!fundModules) {
+    $$('[data-ui-module]').forEach((el) => { patch[el.dataset.uiModule] = el.checked; });
+  }
+  const btn = $('#uiSave');
+  if (btn) btn.disabled = true;
+  try {
+    const data = await apiPost('/api/admin/ui/config', { fundModules: patch }, 15000);
+    state.uiConfig = data.config;
+    renderUiModules();
+    if ($('#uiMeta')) $('#uiMeta').textContent = `已保存 ${new Date(data.config.updatedAt).toLocaleString('zh-CN', { hour12: false })}`;
+    toast('界面设置已保存，前端刷新后生效', 'ok');
+  } catch (err) {
+    toast(`保存失败：${err.message}`, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function bindUi() {
+  $('#uiSave') && $('#uiSave').addEventListener('click', () => saveUi());
+  $('#uiReset') && $('#uiReset').addEventListener('click', () => saveUi({ ...UI_FUND_DEFAULTS }));
+}
+
 /* ---------------- 启动 ---------------- */
 
 function bindChrome() {
@@ -2356,6 +2428,7 @@ function bindChrome() {
   bindStrategy();
   bindPaper();
   bindDataOps();
+  bindUi();
   stTipBind();
   stModalBind();
   setInterval(() => {

@@ -690,12 +690,15 @@
             <div id="fundSearchPop" class="search-pop fund-search-pop" hidden></div>
           </div>
           <button class="btn primary" id="fundSearchBtn">搜索</button>
+          <button class="btn" id="fundCompareOpen" title="选择 2~4 只基金做指标与走势对比">基金比较</button>
         </div>
       </div>
 
       <div class="fund-subnav" id="fundSubnav">
         <button class="is-active" data-fund-view="sector">板块资金</button>
+        <button data-fund-view="theme">板块总览</button>
         <button data-fund-view="dist">基金涨跌分布</button>
+        <button data-fund-view="openfund">场外基金</button>
         <button data-fund-view="openflow">场外资金流</button>
         <button data-fund-view="proxy">每日代理</button>
         <button data-fund-view="flow">ETF 资金流</button>
@@ -765,6 +768,56 @@
           <div id="fundDistChart" class="distribution-chart compact"></div>
           <p class="muted small mt12" id="fundDistNote">--</p>
         </article>
+      </div>
+
+      <!-- 板块总览（v2.10.0：基金主题口径） -->
+      <div class="fund-pane" id="fundThemeView" hidden>
+        <div class="fund-toolbar">
+          <div class="seg" id="fundThemeSortSeg">
+            <button class="is-active" data-fund-theme-sort="day">按当日涨跌</button>
+            <button data-fund-theme-sort="streak">按连涨天数</button>
+            <button data-fund-theme-sort="month">按近1月</button>
+          </div>
+          <span class="muted small" id="fundThemeMeta">--</span>
+        </div>
+        <div class="fund-summary-grid" id="fundThemeSummary"></div>
+        <article class="panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">FUND THEME ROTATION</div><h3>基金主题板块总览</h3><span class="muted small">点任意一行看当日涨跌图与历史走势</span></div>
+            <span class="badge">主题口径</span>
+          </div>
+          <div class="table-scroll tall-table">
+            <table class="table" id="fundThemeTable"></table>
+          </div>
+        </article>
+      </div>
+
+      <!-- 场外基金（v2.10.0：涨幅榜 / 跌幅榜 / 热门榜 / ETF 榜） -->
+      <div class="fund-pane" id="fundOpenFundView" hidden>
+        <div class="fund-toolbar">
+          <div class="seg" id="fundBoardTabs">
+            <button class="is-active" data-fund-board-tab="gain">涨幅榜</button>
+            <button data-fund-board-tab="loss">跌幅榜</button>
+            <button data-fund-board-tab="hot">热门榜</button>
+            <button data-fund-board-tab="etf">ETF 榜</button>
+          </div>
+          <div class="seg" id="fundBoardTypeSeg">
+            <button class="is-active" data-fund-board-type="all">全部</button>
+            <button data-fund-board-type="gp">股票型</button>
+            <button data-fund-board-type="zs">指数型</button>
+            <button data-fund-board-type="hh">混合型</button>
+          </div>
+          <span class="muted small" id="fundBoardMeta">--</span>
+        </div>
+        <div class="table-scroll tall-table">
+          <table class="table fund-board-table" id="fundBoardTable"></table>
+        </div>
+        <div class="compare-bar" id="fundBoardCompareBar" hidden>
+          <span class="muted small">已选 <b id="fundBoardCompareCount">0</b> / 4 只</span>
+          <div class="compare-chips" id="fundBoardCompareChips"></div>
+          <button class="btn primary small" id="fundBoardCompareBtn">开始对比</button>
+          <button class="text-link" id="fundBoardCompareClear">清空</button>
+        </div>
       </div>
 
       <!-- 场外基金资金流 -->

@@ -5651,6 +5651,10 @@ async function openFundCompare(codes) {
     };
     overlay.innerHTML = `<div class="modal">
       <div class="modal-head"><div class="modal-title"><h2>基金对比</h2><span class="code">${items.length} 只 · 公开数据</span></div><button class="modal-close" data-close>×</button></div>
+      <div class="compare-trend-wrap">
+        <div class="panel-head"><div><h3>近半年走势对比</h3><span class="muted small">每只基金都按自身起点归一为 100</span></div><span class="badge">归一化</span></div>
+        <div id="compareTrendChart" class="compare-trend"></div>
+      </div>
       <div class="table-scroll"><table class="compare-table">
         <thead><tr><th>指标</th>${items.map((x) => `<th><span class="cmp-name">${esc(cleanName(x.name))}</span><span class="cmp-code">${esc(x.code)}</span></th>`).join('')}</tr></thead>
         <tbody>${rows.map(([label, getter, kind]) => {
@@ -5661,14 +5665,97 @@ async function openFundCompare(codes) {
       </table></div>
       <p class="muted small mt12">对比仅基于公开净值、阶段收益、规模、经理与最近一期重仓股；重仓重合以第一只基金为基准。历史业绩不代表未来。</p>
     </div>`;
+    compareTrendChart($('#compareTrendChart'), items.map((x) => ({ name: cleanName(x.name) || x.code, points: x.history || [] })));
   } catch (err) {
-    toast(`基金对比失败：{err.message}`, 'err');
+    toast(`基金对比失败：${err.message}`, 'err');
     closeOverlay();
   }
 }
 
-function openStockFund(code, name) {
-  if (!code) return;
+/** 「基金比较」选择器：搜索 + 已选 chips（与场外基金表 / 股票型基金表的勾选共用 state.compareFunds） */
+function openFundComparePicker() {
+  mountOverlay(`<div class="modal modal-sm">
+    <div class="modal-head"><div class="modal-title"><h2>基金比较</h2><span class="code">选择 2~4 只基金</span></div><button class="modal-close" data-close>×</button></div>
+    <div class="hold-form">
+      <label class="field-label" for="cmpSearch">搜索基金（代码 / 名称）</label>
+      <div class="input-wrap"><input id="cmpSearch" type="search" placeholder="例如 510300 / 华夏成长" autocomplete="off"><span>⌕</span></div>
+      <div id="cmpSearchList" class="search-pop fund-search-pop" style="position:static;margin-top:6px"></div>
+      <div class="compare-bar" style="margin-top:12px">
+        <span class="muted small">已选 <b id="cmpPickCount">0</b> / 4</span>
+        <div class="compare-chips" id="cmpPickChips"></div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn primary" id="cmpStart">开始对比</button>
+      <button class="btn" data-close>取消</button>
+    </div>
+  </div>`);
+  const listEl = $('#cmpSearchList');
+  const renderPick = () => {
+    if ($('#cmpPickCount')) $('#cmpPickCount').textContent = state.compareFunds.length;
+    if ($('#cmpPickChips')) {
+      $('#cmpPickChips').innerHTML = state.compareFunds
+        .map((f) => `<span class="compare-chip">${esc(cleanName(f.name))}<button data-cmp-remove="${esc(f.code)}">×</button></span>`)
+        .join('');
+    }
+    if ($('#cmpStart')) $('#cmpStart').disabled = state.compareFunds.length < 2;
+  };
+  const addPick = (item) => {
+    if (!item || !item.code) return;
+    if (state.compareFunds.some((f) => f.code === item.code)) {
+      toast('这只基金已在对比列表里', 'warn', 1600);
+      return;
+    }
+    if (state.compareFunds.length >= 4) {
+      toast('最多选择 4 只基金进行对比', 'warn', 1800);
+      return;
+    }
+    state.compareFunds.push({ code: String(item.code), name: item.name || item.code });
+    renderPick();
+  };
+  const renderResults = (items) => {
+    if (!listEl) return;
+    if (!items || !items.length) {
+      listEl.innerHTML = '<div class="empty small">输入基金代码或名称搜索</div>';
+      return;
+    }
+    listEl.innerHTML = items.map((x) => `<div class="fund-search-item" data-cmp-add="${esc(x.code)}" data-cmp-name="${esc(cleanName(x.name))}">
+      <div class="fs-main"><div class="fs-name">${esc(cleanName(x.name))}</div><div class="fs-code">${esc(x.code)}${x.ftype ? ` · ${esc(x.ftype)}` : ''}</div></div>
+      <button class="fs-add" type="button">＋ 加入</button>
+    </div>`).join('');
+  };
+  renderPick();
+  renderResults([]);
+  const input = $('#cmpSearch');
+  const search = debounce(async () => {
+    const q = input && input.value.trim();
+    if (!q) { renderResults([]); return; }
+    try {
+      const data = await api(`/api/funds/search?q=${encodeURIComponent(q)}`, 20000);
+      renderResults(data.items || []);
+    } catch (err) {
+      if (listEl) listEl.innerHTML = `<div class="empty small">搜索失败：${esc(err.message)}</div>`;
+    }
+  }, 320);
+  if (input) input.addEventListener('input', search);
+  listEl && listEl.addEventListener('click', (e) => {
+    const row = e.target.closest('[data-cmp-add]');
+    if (!row) return;
+    addPick({ code: row.dataset.cmpAdd, name: row.dataset.cmpName });
+  });
+  $('#cmpPickChips') && $('#cmpPickChips').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-cmp-remove]');
+    if (!btn) return;
+    state.compareFunds = state.compareFunds.filter((f) => f.code !== btn.dataset.cmpRemove);
+    renderPick();
+  });
+  $('#cmpStart') && $('#cmpStart').addEventListener('click', () => {
+    if (state.compareFunds.length < 2) return;
+    openFundCompare(state.compareFunds.map((f) => f.code));
+  });
+}
+
+function openStockFund(code, name) {  if (!code) return;
   if (!routeOpening) pushDetailRoute('fund', code);
   mountOverlay(`
     <div class="modal">
@@ -8495,6 +8582,21 @@ function bindEvents() {
     const openRow = e.target.closest('[data-stock-fund-code]');
     if (openRow) openStockFund(openRow.dataset.stockFundCode, openRow.dataset.stockFundName);
   });
+
+  $('#fundBoardCompareChips') && $('#fundBoardCompareChips').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-compare-remove]');
+    if (!btn) return;
+    state.compareFunds = state.compareFunds.filter((f) => f.code !== btn.dataset.compareRemove);
+    renderFundBoard();
+    renderFundBoardCompareBar();
+  });
+  $('#fundBoardCompareBtn') && $('#fundBoardCompareBtn').addEventListener('click', () => openFundCompare());
+  $('#fundBoardCompareClear') && $('#fundBoardCompareClear').addEventListener('click', () => {
+    state.compareFunds = [];
+    renderFundBoard();
+    renderFundBoardCompareBar();
+  });
+  $('#fundCompareOpen') && $('#fundCompareOpen').addEventListener('click', () => openFundComparePicker());
 
   $('#fundFlowDirSeg') && $('#fundFlowDirSeg').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-fund-dir]');

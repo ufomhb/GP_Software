@@ -650,9 +650,24 @@ test('DOM：预警面板显示类型标签与「已触发」，恶意名称不�
   assert.match(box.textContent, /监控中/, '还在盯的要标监控中');
   assert.match(box.textContent, /1 条监控中/, '计数应只算 active');
 });
-test('DOM：沪深300基金占比已迁入基金页，A 股页不再有该模块', () => {
-  assert.ok(document.querySelector('#fundSectorView #csi300RatioPanel'), '基金页板块资金子页应有该面板');
-  assert.equal(document.querySelector('#view-china #csi300RatioPanel'), null, 'A 股页不应再保留该面板');
+test('DOM：v2.10.0 沪深300基金占比已移回 A 股页，基金页不再保留该模块', () => {
+  assert.ok(document.querySelector('#view-china #csi300RatioPanel'), 'A 股页应有「头部沪深300基金 / 流通市值」');
+  assert.equal(document.querySelector('#fundSectorView #csi300RatioPanel'), null, '基金页不应再保留该面板');
+});
+
+test('DOM：v2.10.0 基金页新增 板块总览 / 基金涨跌分布 / 场外基金 三个子页', () => {
+  for (const [view, pane] of [
+    ['theme', '#fundThemeView'],
+    ['dist', '#fundDistView'],
+    ['openfund', '#fundOpenFundView'],
+  ]) {
+    assert.ok(document.querySelector(`#fundSubnav [data-fund-view="${view}"]`), `缺少 ${view} 子页按钮`);
+    assert.ok(document.querySelector(pane), `缺少 ${pane} 面板`);
+  }
+  assert.ok(document.querySelector('#fundThemeTable'), '板块总览要有表格');
+  assert.ok(document.querySelector('#fundDistChart'), '涨跌分布要有图表容器');
+  assert.ok(document.querySelector('#fundBoardTable'), '场外基金要有榜单表格');
+  assert.ok(document.querySelector('#fundCompareOpen'), '基金页要有「基金比较」入口');
 });
 
 test('DOM：板块资金与基金页互相跳转的入口都在', () => {

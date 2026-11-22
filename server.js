@@ -4652,6 +4652,26 @@ async function getFundCompare(codes) {
       const overlap = item.holdings.filter((h) => baseCodes.has(h.code)).length;
       item.overlap = baseCodes.size ? Math.round((overlap / baseCodes.size) * 100) : null;
     });
+    // v2.10.0：对比弹窗加一条「近半年归一化走势」，让「基金比较」不只是一张指标表
+    try {
+      const series = await getFundPnlSeries(list, 180, { index: false });
+      const byCode = new Map(((series && series.items) || []).map((x) => [String(x.code), x.points || []]));
+      for (const item of valid) {
+        const points = byCode.get(String(item.code)) || [];
+        const rows = points
+          .map((p) => ({ d: String(p.d).slice(0, 10), c: Number(p.c) }))
+          .filter((p) => /^\d{4}-\d{2}-\d{2}$/.test(p.d) && Number.isFinite(p.c) && p.c > 0)
+          .sort((a, b) => a.d.localeCompare(b.d));
+        if (rows.length >= 2) {
+          const base = rows[0].c;
+          item.history = rows.map((p) => ({ d: p.d, v: Math.round((p.c / base) * 10000) / 100 }));
+        } else {
+          item.history = [];
+        }
+      }
+    } catch {
+      valid.forEach((item) => { item.history = []; });
+    }
     return { items: valid, count: valid.length, updatedAt: Date.now() };
   });
 }
@@ -8913,13 +8933,16 @@ function periodReturnsFromSeries(points) {
   };
 }
 
-async function getFundPnlSeries(codes, days = 400) {
+async function getFundPnlSeries(codes, days = 400, options = {}) {
   const list = [...new Set((Array.isArray(codes) ? codes : []).map((c) => String(c || '').trim()).filter(Boolean))];
   if (list.length > FUND_PNL_MAX) {
     throw Object.assign(new Error(`一次最多统计 ${FUND_PNL_MAX} 只基金`), { status: 400 });
   }
-  if (!list.length) return { ok: true, items: [], missing: [], updatedAt: Date.now() };
-  const span = Math.max(30, Math.min(500, Number(days) || 400));
+  // v2.10.0：盈亏日历要看到更长的历史（最多 ~2 年），跨度上限从 500 放宽到 800，
+  // 单只基金按 span 缓存 6 小时，第二次打开走缓存。
+  const span = Math.max(30, Math.min(800, Number(days) || 400));
+  const indexSecid = options.index === false ? '' : String(options.index || '1.000001');
+  if (!list.length) return { ok: true, items: [], index: null, missing: [], updatedAt: Date.now() };
   const results = await mapLimit(list, 2, async (code) => {
     try {
       const type = isEtfLike(code, '') ? 'etf' : 'open';
@@ -8927,14 +8950,14 @@ async function getFundPnlSeries(codes, days = 400) {
         if (type === 'etf') {
           const secid = fundSecid(code);
           if (!secid) return null;
-          const kline = await getKline(secid, 101, Math.min(400, span + 40));
+          const kline = await getKline(secid, 101, Math.min(900, span + 40));
           const candles = (kline && kline.candles) || [];
           const points = candles
             .map((c) => ({ d: String(c.d).slice(0, 10), c: num(c.c) }))
             .filter((x) => Number.isFinite(x.c) && x.c > 0);
           return points.length ? { code, type, name: (kline && kline.name) || '', points } : null;
         }
-        const pages = Math.min(26, Math.max(2, Math.ceil((span + 20) / 20)));
+        const pages = Math.min(48, Math.max(2, Math.ceil((span + 20) / 20)));
         const navRows = await fetchFundNav(code, pages);
         const points = navRows
           .slice()
@@ -8955,10 +8978,47 @@ async function getFundPnlSeries(codes, days = 400) {
     if (!row) { missing.push(code); return; }
     items.push({ ...row, periods: periodReturnsFromSeries(row.points) });
   });
-  return { ok: true, items, missing, updatedAt: Date.now() };
+  // v2.10.0：组合收益要跟上证指数画在同一张图里，指数日线在这里一起返回（多一次 K 线请求，按 3 分钟缓存）
+  let index = null;
+  if (indexSecid) {
+    try {
+      const kline = await getKline(indexSecid, 101, Math.min(900, span + 40));
+      const points = ((kline && kline.candles) || [])
+        .map((c) => ({ d: String(c.d).slice(0, 10), c: num(c.c) }))
+        .filter((x) => Number.isFinite(x.c) && x.c > 0);
+      if (points.length) {
+        index = { code: indexSecid, name: (kline && kline.name) || '上证指数', points };
+      }
+    } catch { /* 指数取不到时前端只画组合曲线 */ }
+  }
+  return { ok: true, items, index, missing, updatedAt: Date.now() };
 }
 
 const deployToNas = createDeployToNas({ rootDir: __dirname, version: VERSION });
+
+/* v2.10.0：基金页新增子页的取数服务（涨跌分布 / 板块总览 / 场外基金榜 / 当日组合分时） */
+const fundAnalytics = require('./src/services/fund-analytics').createFundAnalytics({
+  cached,
+  mapLimit,
+  round,
+  num,
+  today: shanghaiToday,
+  fundBaseName,
+  getKline,
+  fetchEastmoneyTrends,
+  getIntraday,
+  getEtfUniverse,
+  getEtfFlow,
+  getAllEquityFunds,
+  fetchFundHoldingsProfile,
+  fetchFundStockRatio,
+  estimateFromProfile,
+  fundSecid,
+  classifyFundSector,
+  isEtfLike,
+  fundEstimateRoute,
+  STOCK_FUND_TYPES,
+});
 
 const httpRoutes = createHttpRoutes({
   ALLOW_REGISTER,
@@ -9003,6 +9063,7 @@ const httpRoutes = createHttpRoutes({
   fetchQuoteList,
   flushStats,
   fs,
+  fundAnalytics,
   getAdvice,
   getBattle,
   getChangelog,
