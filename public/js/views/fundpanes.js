@@ -8,10 +8,10 @@
    - 板块总览（#fundThemeView，基金主题口径）
    - 场外基金四个榜（#fundOpenFundView：涨幅/跌幅/热门/ETF）
    --------------------------------------------------------------- */
-import { state } from '../core.js?v=2.10.4';
-import { isNum, nf, priceFmt, pctFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.4';
-import { $, $$ } from '../dom.js?v=2.10.4';
-import { distributionChart, themeHistoryChart, intradayChart } from '../charts.js?v=2.10.4';
+import { state } from '../core.js?v=2.10.5';
+import { isNum, nf, priceFmt, pctFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.5';
+import { $, $$ } from '../dom.js?v=2.10.5';
+import { distributionChart, themeHistoryChart, intradayChart } from '../charts.js?v=2.10.5';
 
 /* ---------------- 基金涨跌分布 ---------------- */
 

@@ -1851,16 +1851,18 @@ test('DOM：v2.10.3 持仓调整批量保存与删除都会改当前组合（删
   app.state.fundHoldings = prevHold;
 });
 
-test('DOM：后台「持仓数据」页有持仓回收站卡片，前端调用对应接口', () => {
+test('DOM：后台「持仓数据」页展示「持仓删除历史」，带详情 / 恢复', () => {
   const adminHtml = readFileSync(join(ROOT, 'public', 'admin.html'), 'utf8');
-  for (const id of ['trashUser', 'trashReload', 'trashAll', 'trashList']) {
+  for (const id of ['phUser', 'phReload', 'phPending', 'phList']) {
     assert.ok(adminHtml.includes(`id="${id}"`), `后台缺少 #${id}`);
   }
-  assert.match(adminHtml, /持仓回收站/);
+  assert.match(adminHtml, /持仓删除历史/);
+  assert.match(adminHtml, /只记录被删的那个 TAB/);
   const adminJs = readFileSync(join(ROOT, 'public', 'js', 'admin.js'), 'utf8');
-  assert.match(adminJs, /loadHoldingTrash/);
-  assert.match(adminJs, /\/api\/admin\/portfolio\/trash/);
-  assert.match(adminJs, /\/api\/admin\/portfolio\/trash\/restore/);
+  assert.match(adminJs, /loadDeletionHistory/);
+  assert.match(adminJs, /\/api\/admin\/portfolio\/deletions/);
+  assert.match(adminJs, /data-del-detail/);
+  assert.match(adminJs, /data-del-restore/);
 });
 
 /* ---------------------------------------------------------

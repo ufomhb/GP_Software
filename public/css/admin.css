@@ -696,3 +696,7 @@ body.admin-modal-open { overflow: hidden; }
 .admin-table.admin-trash-snap { font-size: 12px; background: rgba(8, 14, 24, 0.35); }
 .admin-table.admin-trash-snap th, .admin-table.admin-trash-snap td { padding: 6px 8px; }
 
+/* v2.10.5：持仓删除历史（按被删的 TAB 展示详情） */
+.admin-del-detail > td { padding: 10px 12px 14px; background: rgba(56, 189, 248, 0.035); }
+.admin-del-section { margin: 8px 0 6px; color: var(--text-2); font-size: 12px; font-weight: 600; }
+

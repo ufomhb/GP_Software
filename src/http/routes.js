@@ -59,6 +59,9 @@ function createHttpRoutes(deps) {
     restoreHoldingTrash,
     // v2.10.4：按删除时的 TAB 快照整组恢复
     restoreHoldingTab,
+    // v2.10.5：按「被删的那个 TAB」汇总的删除历史
+    listDeletionEvents,
+    restoreDeletionEvent,
     // v2.10.0：多份持仓组合（主持仓 + 额外组合）
     mutatePortfolioGroup,
     publicPortfolioList,
@@ -544,6 +547,41 @@ async function handleAdmin(req, res, url) {
       ok: true,
       action: 'portfolio',
       reason: `按 TAB 快照恢复 ${target.username} 的「${out.portfolioName}」${out.restored} 只持仓`,
+    });
+    return out;
+  }
+
+  /* ---------------------------------------------------------
+     持仓删除历史（v2.10.5）
+     - GET  /api/admin/portfolio/deletions?userId=&pending=1  按「被删的那个 TAB」汇总的删除记录
+     - POST /api/admin/portfolio/deletions/restore           按原状态恢复该 TAB（保留建仓日）
+     --------------------------------------------------------- */
+  if (p === '/api/admin/portfolio/deletions' && req.method === 'GET') {
+    const id = String(q.get('userId') || '').trim();
+    if (!id) throw Object.assign(new Error('缺少 userId'), { status: 400 });
+    const target = loadUsers().users.find((u) => u.id === id);
+    if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
+    const items = listDeletionEvents(target, { includeRestored: q.get('pending') !== '1' });
+    return {
+      ok: true,
+      user: { id: target.id, username: target.username },
+      items,
+      total: items.length,
+      retentionDays: 365,
+    };
+  }
+  if (p === '/api/admin/portfolio/deletions/restore' && req.method === 'POST') {
+    const body = req.body || {};
+    const id = String(body.userId || '').trim();
+    if (!id) throw Object.assign(new Error('缺少 userId'), { status: 400 });
+    const target = loadUsers().users.find((u) => u.id === id);
+    if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
+    const out = restoreDeletionEvent({ user: target, id: body.id, ip: clientIp(req) });
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'portfolio',
+      reason: `从删除历史恢复 ${target.username} 的「${out.portfolioName}」${out.restored} 只持仓`,
     });
     return out;
   }

@@ -69,7 +69,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.10.4';
+const VERSION = '2.10.5';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -7705,6 +7705,272 @@ function saveHoldingTrashStore(user, list) {
   return cleaned;
 }
 
+/* ---------------- 删除事件：按「被删的那个 TAB」汇总（v2.10.5） ----------------
+ * 「我的持仓 · 收益与结构」里删掉一只基金或整个 TAB 时，后台只记录被删的那个 TAB：
+ * 基金名称 / 代码 / 份额 / 成本 / 建仓日（funds = 本次删掉的），
+ * 以及删除那一刻该 TAB 下的全部持仓（tabHoldings，用于按原状态恢复整个 TAB）。
+ * 其它 TAB 的数据不会混进这条记录。
+ */
+const DELETION_EVENTS_KEY = 'fund_deletion_events';
+const DELETION_EVENTS_MAX = 200;
+const DELETION_EVENTS_TTL = 365 * 86400000;
+
+function normalizeSnapshotFund(f) {
+  if (!f || !f.code) return null;
+  return {
+    code: String(f.code),
+    name: String(f.name || ''),
+    type: f.type === 'etf' ? 'etf' : 'open',
+    shares: Number(f.shares) || 0,
+    cost: Number(f.cost) || 0,
+    addedAt: Number(f.addedAt) || 0,
+  };
+}
+
+function deletionEventStore(user) {
+  if (!user || !user.id) return [];
+  const raw = dataStore.loadUserExtra(user.id, DELETION_EVENTS_KEY, []);
+  return Array.isArray(raw) ? raw.filter((x) => x && x.id && x.portfolioId) : [];
+}
+
+function saveDeletionEventStore(user, list) {
+  if (!user || !user.id) return [];
+  const now = Date.now();
+  const cleaned = (Array.isArray(list) ? list : [])
+    .filter((x) => x && x.id && x.portfolioId && Array.isArray(x.funds)
+      && (!Number(x.deletedAt) || now - Number(x.deletedAt) <= DELETION_EVENTS_TTL))
+    .sort((a, b) => (Number(b.deletedAt) || 0) - (Number(a.deletedAt) || 0))
+    .slice(0, DELETION_EVENTS_MAX);
+  dataStore.saveUserExtra(user.id, DELETION_EVENTS_KEY, cleaned);
+  return cleaned;
+}
+
+/** 老版本只留了逐条删除记录（fund_holding_trash）的，读的时候补成 TAB 事件并落盘 */
+function ensureDeletionEvents(user) {
+  const trash = holdingTrashStore(user);
+  const legacy = trash.filter((x) => !x.eventId);
+  if (!legacy.length) return deletionEventStore(user);
+  const events = deletionEventStore(user);
+  const groups = new Map();
+  for (const x of legacy) {
+    const key = `${x.portfolioId || 'default'}|${Number(x.deletedAt) || 0}|${x.tabDeleted ? 1 : 0}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(x);
+  }
+  const stamp = Date.now();
+  for (const [, entries] of groups) {
+    const first = entries[0];
+    const funds = entries.map((e) => normalizeSnapshotFund(e)).filter(Boolean);
+    const tabHoldings = (Array.isArray(first.tabSnapshot) && first.tabSnapshot.length
+      ? first.tabSnapshot
+      : funds).map(normalizeSnapshotFund).filter(Boolean);
+    const ev = {
+      id: `dt${stamp.toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+      portfolioId: first.portfolioId || 'default',
+      portfolioName: first.portfolioName || '',
+      tabCreatedAt: 0,
+      tabDeleted: Boolean(first.tabDeleted),
+      funds,
+      tabHoldings,
+      tabHoldingCount: tabHoldings.length,
+      trashIds: entries.map((e) => e.id),
+      deletedAt: Number(first.deletedAt) || stamp,
+      rev: Number(first.rev) || 0,
+      action: first.action || 'save',
+      source: first.source || '',
+      ip: first.ip || '',
+    };
+    events.push(ev);
+    for (const e of entries) e.eventId = ev.id;
+  }
+  saveHoldingTrashStore(user, trash);
+  return saveDeletionEventStore(user, events);
+}
+
+/** 后台：删除历史（默认全部，含已恢复；只包含被删 TAB 的数据） */
+function listDeletionEvents(user, { includeRestored = true } = {}) {
+  if (!user) return [];
+  const events = ensureDeletionEvents(user);
+  const doc = loadPortfolio(user);
+  const current = new Map();
+  current.set('default', (doc && doc.holdings) || {});
+  for (const g of (doc && doc.portfolios) || []) {
+    if (g && !g.isDefault) current.set(g.id, g.holdings || {});
+  }
+  const now = Date.now();
+  let changed = false;
+  for (const ev of events) {
+    if (Number(ev.restoredAt)) continue;
+    const map = current.get(ev.portfolioId || 'default') || {};
+    const funds = Array.isArray(ev.funds) ? ev.funds : [];
+    if (!funds.length) continue;
+    // 用户后来又加回来了（手动补录 / 从服务端恢复 / 快照回滚），状态改成已恢复
+    const allBack = funds.every((f) => Number((map[f.code] || {}).shares) > 0);
+    if (allBack) {
+      ev.restoredAt = now;
+      ev.restoredBy = 'detected';
+      ev.restoredInto = ev.portfolioId || 'default';
+      changed = true;
+    }
+  }
+  if (changed) saveDeletionEventStore(user, events);
+  const list = includeRestored ? events : events.filter((ev) => !Number(ev.restoredAt));
+  return list.map((ev) => {
+    const funds = (Array.isArray(ev.funds) ? ev.funds : []).map(normalizeSnapshotFund).filter(Boolean);
+    const tabHoldings = (Array.isArray(ev.tabHoldings) ? ev.tabHoldings : []).map(normalizeSnapshotFund).filter(Boolean);
+    return {
+      id: ev.id,
+      portfolioId: ev.portfolioId || 'default',
+      portfolioName: ev.portfolioName || (ev.portfolioId === 'default' ? '主持仓' : ''),
+      tabCreatedAt: Number(ev.tabCreatedAt) || 0,
+      tabDeleted: Boolean(ev.tabDeleted),
+      deletedAt: Number(ev.deletedAt) || 0,
+      rev: Number(ev.rev) || 0,
+      action: ev.action || 'save',
+      source: ev.source || '',
+      ip: ev.ip || '',
+      funds,
+      tabHoldings,
+      tabHoldingCount: tabHoldings.length || funds.length,
+      restoredAt: Number(ev.restoredAt) || 0,
+      restoredInto: ev.restoredInto || '',
+      restoredBy: ev.restoredBy || '',
+    };
+  });
+}
+
+/**
+ * 后台：按删除事件把整个 TAB 恢复回原状态（v2.10.5）
+ * 只写回被删的那个 TAB；原样保留每只基金的建仓日，所以盈亏统计仍从原建仓日开始，
+ * 不会把建仓之前的历史净值算进来。已有持仓的基金跳过，不覆盖后来的操作。
+ */
+function restoreDeletionEvent({ user, id, ip } = {}) {
+  if (!user) throw Object.assign(new Error('用户不存在'), { status: 404 });
+  const wantedId = String(id || '');
+  if (!wantedId) throw Object.assign(new Error('请选择要恢复的删除记录'), { status: 400 });
+  ensureDeletionEvents(user);
+  const events = deletionEventStore(user);
+  const ev = events.find((x) => String(x.id) === wantedId);
+  if (!ev) throw Object.assign(new Error('没有这条删除记录'), { status: 404 });
+  const source = (Array.isArray(ev.tabHoldings) && ev.tabHoldings.length ? ev.tabHoldings : ev.funds) || [];
+  const snapshot = source.map(normalizeSnapshotFund).filter((f) => f && f.shares > 0);
+  if (!snapshot.length) throw Object.assign(new Error('这条记录没有可恢复的持仓'), { status: 400 });
+
+  const before = loadPortfolio(user);
+  const now = Date.now();
+  const doc = {
+    funds: (before.funds || []).slice(),
+    holdings: { ...(before.holdings || {}) },
+    watchlist: (before.watchlist || []).slice(),
+    portfolios: (before.portfolios || [])
+      .filter((g) => g && !g.isDefault)
+      .map((g) => ({ ...g, holdings: { ...(g.holdings || {}) } })),
+  };
+  const portfolioId = ev.portfolioId || 'default';
+  const existingGroup = portfolioId === 'default'
+    ? null
+    : doc.portfolios.find((g) => g.id === portfolioId) || null;
+  const baseMap = portfolioId === 'default'
+    ? doc.holdings
+    : (existingGroup ? existingGroup.holdings : {});
+  const toRestore = [];
+  const skipped = [];
+  for (const f of snapshot) {
+    const cur = baseMap[f.code];
+    if (cur && Number(cur.shares) > 0) {
+      skipped.push({ code: f.code, status: 'exists' });
+      continue;
+    }
+    toRestore.push(f);
+  }
+  if (!toRestore.length) {
+    // 数据本来就都在：只更新状态，避免用户以为没点到
+    ev.restoredAt = now;
+    ev.restoredBy = 'admin';
+    ev.restoredInto = portfolioId;
+    saveDeletionEventStore(user, events);
+    return {
+      ok: true,
+      restored: 0,
+      skipped,
+      portfolioId,
+      portfolioName: ev.portfolioName || (portfolioId === 'default' ? '主持仓' : ''),
+      recreated: false,
+      message: '这个 TAB 下的持仓现在都还在，没有需要恢复的条目',
+    };
+  }
+  const entryOf = (f) => ({
+    shares: f.shares,
+    cost: f.cost,
+    updatedAt: now,
+    // 建仓日原样保留；老记录没有建仓日的按恢复时刻算，绝不回填建仓前的历史
+    addedAt: f.addedAt > 0 ? f.addedAt : now,
+  });
+  let targetId = portfolioId;
+  let targetName = ev.portfolioName || (portfolioId === 'default' ? '主持仓' : '组合');
+  let recreated = false;
+  if (portfolioId === 'default') {
+    for (const f of toRestore) doc.holdings[f.code] = entryOf(f);
+    targetId = 'default';
+    targetName = '主持仓';
+  } else if (existingGroup) {
+    for (const f of toRestore) existingGroup.holdings[f.code] = entryOf(f);
+    existingGroup.updatedAt = now;
+    targetId = existingGroup.id;
+    targetName = existingGroup.name;
+  } else {
+    const baseName = String(ev.portfolioName || '').trim().slice(0, 17) || '恢复的组合';
+    let name = baseName;
+    let n = 2;
+    const used = new Set(doc.portfolios.map((g) => g.name));
+    while (used.has(name) && n < 100) {
+      name = `${baseName}-${n}`;
+      n += 1;
+    }
+    const createdAt = Number(ev.tabCreatedAt) > 0 ? Number(ev.tabCreatedAt) : now;
+    const group = { id: makeGroupId(doc.portfolios), name, createdAt, updatedAt: now, holdings: {} };
+    for (const f of toRestore) group.holdings[f.code] = entryOf(f);
+    doc.portfolios.push(group);
+    targetId = group.id;
+    targetName = group.name;
+    recreated = true;
+  }
+  savePortfolio(user, doc);
+  ev.restoredAt = now;
+  ev.restoredBy = 'admin';
+  ev.restoredInto = targetId;
+  saveDeletionEventStore(user, events);
+  // 同步旧的逐条回收站记录，避免两处状态不一致
+  const trash = holdingTrashStore(user);
+  let trashChanged = false;
+  const codes = new Set(toRestore.map((f) => f.code));
+  for (const x of trash) {
+    if (Number(x.restoredAt)) continue;
+    if (String(x.portfolioId || 'default') !== String(portfolioId)) continue;
+    if (!codes.has(String(x.code))) continue;
+    x.restoredAt = now;
+    x.restoredInto = targetId;
+    x.restoredBy = 'admin';
+    trashChanged = true;
+  }
+  if (trashChanged) saveHoldingTrashStore(user, trash);
+  const after = loadPortfolio(user);
+  recordPortfolioWrite({
+    user, ip, action: 'deletion-restore', before, after, rev: portfolioRevOf(user), source: 'admin:deletion',
+  });
+  return {
+    ok: true,
+    restored: toRestore.length,
+    skipped,
+    portfolioId: targetId,
+    portfolioName: targetName,
+    recreated,
+    message: `已把「${targetName}」的 ${toRestore.length} 只持仓按删除时的状态恢复${skipped.length ? `，${skipped.length} 只已有持仓被跳过` : ''}${recreated ? '（原 TAB 已删除，已按原名称重建）' : ''}`,
+  };
+}
+
+
+
 /** before/after 里所有组合的持仓对比，找出被删除的条目并入档 */
 function archiveDeletedHoldings({ user, before, after, rev, action, source, ip } = {}) {
   if (!user || !user.id || !before) return [];
@@ -7742,7 +8008,7 @@ function archiveDeletedHoldings({ user, before, after, rev, action, source, ip }
     tabSnapshotCache.set(portfolioId, rows);
     return rows;
   };
-  const inspect = (portfolioId, portfolioName, holdings) => {
+  const inspect = (portfolioId, portfolioName, holdings, tabCreatedAt = 0) => {
     const next = afterMap.get(portfolioId);
     const nextHoldings = (next && next.holdings) || {};
     // 组合整体被删除时，after 里已经没有这个组合 → tabDeleted
@@ -7761,6 +8027,7 @@ function archiveDeletedHoldings({ user, before, after, rev, action, source, ip }
         type: meta.type === 'etf' ? 'etf' : 'open',
         portfolioId,
         portfolioName: portfolioName || '',
+        tabCreatedAt: Number(tabCreatedAt) || 0,
         shares,
         cost: Number(v && v.cost) || 0,
         addedAt: Number(v && v.addedAt) > 0 ? Number(v.addedAt) : 0,
@@ -7776,20 +8043,61 @@ function archiveDeletedHoldings({ user, before, after, rev, action, source, ip }
       });
     }
   };
-  inspect('default', '主持仓', before.holdings || {});
+  inspect('default', '主持仓', before.holdings || {}, 0);
   // 组合被整份删除时，它下面的每一条持仓也一并留档
   for (const g of before.portfolios || []) {
-    if (g && !g.isDefault) inspect(g.id, g.name || '', g.holdings || {});
+    if (g && !g.isDefault) inspect(g.id, g.name || '', g.holdings || {}, g.createdAt);
   }
   if (!found.length) return [];
   const list = holdingTrashStore(user);
+  const added = [];
   for (const entry of found) {
     // 同一只基金 + 同一组合在极短时间内只留一条（防止重复保存导致重复入档）
     const dup = list.some((x) => x.code === entry.code
       && x.portfolioId === entry.portfolioId
       && !Number(x.restoredAt)
       && Math.abs((Number(x.deletedAt) || 0) - now) < 3000);
-    if (!dup) list.push(entry);
+    if (!dup) {
+      list.push(entry);
+      added.push(entry);
+    }
+  }
+  if (added.length) {
+    // v2.10.5：按「被删的那个 TAB」汇总成一条删除事件，后台按它展示详情与恢复
+    const events = deletionEventStore(user);
+    const byTab = new Map();
+    for (const entry of added) {
+      if (!byTab.has(entry.portfolioId)) byTab.set(entry.portfolioId, []);
+      byTab.get(entry.portfolioId).push(entry);
+    }
+    const stamp = Date.now();
+    for (const [portfolioId, entries] of byTab) {
+      const first = entries[0];
+      const funds = entries.map((e) => normalizeSnapshotFund(e)).filter(Boolean);
+      const tabHoldings = (Array.isArray(first.tabSnapshot) && first.tabSnapshot.length ? first.tabSnapshot : funds)
+        .map(normalizeSnapshotFund)
+        .filter(Boolean);
+      const ev = {
+        id: `dt${stamp.toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        portfolioId,
+        portfolioName: first.portfolioName || '',
+        tabCreatedAt: Number(first.tabCreatedAt) || 0,
+        tabDeleted: Boolean(first.tabDeleted),
+        funds,
+        tabHoldings,
+        tabHoldingCount: tabHoldings.length,
+        trashIds: entries.map((e) => e.id),
+        deletedAt: now,
+        rev: Number(rev) || 0,
+        action: action || 'save',
+        source: source || '',
+        ip: ip || '',
+      };
+      events.push(ev);
+      // 标记逐条回收站记录已被这条事件覆盖，避免下次读时又被补成一条重复事件
+      for (const e of entries) e.eventId = ev.id;
+    }
+    saveDeletionEventStore(user, events);
   }
   saveHoldingTrashStore(user, list);
   return found;
@@ -9677,6 +9985,9 @@ const httpRoutes = createHttpRoutes({
   restoreHoldingTrash,
   // v2.10.4：按删除时的 TAB 快照整组恢复
   restoreHoldingTab,
+  // v2.10.5：按「被删的那个 TAB」汇总的删除历史
+  listDeletionEvents,
+  restoreDeletionEvent,
   loadPortfolio,
   // v2.10.0：多份持仓组合
   mutatePortfolioGroup,

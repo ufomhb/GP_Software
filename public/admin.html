@@ -8,8 +8,8 @@
   <meta name="robots" content="noindex,nofollow">
   <title>寰球智投 · 后台管理</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.10.4">
-  <link rel="stylesheet" href="/css/admin.css?v=2.10.4">
+  <link rel="stylesheet" href="/css/app.css?v=2.10.5">
+  <link rel="stylesheet" href="/css/admin.css?v=2.10.5">
 </head>
 <body class="admin-body">
   <!-- 登录 -->
@@ -325,32 +325,17 @@
       <section class="admin-section" id="sec-dataops">
         <article class="admin-card">
           <div class="admin-card-head">
-            <h2>持仓保存历史（快照）</h2>
-            <span class="muted small">每次保存持仓都会留一份整份快照，用于排查「到底存没存进去」或整体回滚；<b>删除了哪只持仓请往下看「持仓回收站」</b></span>
+            <h2>持仓删除历史</h2>
+            <span class="muted small">用户在「我的持仓 · 收益与结构」里删除时自动记录——<b>只记录被删的那个 TAB</b>（TAB 名称 + 该 TAB 下的基金、份额、成本、建仓日）；点「详情」看被删 TAB 的信息，点「恢复」按删除前的状态写回</span>
           </div>
           <div class="admin-form-row">
             <label class="admin-field"><span>账号</span><select id="phUser"></select></label>
             <button type="button" class="admin-btn" id="phReload">刷新</button>
+            <label class="admin-inline-field"><span>只看待恢复</span><input type="checkbox" id="phPending"></label>
             <span class="muted small" id="phMeta">—</span>
           </div>
           <div id="phList" class="admin-table-wrap"><div class="admin-empty">加载中…</div></div>
-        </article>
-
-        <!-- v2.10.3 / v2.10.4：用户删掉的持仓在这里留档 365 天；
-             每条记录带「删除时该 TAB（组合）下的全部持仓」快照，可单条恢复或整组恢复。 -->
-        <article class="admin-card">
-          <div class="admin-card-head">
-            <h2>持仓回收站（已删除的持仓与组合）</h2>
-            <span class="muted small">用户在「我的持仓 · 收益与结构」里删除时自动记录：TAB 名称、该 TAB 下有哪些基金、每只的份额 / 成本 / 建仓日；可单条恢复，也可按删除时的快照恢复整个 TAB（留档 365 天 / 最多 500 条）</span>
-          </div>
-          <div class="admin-form-row">
-            <label class="admin-field"><span>账号</span><select id="trashUser"></select></label>
-            <button type="button" class="admin-btn" id="trashReload">刷新</button>
-            <label class="admin-inline-field"><span>含已恢复</span><input type="checkbox" id="trashAll"></label>
-            <span class="muted small" id="trashMeta">—</span>
-          </div>
-          <div id="trashList" class="admin-table-wrap"><div class="admin-empty">加载中…</div></div>
-          <p class="muted small">「恢复」只写回这一条持仓；「恢复整个 TAB」会把删除那一刻该 TAB 下的全部基金按原份额 / 成本写回去（原组合已删除时按原名称重建）。现在已经有持仓的基金会跳过，不覆盖后来的操作。恢复后用户在自选基金页刷新或点「从服务端恢复」即可看到。</p>
+          <p class="muted small">恢复会按删除前保存的建仓日写回，盈亏统计仍从原建仓日开始（不会把建仓之前的净值算进来）；TAB 已被删除的会按原名称重建；现在已经有持仓的基金跳过，不覆盖后来的操作。留档 365 天 / 最多 200 条。</p>
         </article>
 
         <article class="admin-card">
@@ -568,6 +553,6 @@
     </div>
   </div>
 
-  <script src="/js/admin.js?v=2.10.4"></script>
+  <script src="/js/admin.js?v=2.10.5"></script>
 </body>
 </html>

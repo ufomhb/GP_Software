@@ -2226,7 +2226,19 @@ function fillPortfolioUserSelect(sel, users) {
   if (prev && users.some((u) => u.id === prev)) sel.value = prev;
 }
 
-async function loadPortfolioHistory() {
+/* ---------------- 持仓删除历史（v2.10.5） ----------------
+   用户删掉「我的持仓」里的一个 TAB 或其中一只基金时，服务端只记录
+   被删的那个 TAB（TAB 名称 + 基金 / 份额 / 成本 / 建仓日）。这里按 TAB
+   展示删除记录，「详情」看当时的 TAB 数据，「恢复」按原状态写回。
+   -------------------------------------------------------------------------- */
+function fmtDayOnly(ts) {
+  if (!ts) return '-';
+  try {
+    return new Date(Number(ts)).toLocaleDateString('en-CA', { timeZone: 'Asia/Hong_Kong' });
+  } catch { return String(ts); }
+}
+
+async function loadDeletionHistory() {
   const sel = $('#phUser');
   const box = $('#phList');
   const meta = $('#phMeta');
@@ -2240,150 +2252,70 @@ async function loadPortfolioHistory() {
       return;
     }
     if (sel && !sel.value) sel.value = uid;
-    const data = await api(`/api/admin/portfolio/history?userId=${encodeURIComponent(uid)}`);
-    if (meta) {
-      meta.textContent = `${data.user.username} · 当前版本 ${data.rev ? fmtClock(data.rev) : '未知'} · 共 ${(data.items || []).length} 份快照`;
-    }
-    if (!data.items || !data.items.length) {
-      box.innerHTML = '<div class="admin-empty">还没有保存记录（升级后每次保存持仓都会留一份快照）</div>';
-      return;
-    }
-    box.innerHTML = `<table class="admin-table"><thead><tr>
-        <th>保存时间</th><th>动作</th><th>来源</th><th>自选基金</th><th>持仓</th><th>组合</th><th>操作</th>
-      </tr></thead><tbody>${data.items.map((it) => `<tr>
-        <td class="nowrap">${esc(fmtClock(it.savedAt))}</td>
-        <td>${esc(it.action || 'save')}</td>
-        <td class="muted">${esc(it.source || '-')}</td>
-        <td class="num">${n(it.funds)}</td>
-        <td class="num">${n(it.holdings)}</td>
-        <td class="num">${n(it.counts && it.counts.groups)}</td>
-        <td><button type="button" class="admin-btn" data-ph-restore="${esc(String(it.rev))}" data-name="${esc(data.user.username)}">恢复</button></td>
-      </tr>`).join('')}</tbody></table>`;
-    $$('[data-ph-restore]', box).forEach((btn) => btn.addEventListener('click', () => {
-      restorePortfolioSnapshot(uid, btn.getAttribute('data-ph-restore'), btn.getAttribute('data-name'));
-    }));
-  } catch (err) {
-    box.innerHTML = `<div class="admin-empty">读取失败：${esc(err.message)}</div>`;
-  }
-}
-
-async function restorePortfolioSnapshot(userId, rev, name) {
-  const at = fmtClock(Number(rev));
-  if (!window.confirm(`把「${name}」的持仓恢复到 ${at} 那一版？\n当前数据会先留一份快照，可再恢复回来。`)) return;
-  try {
-    const out = await apiPost('/api/admin/portfolio/restore', { userId, rev: Number(rev) }, 30000);
-    toast(`已恢复：自选基金 ${out.counts.funds} 只 / 持仓 ${out.counts.holdings} 只`, 'ok', 4000);
-    await loadPortfolioHistory();
-  } catch (err) {
-    toast(`恢复失败：${err.message}`, 'err', 6000);
-  }
-}
-
-/* ---------------- 持仓回收站（v2.10.3） ----------------
-   用户在前端点「删除」清掉的持仓，服务端会把删除前的份额 / 成本 / 建仓日
-   留档 365 天；这里按原值恢复，已有新持仓的条目跳过、不覆盖。
-   -------------------------------------------------------------------------- */
-function fmtDayOnly(ts) {
-  if (!ts) return '-';
-  try {
-    return new Date(Number(ts)).toLocaleDateString('en-CA', { timeZone: 'Asia/Hong_Kong' });
-  } catch { return String(ts); }
-}
-
-async function loadHoldingTrash() {
-  const sel = $('#trashUser');
-  const box = $('#trashList');
-  const meta = $('#trashMeta');
-  if (!box) return;
-  try {
-    const users = await loadPortfolioUsers();
-    fillPortfolioUserSelect(sel, users);
-    const uid = (sel && sel.value) || (users[0] && users[0].id);
-    if (!uid) {
-      box.innerHTML = '<div class="admin-empty">还没有账号</div>';
-      return;
-    }
-    if (sel && !sel.value) sel.value = uid;
-    const includeAll = $('#trashAll') && $('#trashAll').checked ? '&all=1' : '';
-    const data = await api(`/api/admin/portfolio/trash?userId=${encodeURIComponent(uid)}${includeAll}`);
+    const pendingOnly = $('#phPending') && $('#phPending').checked ? '&pending=1' : '';
+    const data = await api(`/api/admin/portfolio/deletions?userId=${encodeURIComponent(uid)}${pendingOnly}`);
     const items = data.items || [];
+    const pending = items.filter((it) => !it.restoredAt).length;
     if (meta) {
-      meta.textContent = `${data.user.username} · ${items.length} 条${includeAll ? '（含已恢复）' : '待恢复'} · 留档 ${data.retentionDays || 365} 天`;
+      meta.textContent = `${data.user.username} · ${items.length} 条删除记录（待恢复 ${pending}）· 留档 ${data.retentionDays || 365} 天`;
     }
     if (!items.length) {
-      box.innerHTML = `<div class="admin-empty">${includeAll ? '还没有删除记录' : '没有待恢复的持仓（用户删除持仓后会出现在这里）'}</div>`;
+      box.innerHTML = `<div class="admin-empty">${pendingOnly ? '没有待恢复的删除记录' : '还没有删除记录（用户删除「我的持仓」里的 TAB / 基金后会出现在这里）'}</div>`;
       return;
     }
-    const tabNameOf = (it) => it.portfolioName || (it.portfolioId === 'default' ? '主持仓' : it.portfolioId);
+    const fundTable = (funds) => `<table class="admin-table admin-trash-snap"><thead><tr><th>基金</th><th>代码</th><th>份额</th><th>成本净值</th><th>建仓日</th></tr></thead><tbody>${(funds || []).map((f) => `<tr>
+      <td>${esc(f.name || f.code)}</td>
+      <td class="muted">${esc(f.code)}</td>
+      <td class="num">${n(f.shares).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</td>
+      <td class="num">${f.cost ? Number(f.cost).toFixed(4) : '-'}</td>
+      <td class="nowrap">${f.addedAt ? esc(fmtDayOnly(f.addedAt)) : '<span class="muted">未记录</span>'}</td>
+    </tr>`).join('') || '<tr><td colspan="5" class="muted">没有基金记录</td></tr>'}</tbody></table>`;
     box.innerHTML = `<table class="admin-table"><thead><tr>
-        <th>删除时间</th><th>基金</th><th>TAB（组合）</th><th>份额</th><th>成本净值</th><th>建仓日</th><th>该 TAB 当时持仓</th><th>状态</th><th>操作</th>
+        <th>删除时间</th><th>TAB 名称</th><th>删除类型</th><th>基金数</th><th>状态</th><th>操作</th>
       </tr></thead><tbody>${items.map((it) => {
-        const tabName = tabNameOf(it);
-        const snap = Array.isArray(it.tabSnapshot) ? it.tabSnapshot : [];
-        const snapCount = snap.length || Number(it.tabHoldingCount) || 0;
+        const tabName = it.portfolioName || (it.portfolioId === 'default' ? '主持仓' : it.portfolioId);
+        const funds = Array.isArray(it.funds) ? it.funds : [];
+        const tabFunds = Array.isArray(it.tabHoldings) ? it.tabHoldings : [];
+        const count = Number(it.tabHoldingCount) || tabFunds.length || funds.length;
+        const showTabFunds = tabFunds.length > 0 && (it.tabDeleted || tabFunds.length !== funds.length);
         return `<tr>
         <td class="nowrap">${esc(fmtClock(it.deletedAt))}</td>
-        <td><span class="nowrap">${esc(it.name || it.code)}</span><span class="muted small"> ${esc(it.code)}</span></td>
-        <td>${esc(tabName)}${it.tabDeleted ? '<div class="muted small">组合已整体删除</div>' : ''}</td>
-        <td class="num">${n(it.shares).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</td>
-        <td class="num">${it.cost ? Number(it.cost).toFixed(4) : '-'}</td>
-        <td class="nowrap">${it.addedAt ? esc(fmtDayOnly(it.addedAt)) : '<span class="muted">未记录</span>'}</td>
-        <td>${snapCount > 0
-          ? `<button type="button" class="admin-link" data-trash-expand="${esc(it.id)}">${snapCount} 只 · 查看</button>`
-          : '<span class="muted small">旧记录无快照</span>'}</td>
+        <td>${esc(tabName)}</td>
+        <td>${it.tabDeleted ? '整个 TAB' : '单只基金'}</td>
+        <td class="num">${count}</td>
         <td>${it.restoredAt ? `<span class="muted">已恢复 ${esc(fmtClock(it.restoredAt))}</span>` : '<span class="tone-up">待恢复</span>'}</td>
-        <td class="nowrap">${it.restoredAt
-          ? '<span class="muted small">已恢复</span>'
-          : `<button type="button" class="admin-btn" data-trash-restore="${esc(it.id)}" data-label="${esc(it.name || it.code)}">恢复</button>`}${snapCount > 0 ? ` <button type="button" class="admin-btn" data-trash-restore-tab="${esc(it.id)}" data-tab="${esc(tabName)}" data-count="${snapCount}">恢复整个 TAB</button>` : ''}</td>
+        <td class="nowrap">
+          <button type="button" class="admin-btn" data-del-detail="${esc(it.id)}">详情</button>
+          ${it.restoredAt ? '' : `<button type="button" class="admin-btn" data-del-restore="${esc(it.id)}" data-tab="${esc(tabName)}" data-count="${count}">恢复</button>`}
+        </td>
       </tr>
-      <tr class="trash-detail" data-trash-detail="${esc(it.id)}" hidden><td colspan="9">
-        <div class="admin-trash-detail-head">删除时「${esc(tabName)}」下共 <b>${snapCount || 0}</b> 只持仓${it.tabDeleted ? '，随后这个组合被整体删除' : ''}（快照）</div>
-        ${snap.length ? `<table class="admin-table admin-trash-snap"><thead><tr><th>基金</th><th>代码</th><th>份额</th><th>成本净值</th><th>建仓日</th></tr></thead><tbody>${snap.map((f) => `<tr>
-          <td>${esc(f.name || f.code)}</td>
-          <td class="muted">${esc(f.code)}</td>
-          <td class="num">${n(f.shares).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</td>
-          <td class="num">${f.cost ? Number(f.cost).toFixed(4) : '-'}</td>
-          <td class="nowrap">${f.addedAt ? esc(fmtDayOnly(f.addedAt)) : '<span class="muted">未记录</span>'}</td>
-        </tr>`).join('')}</tbody></table>` : '<div class="muted small">这条旧记录没有保存当时的 TAB 快照。</div>'}
+      <tr class="admin-del-detail" data-del-detail-row="${esc(it.id)}" hidden><td colspan="6">
+        <div class="admin-trash-detail-head">「${esc(tabName)}」· 删除于 ${esc(fmtClock(it.deletedAt))}${it.tabDeleted ? ' · 整个 TAB 被删除' : ''}</div>
+        <div class="admin-del-section">本次删除的${it.tabDeleted ? ' TAB 数据' : '持仓'}（${funds.length} 只）</div>
+        ${fundTable(funds)}
+        ${showTabFunds ? `<div class="admin-del-section">删除时该 TAB 下的全部持仓（${tabFunds.length} 只，恢复时按这份写回）</div>${fundTable(tabFunds)}` : ''}
       </td></tr>`;
       }).join('')}</tbody></table>`;
-    $$('[data-trash-restore]', box).forEach((btn) => btn.addEventListener('click', () => {
-      restoreHoldingTrashEntry(uid, btn.getAttribute('data-trash-restore'), btn.getAttribute('data-label'));
-    }));
-    $$('[data-trash-restore-tab]', box).forEach((btn) => btn.addEventListener('click', () => {
-      restoreHoldingTabEntry(uid, btn.getAttribute('data-trash-restore-tab'), btn.getAttribute('data-tab'), Number(btn.getAttribute('data-count')) || 0);
-    }));
-    $$('[data-trash-expand]', box).forEach((btn) => btn.addEventListener('click', () => {
-      const row = box.querySelector(`[data-trash-detail="${btn.getAttribute('data-trash-expand')}"]`);
+    $$('[data-del-detail]', box).forEach((btn) => btn.addEventListener('click', () => {
+      const row = box.querySelector(`[data-del-detail-row="${btn.getAttribute('data-del-detail')}"]`);
       if (row) row.hidden = !row.hidden;
+    }));
+    $$('[data-del-restore]', box).forEach((btn) => btn.addEventListener('click', () => {
+      restoreDeletionEventEntry(uid, btn.getAttribute('data-del-restore'), btn.getAttribute('data-tab'), Number(btn.getAttribute('data-count')) || 0);
     }));
   } catch (err) {
     box.innerHTML = `<div class="admin-empty">读取失败：${esc(err.message)}</div>`;
   }
 }
 
-async function restoreHoldingTrashEntry(userId, id, label) {
-  if (!window.confirm(`恢复删除的持仓「${label || id}」？\n会按删除前的份额 / 成本 / 建仓日写回原组合；如果该基金现在已有持仓，会保留现有数据并跳过。`)) return;
+async function restoreDeletionEventEntry(userId, id, tabName, count) {
+  if (!window.confirm(`按删除前的状态恢复「${tabName || '这个 TAB'}」（${count || 0} 只基金）？\n会保留原来的份额 / 成本 / 建仓日，盈亏统计仍从原建仓日开始；TAB 已被删除的会按原名称重建；现在已经有持仓的基金会跳过。`)) return;
   try {
-    const out = await apiPost('/api/admin/portfolio/trash/restore', { userId, ids: [id] }, 30000);
-    toast(out.message || '已恢复', 'ok', 5000);
-    await loadHoldingTrash();
-    await loadPortfolioHistory();
+    const out = await apiPost('/api/admin/portfolio/deletions/restore', { userId, id }, 30000);
+    toast(out.message || '已恢复', 'ok', 6000);
+    await loadDeletionHistory();
   } catch (err) {
     toast(`恢复失败：${err.message}`, 'err', 6000);
-  }
-}
-
-/** 按删除时的 TAB 快照整组恢复（原组合不在了会按原名称重建） */
-async function restoreHoldingTabEntry(userId, id, tabName, count) {
-  if (!window.confirm(`恢复「${tabName || '这个 TAB'}」删除时的整组持仓（${count || 0} 只）？\n会按快照里的原份额 / 成本 / 建仓日写回；现在已经有持仓的基金会跳过，不覆盖后来的操作。`)) return;
-  try {
-    const out = await apiPost('/api/admin/portfolio/trash/restore-tab', { userId, id }, 30000);
-    toast(out.message || '已恢复整组持仓', 'ok', 6000);
-    await loadHoldingTrash();
-    await loadPortfolioHistory();
-  } catch (err) {
-    toast(`恢复整组失败：${err.message}`, 'err', 6000);
   }
 }
 
@@ -2403,7 +2335,7 @@ async function transferPortfolioData(direction) {
     const out = await apiPost('/api/admin/portfolio/transfer', { direction, userId: uid, mode }, 180000);
     if (result) result.textContent = `${new Date().toLocaleTimeString('zh-CN', { hour12: false })} · ${out.message || '完成'}`;
     toast(out.message || '数据互通完成', 'ok', 5000);
-    await loadPortfolioHistory();
+    await loadDeletionHistory();
   } catch (err) {
     if (result) result.textContent = `失败：${err.message}`;
     toast(`数据互通失败：${err.message}`, 'err', 7000);
@@ -2414,12 +2346,17 @@ function bindPortfolioCards() {
   const sel = $('#phUser');
   if (sel && !sel.dataset.bound) {
     sel.dataset.bound = '1';
-    sel.addEventListener('change', loadPortfolioHistory);
+    sel.addEventListener('change', loadDeletionHistory);
   }
   const reload = $('#phReload');
   if (reload && !reload.dataset.bound) {
     reload.dataset.bound = '1';
-    reload.addEventListener('click', loadPortfolioHistory);
+    reload.addEventListener('click', loadDeletionHistory);
+  }
+  const pending = $('#phPending');
+  if (pending && !pending.dataset.bound) {
+    pending.dataset.bound = '1';
+    pending.addEventListener('change', loadDeletionHistory);
   }
   const push = $('#ptPush');
   if (push && !push.dataset.bound) {
@@ -2431,32 +2368,15 @@ function bindPortfolioCards() {
     pull.dataset.bound = '1';
     pull.addEventListener('click', () => transferPortfolioData('pull'));
   }
-  const trashUser = $('#trashUser');
-  if (trashUser && !trashUser.dataset.bound) {
-    trashUser.dataset.bound = '1';
-    trashUser.addEventListener('change', loadHoldingTrash);
-  }
-  const trashReload = $('#trashReload');
-  if (trashReload && !trashReload.dataset.bound) {
-    trashReload.dataset.bound = '1';
-    trashReload.addEventListener('click', loadHoldingTrash);
-  }
-  const trashAll = $('#trashAll');
-  if (trashAll && !trashAll.dataset.bound) {
-    trashAll.dataset.bound = '1';
-    trashAll.addEventListener('change', loadHoldingTrash);
-  }
 }
 
-/** 切到「持仓数据」页（v2.9.3 从模拟交易拆出）：先填两个账号下拉，再拉保存历史。
+/** 切到「持仓数据」页（v2.9.3 从模拟交易拆出）：先填账号下拉，再拉删除历史。
     之前「数据互通」卡的账号下拉要等点了按钮才填，刚进页面是空的，这次一并补上。 */
 async function loadDataOps() {
-  await loadPortfolioHistory();
-  await loadHoldingTrash();
+  await loadDeletionHistory();
   try {
     const users = await loadPortfolioUsers();
     fillPortfolioUserSelect($('#ptUser'), users);
-    fillPortfolioUserSelect($('#trashUser'), users);
   } catch (err) {
     const box = $('#ptResult');
     if (box) box.textContent = `账号列表读取失败：${err.message}`;

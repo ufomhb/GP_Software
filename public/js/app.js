@@ -26,7 +26,7 @@ import {
   intradayCompareChart,
   compareTrendChart,
   COLORS,
-} from './charts.js?v=2.10.4';
+} from './charts.js?v=2.10.5';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -44,11 +44,11 @@ import {
   esc,
   safeUrl,
   timeText,
-} from './util.js?v=2.10.4';
+} from './util.js?v=2.10.5';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.10.4';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.10.4';
+import { $, $$, toast, debounce } from './dom.js?v=2.10.5';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.10.5';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -60,7 +60,7 @@ import {
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.10.4';
+} from './core.js?v=2.10.5';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -77,7 +77,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.10.4';
+} from './views/funds.js?v=2.10.5';
 
 // 基金页新增子页渲染（v2.10.0：涨跌分布 / 板块总览 / 场外基金四榜，见 views/fundpanes.js）
 import {
@@ -87,7 +87,7 @@ import {
   renderFundBoard,
   renderFundBoardCompareBar,
   sortFundThemes,
-} from './views/fundpanes.js?v=2.10.4';
+} from './views/fundpanes.js?v=2.10.5';
 
 // 自选基金：多组合 / 今日 TOP5 / 盈亏日历 / 组合 vs 上证（v2.10.0）
 import {
@@ -97,7 +97,7 @@ import {
   renderFundVsIndex,
   activePortfolio,
   activeHoldings,
-} from './views/fundwatch.js?v=2.10.4';
+} from './views/fundwatch.js?v=2.10.5';
 import {
   computeFundPnl,
   computeFundDailyPnl,
@@ -107,7 +107,7 @@ import {
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './views/fundpnl.js?v=2.10.4';
+} from './views/fundpnl.js?v=2.10.5';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -117,7 +117,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.10.4';
+} from './views/market.js?v=2.10.5';
 
 
 /* =========================================================
