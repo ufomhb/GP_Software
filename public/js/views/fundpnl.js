@@ -114,7 +114,27 @@ function computeFundDailyPnl(seriesList, holdings) {
       active,
     });
   }
-  if (!rows.length) return null;
+  if (!rows.length) {
+    // v2.10.6：建仓日之后还没有任何「已公布净值」（当晚录入 / 周末 / QDII 滞后 / 后台恢复持仓
+    // 把建仓日原样写回）时，以前这里直接返回 null，前端会永远停在「正在计算盈亏日历…」。
+    // 现在返回带 pending 的汇总：界面可以明确说「建仓后暂无新净值」，同时仍然只统计建仓日之后，
+    // 绝不把建仓之前的涨跌算进盈亏。
+    const lastNavDate = funds.map((f) => f.points[f.points.length - 1].d).sort().pop() || '';
+    const starts = funds.map((f) => f.start).filter(Boolean).sort();
+    const mv = funds.reduce((s, f) => s + f.shares * f.points[f.points.length - 1].c, 0);
+    return {
+      rows: [],
+      funds,
+      startDate: '',
+      endDate: lastNavDate,
+      marketValue: round2(mv),
+      costValue: costValue > 0 ? round2(costValue) : null,
+      holdings: funds.length,
+      pending: true,
+      pendingStart: starts[0] || '',
+      lastNavDate,
+    };
+  }
   const last = rows[rows.length - 1];
   return {
     rows,
@@ -166,7 +186,8 @@ function computeFundPnl(data, group) {
   const holdings = (group && group.holdings) || state.fundHoldings || {};
   const items = (data && data.items) || [];
   const daily = computeFundDailyPnl(items, holdings);
-  if (!daily) return null;
+  // v2.10.6：daily 现在可能只有 pending（建仓后还没有新净值、没有逐日行），这种没有曲线可画
+  if (!daily || !daily.rows.length) return null;
   const rows = daily.rows.map((r) => ({ d: r.d, v: r.mv }));
   // 今日实时点：净值已更新到今天 → 覆盖最后一根；否则追加一根
   const live = liveFundPoint(items, holdings);
@@ -232,6 +253,15 @@ function computeFundPnl(data, group) {
     rangeDays: Math.max(0, Math.round((lastDate - firstDate) / 86400000)),
     startDate: daily.startDate,
   };
+}
+
+/**
+ * 「建仓日之后还没有已公布净值」时的说明信息（有逐日数据、或没有持仓就返回 null）。
+ * 供渲染层区分「净值历史不足 / 还在加载」和「确实还没到第一个净值日」。
+ */
+function fundPnlPending(holdings, seriesList) {
+  const daily = computeFundDailyPnl(seriesList, holdings);
+  return daily && daily.pending ? daily : null;
 }
 
 /* ---------------- 盈亏日历 ---------------- */
@@ -526,6 +556,7 @@ export {
   shanghaiWeekday,
   computeFundDailyPnl,
   computeFundPnl,
+  fundPnlPending,
   liveFundPoint,
   fundCalendarBuckets,
   portfolioVsIndex,

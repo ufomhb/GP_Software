@@ -105,6 +105,32 @@ function fmtCalendarValue(value, metric) {
   return `${value >= 0 ? '+' : ''}${nf(value, 2)}`;
 }
 
+/** 日历网格 HTML（日 / 月 / 年共用；pending 与正常数据都走同一个渲染） */
+function calendarGridHtml(buckets, unit, metric) {
+  if (unit === 'day') {
+    return `<div class="pnl-calendar">
+      <div class="pnl-calendar-head"></div>${WEEK_LABELS.map((w) => `<div class="pnl-calendar-head">${w}</div>`).join('')}
+      ${(buckets.weeks || []).map((week, wi) => `<div class="pnl-calendar-week">${wi + 1}</div>${week.map((cell) => {
+        if (!cell) return '<div class="pnl-calendar-cell is-empty"></div>';
+        // 没有当天数据（非交易日 / 净值未出 / 建仓前）一律显示 --，不要写「休」误导用户
+        if (!cell.hasData) return `<div class="pnl-calendar-cell is-rest"><div class="pnl-calendar-day">${cell.day}</div><div class="pnl-calendar-val muted">--</div></div>`;
+        const tone = Number(cell.pnl) > 0 ? 'is-up' : Number(cell.pnl) < 0 ? 'is-down' : '';
+        return `<div class="pnl-calendar-cell ${tone}" title="${esc(`${cell.d} · ${signedFmt(cell.pnl, 2)}`)}"><div class="pnl-calendar-day">${cell.day}</div><div class="pnl-calendar-val ${toneClass(cell.pnl)}">${fmtCalendarValue(cell.value, metric)}</div></div>`;
+      }).join('')}`).join('')}
+    </div>`;
+  }
+  if (unit === 'month') {
+    return `<div class="pnl-calendar-months">${(buckets.tiles || []).map((t) => {
+      const tone = Number(t.pnl) > 0 ? 'is-up' : Number(t.pnl) < 0 ? 'is-down' : '';
+      return `<div class="pnl-calendar-tile ${t.hasData ? tone : ''}" data-calendar-month="${esc(t.month)}"><span>${esc(t.label)}</span><b class="${toneClass(t.pnl)}">${t.hasData ? fmtCalendarValue(t.value, metric) : '--'}</b></div>`;
+    }).join('')}</div>`;
+  }
+  return `<div class="pnl-calendar-years">${(buckets.tiles || []).map((t) => {
+    const tone = Number(t.pnl) > 0 ? 'is-up' : Number(t.pnl) < 0 ? 'is-down' : '';
+    return `<div class="pnl-calendar-tile ${tone}"><span>${esc(t.label)}</span><b class="${toneClass(t.pnl)}">${fmtCalendarValue(t.value, metric)}</b></div>`;
+  }).join('') || '<div class="empty">还没有跨年数据</div>'}</div>`;
+}
+
 export function renderFundPnlCalendar() {
   const box = $('#fundPnlCalendar');
   if (!box) return;
@@ -124,6 +150,28 @@ export function renderFundPnlCalendar() {
     if (note) note.textContent = '盈亏统计从「加入持仓」那天开始，不统计建仓之前的数据。';
     return;
   }
+  // v2.10.6：建仓日之后还没有已公布净值（后台恢复持仓写回原建仓日 / 当晚录入 / 周末 / QDII 滞后）。
+  // 以前这里会一直停在「正在计算盈亏日历…」，现在渲染建仓那个月的日历（全是 --）并写清原因；
+  // 仍然只统计建仓日之后，绝不把建仓前的涨跌算进来。
+  if (daily && daily.pending) {
+    const unit = ['day', 'month', 'year'].includes(state.pnlUnit) ? state.pnlUnit : 'day';
+    const metric = state.pnlMetric === 'rate' ? 'rate' : 'amount';
+    const anchor = String(daily.pendingStart || daily.lastNavDate || '').slice(0, 7);
+    const buckets = fundCalendarBuckets([], { unit, yearMonth: anchor, year: anchor.slice(0, 4), metric });
+    box.innerHTML = calendarGridHtml(buckets, unit, metric);
+    if (nav) nav.innerHTML = unit === 'day' && anchor ? `<b>${esc(anchor)}</b>` : '';
+    if (meta) {
+      meta.textContent = [
+        '等待新净值',
+        daily.pendingStart ? `建仓日 ${daily.pendingStart}` : '',
+        daily.lastNavDate ? `最新已公布净值 ${daily.lastNavDate}` : '',
+      ].filter(Boolean).join(' · ');
+    }
+    if (note) {
+      note.textContent = `建仓日${daily.pendingStart ? `（${daily.pendingStart}）` : ''}之后还没有已公布净值${daily.lastNavDate ? `（最新 ${daily.lastNavDate}）` : ''}：这段时间没有可统计的净值变动，日历会在新净值公布后自动出现；建仓之前的涨跌不计入。`;
+    }
+    return;
+  }
   if (!daily) {
     box.innerHTML = '<div class="empty">正在计算盈亏日历：首次需要拉取净值历史，可能要 5~30 秒…</div>';
     if (meta) meta.textContent = '计算中';
@@ -141,37 +189,16 @@ export function renderFundPnlCalendar() {
     year: state.pnlCalendarYear,
     metric,
   });
-  let html = '';
-  if (unit === 'day') {
-    html = `<div class="pnl-calendar">
-      <div class="pnl-calendar-head"></div>${WEEK_LABELS.map((w) => `<div class="pnl-calendar-head">${w}</div>`).join('')}
-      ${(buckets.weeks || []).map((week, wi) => `<div class="pnl-calendar-week">${wi + 1}</div>${week.map((cell) => {
-        if (!cell) return '<div class="pnl-calendar-cell is-empty"></div>';
-        // 没有当天数据（非交易日 / 净值未出 / 建仓前）一律显示 --，不要写「休」误导用户
-        if (!cell.hasData) return `<div class="pnl-calendar-cell is-rest"><div class="pnl-calendar-day">${cell.day}</div><div class="pnl-calendar-val muted">--</div></div>`;
-        const tone = Number(cell.pnl) > 0 ? 'is-up' : Number(cell.pnl) < 0 ? 'is-down' : '';
-        return `<div class="pnl-calendar-cell ${tone}" title="${esc(`${cell.d} · ${signedFmt(cell.pnl, 2)}`)}"><div class="pnl-calendar-day">${cell.day}</div><div class="pnl-calendar-val ${toneClass(cell.pnl)}">${fmtCalendarValue(cell.value, metric)}</div></div>`;
-      }).join('')}`).join('')}
-    </div>`;
-    if (nav) {
+  box.innerHTML = calendarGridHtml(buckets, unit, metric);
+  if (nav) {
+    if (unit === 'day') {
       nav.innerHTML = `<button data-calendar-shift="-1" title="上个月">‹</button><b>${esc(buckets.yearMonth)}</b><button data-calendar-shift="1" title="下个月">›</button>`;
-    }
-  } else if (unit === 'month') {
-    html = `<div class="pnl-calendar-months">${(buckets.tiles || []).map((t) => {
-      const tone = Number(t.pnl) > 0 ? 'is-up' : Number(t.pnl) < 0 ? 'is-down' : '';
-      return `<div class="pnl-calendar-tile ${t.hasData ? tone : ''}" data-calendar-month="${esc(t.month)}"><span>${esc(t.label)}</span><b class="${toneClass(t.pnl)}">${t.hasData ? fmtCalendarValue(t.value, metric) : '--'}</b></div>`;
-    }).join('')}</div>`;
-    if (nav) {
+    } else if (unit === 'month') {
       nav.innerHTML = `<button data-calendar-year-shift="-1" title="上一年">‹</button><b>${esc(buckets.year)}</b><button data-calendar-year-shift="1" title="下一年">›</button>`;
+    } else {
+      nav.innerHTML = '';
     }
-  } else {
-    html = `<div class="pnl-calendar-years">${(buckets.tiles || []).map((t) => {
-      const tone = Number(t.pnl) > 0 ? 'is-up' : Number(t.pnl) < 0 ? 'is-down' : '';
-      return `<div class="pnl-calendar-tile ${tone}"><span>${esc(t.label)}</span><b class="${toneClass(t.pnl)}">${fmtCalendarValue(t.value, metric)}</b></div>`;
-    }).join('') || '<div class="empty">还没有跨年数据</div>'}</div>`;
-    if (nav) nav.innerHTML = '';
   }
-  box.innerHTML = html;
   const range = `${daily.startDate} → ${daily.endDate}`;
   if (meta) {
     const scopeLabel = unit === 'day' ? (buckets.yearMonth || '') : unit === 'month' ? buckets.year : '全部';

@@ -4977,6 +4977,38 @@ function renderFundPnl() {
   }
   const calc = computeFundPnl(state.fundPnl);
   if (!calc) {
+    // v2.10.6：建仓日之后还没有已公布净值（后台恢复持仓写回原建仓日 / 当晚录入 / 周末 / QDII 滞后）。
+    // 以前这里一直停在「正在获取净值历史…」；现在今日盈亏 / 累计收益 / 组合市值照常显示，
+    // 区间盈亏明确写「建仓后暂无新净值」，绝不把建仓之前的涨跌算进来。
+    const pending = state.fundPnl && Array.isArray(state.fundPnl.items)
+      ? computeFundDailyPnl(state.fundPnl.items, activeHoldings())
+      : null;
+    if (pending && pending.pending) {
+      const pf = fundPortfolio();
+      const watched = (state.fundWatchData && state.fundWatchData.items) || [];
+      const basis = fundDayBasis(watched.filter((x) => getFundHolding(x.code)));
+      const pendingLabel = '建仓后暂无新净值';
+      kpis.innerHTML = [
+        pnlKpi('今日盈亏', pf.dayProfit, pf.dayPct, pf.dayProfit === null ? `${basis.label} · 今日数据未出` : `按${basis.label.replace(/^按/, '')}口径`),
+        `<div class="summary-card"><div class="sc-label">近1月盈亏</div><div class="sc-value">--</div><div class="sc-sub">${pendingLabel}</div></div>`,
+        `<div class="summary-card"><div class="sc-label">今年至今</div><div class="sc-value">--</div><div class="sc-sub">${pendingLabel}</div></div>`,
+        `<div class="summary-card"><div class="sc-label">近1年盈亏</div><div class="sc-value">--</div><div class="sc-sub">${pendingLabel}</div></div>`,
+        `<div class="summary-card"><div class="sc-label">累计收益</div><div class="sc-value ${toneClass(pf.profit)}">${pf.profit === null ? '--' : signedFmt(pf.profit, 2)}</div><div class="sc-sub ${toneClass(pf.profitPct)}">${isNum(pf.profitPct) ? `${pf.profitPct >= 0 ? '+' : ''}${Number(pf.profitPct).toFixed(2)}%` : '需录入成本净值'}</div></div>`,
+        `<div class="summary-card"><div class="sc-label">组合市值</div><div class="sc-value">${nf(pf.marketValue, 2)}</div><div class="sc-sub">${pf.counted} 只 · 最新净值 ${esc(pending.lastNavDate || '--')}</div></div>`,
+      ].join('');
+      const basisLine = $('#fundPnlBasis');
+      if (basisLine) basisLine.innerHTML = fundDayBasisLine(basis);
+      const waitText = `建仓日${pending.pendingStart ? `（${pending.pendingStart}）` : ''}之后还没有已公布净值${pending.lastNavDate ? `（最新 ${pending.lastNavDate}）` : ''}`;
+      if ($('#fundPnlChart')) $('#fundPnlChart').innerHTML = `<div class="empty small">${esc(waitText)}，净值公布后这里自动显示组合曲线。</div>`;
+      if ($('#fundPnlBars')) $('#fundPnlBars').innerHTML = '<div class="empty small">还没有跨月的净值变动，暂无月度盈亏</div>';
+      if ($('#fundPnlChartMeta')) $('#fundPnlChartMeta').textContent = '';
+      if (note) {
+        note.textContent = `${waitText}：区间盈亏先不统计；今日盈亏 / 累计收益 / 组合市值 与上方「我的持仓」同一口径（含今日估算，按实时价）。净值公布后曲线会自动出现，建仓之前的涨跌不计入。`;
+      }
+      renderFundPnlCalendar();
+      renderFundVsIndex();
+      return;
+    }
     kpis.innerHTML = held.map((f) => `<div class="summary-card"><div class="sc-label">${esc(cleanName(f.name) || f.code)}</div><div class="sc-value">--</div><div class="sc-sub">净值历史不足</div></div>`).slice(0, 4).join('');
     if ($('#fundPnlChart')) $('#fundPnlChart').innerHTML = '<div class="empty small">正在获取净值历史…</div>';
     if ($('#fundPnlBars')) $('#fundPnlBars').innerHTML = '<div class="empty small">正在获取净值历史…</div>';
