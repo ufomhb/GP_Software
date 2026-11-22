@@ -1724,3 +1724,14 @@ test('DOM：基金涨跌分布 / 板块总览 / 场外基金榜能渲染，恶�
   app.state.fundThemes = prevThemes;
   app.state.fundBoard = prevBoard;
 });
+﻿
+test('DOM：v2.10.2 我的持仓面板排在今日盈亏 TOP5 之前', () => {
+  const section = document.querySelector('#view-fundwatch');
+  const kids = [...section.children];
+  const tabs = section.querySelector('#fundPortfolioTabs');
+  const hold = section.querySelector('.fund-hold-panel');
+  const top = section.querySelector('#fundTopMoversPanel');
+  assert.ok(tabs && hold && top, '组合 TAB / 我的持仓 / TOP5 都要存在');
+  assert.ok(kids.indexOf(tabs) < kids.indexOf(hold), '组合 TAB 应在我的持仓上面');
+  assert.ok(kids.indexOf(hold) < kids.indexOf(top), '我的持仓应在今日盈亏 TOP5 上面');
+});
