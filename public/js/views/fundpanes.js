@@ -8,10 +8,10 @@
    - 板块总览（#fundThemeView，基金主题口径）
    - 场外基金四个榜（#fundOpenFundView：涨幅/跌幅/热门/ETF）
    --------------------------------------------------------------- */
-import { state } from '../core.js?v=2.10.3';
-import { isNum, nf, priceFmt, pctFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.3';
-import { $, $$ } from '../dom.js?v=2.10.3';
-import { distributionChart, themeHistoryChart, intradayChart } from '../charts.js?v=2.10.3';
+import { state } from '../core.js?v=2.10.4';
+import { isNum, nf, priceFmt, pctFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.4';
+import { $, $$ } from '../dom.js?v=2.10.4';
+import { distributionChart, themeHistoryChart, intradayChart } from '../charts.js?v=2.10.4';
 
 /* ---------------- 基金涨跌分布 ---------------- */
 
@@ -85,7 +85,10 @@ const FUND_THEME_SORT_FIELD = {
 
 function themeSortValue(x, key) {
   const field = FUND_THEME_SORT_FIELD[key] || 'avgDay';
-  const v = Number(x && x[field]);
+  const raw = x ? x[field] : null;
+  // 注意 Number(null) === 0：没数据必须当 null，否则会被当成「0%」排进中间
+  if (raw === null || raw === undefined || raw === '') return null;
+  const v = Number(raw);
   return Number.isFinite(v) ? v : null;
 }
 
@@ -117,6 +120,21 @@ function themeValueCell(x) {
   return `<span class="${toneClass(x.avgDay)}">${pctFmt(x.avgDay)}</span>`;
 }
 
+/** 主题排序（可单测）：sortKey ∈ day/streak/day5/month；dir=asc|desc；缺数据的永远排最后 */
+function sortFundThemes(themes, sortKey, sortDir) {
+  const key = ['day', 'streak', 'day5', 'month'].includes(sortKey) ? sortKey : 'day';
+  const dir = sortDir === 'asc' ? 'asc' : 'desc';
+  return [...(Array.isArray(themes) ? themes : [])].sort((a, b) => {
+    const av = themeSortValue(a, key);
+    const bv = themeSortValue(b, key);
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1;
+    if (bv === null) return -1;
+    if (av === bv) return (Number(b.avgDay) || -999) - (Number(a.avgDay) || -999);
+    return dir === 'asc' ? av - bv : bv - av;
+  });
+}
+
 function renderFundThemeOverview() {
   const table = $('#fundThemeTable');
   const summary = $('#fundThemeSummary');
@@ -141,15 +159,7 @@ function renderFundThemeOverview() {
   }
   const sortKey = ['day', 'streak', 'day5', 'month'].includes(state.fundThemeSort) ? state.fundThemeSort : 'day';
   const sortDir = state.fundThemeSortDir === 'asc' ? 'asc' : 'desc';
-  const themes = [...(d.themes || [])].sort((a, b) => {
-    const av = themeSortValue(a, sortKey);
-    const bv = themeSortValue(b, sortKey);
-    if (av === null && bv === null) return 0;
-    if (av === null) return 1; // 没数据的永远排最后，升序降序都一样
-    if (bv === null) return -1;
-    if (av === bv) return (Number(b.avgDay) || -999) - (Number(a.avgDay) || -999);
-    return sortDir === 'asc' ? av - bv : bv - av;
-  });
+  const themes = sortFundThemes(d.themes, sortKey, sortDir);
   const upThemes = themes.filter((x) => Number(x.avgDay) > 0).length;
   const downThemes = themes.filter((x) => Number(x.avgDay) < 0).length;
   const longest = [...themes].filter((x) => Number(x.streak) > 0).sort((a, b) => Number(b.streak) - Number(a.streak))[0];
@@ -329,4 +339,5 @@ export {
   openFundThemeDrawer,
   renderFundBoard,
   renderFundBoardCompareBar,
+  sortFundThemes,
 };

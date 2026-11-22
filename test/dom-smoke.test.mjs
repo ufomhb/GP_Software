@@ -1862,3 +1862,84 @@ test('DOM：后台「持仓数据」页有持仓回收站卡片，前端调用�
   assert.match(adminJs, /\/api\/admin\/portfolio\/trash/);
   assert.match(adminJs, /\/api\/admin\/portfolio\/trash\/restore/);
 });
+
+/* ---------------------------------------------------------
+   v2.10.4：板块总览表头排序 / 连跌负数 / 场外基金对比计数
+   --------------------------------------------------------- */
+
+test('DOM：板块总览表头可排序，连跌用负数显示（v2.10.4）', () => {
+  const prevThemes = app.state.fundThemes;
+  const prevSort = app.state.fundThemeSort;
+  const prevDir = app.state.fundThemeSortDir;
+  const themes = [
+    { sector: '主题A', avgDay: 2, streak: 3, day5: 1, avgMonth: 5, upCount: 2, downCount: 0, etfCount: 1, fundCount: 3, leaderEtf: { name: 'A' }, leaderStock: null },
+    { sector: '主题B', avgDay: -1, streak: -2, day5: -3, avgMonth: -4, upCount: 0, downCount: 2, etfCount: 1, fundCount: 2, leaderEtf: { name: 'B' }, leaderStock: null },
+    { sector: '主题C', avgDay: 0.5, streak: 0, day5: null, avgMonth: null, upCount: 1, downCount: 1, etfCount: 1, fundCount: 2, leaderEtf: { name: 'C' }, leaderStock: null },
+  ];
+  app.state.fundThemes = { themes, fundCount: 7, etfCount: 3, stockCount: 4, date: '2026-11-20' };
+  app.state.fundThemeSort = 'day';
+  app.state.fundThemeSortDir = 'desc';
+  app.renderFundThemeOverview();
+  const table = document.querySelector('#fundThemeTable');
+  const sortables = [...table.querySelectorAll('thead th[data-fund-theme-sort]')].map((th) => th.dataset.fundThemeSort);
+  assert.deepEqual(sortables, ['day', 'streak', 'day5', 'month'], '四个可排序列都要可点');
+  const rowSectors = () => [...table.querySelectorAll('tbody tr')].map((tr) => tr.dataset.fundTheme);
+  assert.deepEqual(rowSectors(), ['主题A', '主题C', '主题B'], '按当日涨跌降序');
+  assert.match(table.textContent, /-2 天/, '连跌天数用负数显示');
+  assert.match(table.textContent, /3 天/, '连涨天数显示正数');
+  assert.equal(app.sortFundThemes(themes, 'streak', 'asc').map((t) => t.sector).join(','), '主题B,主题C,主题A', '升序：-2 → 0 → +3');
+  assert.equal(app.sortFundThemes(themes, 'day5', 'desc').map((t) => t.sector).join(','), '主题A,主题B,主题C', '缺数据的排最后');
+  const active = table.querySelector('thead th.is-sorted');
+  assert.ok(active, '当前排序列要有标记');
+  assert.equal(active.dataset.fundThemeSort, 'day');
+  assert.match(active.textContent, /▼/, '降序箭头');
+
+  app.state.fundThemes = prevThemes;
+  app.state.fundThemeSort = prevSort;
+  app.state.fundThemeSortDir = prevDir;
+});
+
+test('DOM：场外基金勾选对比后「已选」计数与按钮同步（v2.10.4）', () => {
+  const prevCompare = app.state.compareFunds;
+  const prevView = app.state.fundView;
+  const prevBoard = app.state.fundBoard;
+  const prevTab = app.state.fundBoardTab;
+  app.state.compareFunds = [];
+  app.state.fundView = 'openfund';
+  app.state.fundBoardTab = 'gain';
+  app.state.fundBoard = {
+    tab: 'gain',
+    items: [
+      { code: '000001', name: '基金A', type: 'open', typeLabel: '混合型', nav: 1.2, day: 1.5, week: 2, month: 3, year: 4, sector: '混合均衡' },
+      { code: '000002', name: '基金B', type: 'open', typeLabel: '混合型', nav: 1.1, day: 1.2, week: 1, month: 2, year: 3, sector: '混合均衡' },
+    ],
+    count: 2,
+    date: '2026-11-20',
+  };
+  app.renderFundBoard();
+  app.renderFundBoardCompareBar();
+  const bar = document.querySelector('#fundBoardCompareBar');
+  const count = document.querySelector('#fundBoardCompareCount');
+  const btn = document.querySelector('#fundBoardCompareBtn');
+  assert.equal(bar.hidden, false, '场外基金页要显示「已选」对比条');
+  assert.equal(count.textContent, '0');
+  assert.equal(btn.disabled, true, '不足 2 只时不能开始对比');
+
+  app.toggleCompareFund('000001', '基金A', true);
+  app.toggleCompareFund('000002', '基金B', true);
+  assert.equal(count.textContent, '2', '勾选后计数必须跟着更新');
+  assert.equal(btn.disabled, false, '选满 2 只后按钮可点');
+
+  app.renderFundBoard();
+  const checked = [...document.querySelectorAll('#fundBoardTable [data-compare-code]')].map((cb) => cb.checked);
+  assert.deepEqual(checked, [true, true], '重渲染后勾选状态要保留');
+
+  app.toggleCompareFund('000002', '基金B', false);
+  assert.equal(count.textContent, '1');
+  assert.equal(btn.disabled, true, '取消到不足 2 只时按钮要重新禁用');
+
+  app.state.compareFunds = prevCompare;
+  app.state.fundView = prevView;
+  app.state.fundBoard = prevBoard;
+  app.state.fundBoardTab = prevTab;
+});

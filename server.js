@@ -69,7 +69,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.10.3';
+const VERSION = '2.10.4';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -7904,6 +7904,139 @@ function restoreHoldingTrash({ user, ids = [], ip } = {}) {
 }
 
 
+/**
+ * 后台：按「删除时该 TAB 的持仓快照」整组恢复（v2.10.4）
+ * ---------------------------------------------------------------
+ * 用户在客户端删掉一条持仓时，归档里同时留了那一刻该组合（TAB）的全部持仓。
+ * 这里把快照里的基金逐只写回原组合；组合已被删除的，按原名称重建一个组合再写。
+ * 现在已经有持仓的基金跳过（不覆盖用户后来的操作）。
+ */
+function restoreHoldingTab({ user, id, ip } = {}) {
+  if (!user) throw Object.assign(new Error('用户不存在'), { status: 404 });
+  const wantedId = String(id || '');
+  if (!wantedId) throw Object.assign(new Error('请选择要恢复的删除记录'), { status: 400 });
+  const list = holdingTrashStore(user);
+  const entry = list.find((x) => String(x.id) === wantedId);
+  if (!entry) throw Object.assign(new Error('没有这条删除记录'), { status: 404 });
+  const snapshot = (Array.isArray(entry.tabSnapshot) ? entry.tabSnapshot : [])
+    .filter((f) => f && f.code && Number(f.shares) > 0)
+    .map((f) => ({
+      code: String(f.code),
+      shares: Number(f.shares) || 0,
+      cost: Number(f.cost) || 0,
+      addedAt: Number(f.addedAt) > 0 ? Number(f.addedAt) : 0,
+    }));
+  if (!snapshot.length) {
+    throw Object.assign(new Error('这条记录没有保存当时的 TAB 持仓快照（旧版本记录），请用「恢复」逐条恢复'), { status: 400 });
+  }
+  const before = loadPortfolio(user);
+  const now = Date.now();
+  const doc = {
+    funds: (before.funds || []).slice(),
+    holdings: { ...(before.holdings || {}) },
+    watchlist: (before.watchlist || []).slice(),
+    portfolios: (before.portfolios || [])
+      .filter((g) => g && !g.isDefault)
+      .map((g) => ({ ...g, holdings: { ...(g.holdings || {}) } })),
+  };
+  const portfolioId = entry.portfolioId || 'default';
+  const existingGroup = portfolioId === 'default'
+    ? null
+    : doc.portfolios.find((g) => g.id === portfolioId) || null;
+  const baseMap = portfolioId === 'default'
+    ? doc.holdings
+    : (existingGroup ? existingGroup.holdings : {});
+  const toRestore = [];
+  const skipped = [];
+  for (const f of snapshot) {
+    const cur = baseMap[f.code];
+    if (cur && Number(cur.shares) > 0) {
+      skipped.push({ code: f.code, status: 'exists' });
+      continue;
+    }
+    toRestore.push(f);
+  }
+  if (!toRestore.length) {
+    return {
+      ok: true,
+      restored: 0,
+      skipped,
+      portfolioId,
+      portfolioName: entry.portfolioName || (portfolioId === 'default' ? '主持仓' : ''),
+      createdGroup: false,
+      message: '这个 TAB 下的持仓现在都还在，没有需要恢复的条目',
+    };
+  }
+  const entryOf = (f) => ({
+    shares: f.shares,
+    cost: f.cost,
+    updatedAt: now,
+    addedAt: f.addedAt > 0 ? f.addedAt : now,
+  });
+  let targetId = portfolioId;
+  let targetName = entry.portfolioName || (portfolioId === 'default' ? '主持仓' : '组合');
+  let createdGroup = false;
+  if (portfolioId === 'default') {
+    for (const f of toRestore) doc.holdings[f.code] = entryOf(f);
+    targetId = 'default';
+    targetName = '主持仓';
+  } else if (existingGroup) {
+    for (const f of toRestore) existingGroup.holdings[f.code] = entryOf(f);
+    existingGroup.updatedAt = now;
+    targetId = existingGroup.id;
+    targetName = existingGroup.name;
+  } else {
+    // 原组合已删除：按原名称重建（重名时加后缀），再把快照里的持仓写进去
+    const baseName = String(entry.portfolioName || '').trim().slice(0, 17) || '恢复的组合';
+    let name = baseName;
+    let n = 2;
+    const used = new Set(doc.portfolios.map((g) => g.name));
+    while (used.has(name) && n < 100) {
+      name = `${baseName}-${n}`;
+      n += 1;
+    }
+    const group = {
+      id: makeGroupId(doc.portfolios),
+      name,
+      createdAt: now,
+      updatedAt: now,
+      holdings: {},
+    };
+    for (const f of toRestore) group.holdings[f.code] = entryOf(f);
+    doc.portfolios.push(group);
+    targetId = group.id;
+    targetName = group.name;
+    createdGroup = true;
+  }
+  savePortfolio(user, doc);
+  // 这次整组恢复写回去的基金，对应的删除记录一并标记为已恢复
+  const restoredCodes = new Set(toRestore.map((f) => f.code));
+  for (const x of list) {
+    if (String(x.portfolioId || 'default') === String(portfolioId)
+      && !Number(x.restoredAt)
+      && restoredCodes.has(String(x.code))) {
+      x.restoredAt = now;
+      x.restoredInto = targetId;
+      x.restoredBy = 'tab';
+    }
+  }
+  saveHoldingTrashStore(user, list);
+  const after = loadPortfolio(user);
+  recordPortfolioWrite({
+    user, ip, action: 'trash-restore-tab', before, after, rev: portfolioRevOf(user), source: 'admin:trash-tab',
+  });
+  return {
+    ok: true,
+    restored: toRestore.length,
+    skipped,
+    portfolioId: targetId,
+    portfolioName: targetName,
+    createdGroup,
+    message: `已把「${targetName}」的 ${toRestore.length} 只持仓按删除时的快照恢复${skipped.length ? `，${skipped.length} 只已有持仓被跳过` : ''}${createdGroup ? '（原组合已删除，已按原名称重建）' : ''}`,
+  };
+}
+
+
 /** 后台：某账号最近 N 次持仓快照（倒序，只给摘要，不含完整持仓） */
 function listPortfolioHistory(userId, limit = 20) {
   const dir = portfolioHistoryDir(userId);
@@ -9542,6 +9675,8 @@ const httpRoutes = createHttpRoutes({
   // v2.10.3：持仓回收站（删除的持仓留档 / 按原值恢复）
   listHoldingTrash,
   restoreHoldingTrash,
+  // v2.10.4：按删除时的 TAB 快照整组恢复
+  restoreHoldingTab,
   loadPortfolio,
   // v2.10.0：多份持仓组合
   mutatePortfolioGroup,

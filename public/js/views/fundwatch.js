@@ -2,18 +2,18 @@
    ---------------------------------------------------------------
    只负责 DOM：多份持仓 TAB、今日盈亏 TOP5、盈亏日历、组合 vs 上证。
    取数仍在 app.js；纯计算在 views/fundpnl.js。 */
-import { state } from '../core.js?v=2.10.3';
-import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.3';
-import { $, $$ } from '../dom.js?v=2.10.3';
-import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.10.3';
-import { fundDayBasis } from './funds.js?v=2.10.3';
+import { state } from '../core.js?v=2.10.4';
+import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.4';
+import { $, $$ } from '../dom.js?v=2.10.4';
+import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.10.4';
+import { fundDayBasis } from './funds.js?v=2.10.4';
 import {
   computeFundDailyPnl,
   fundCalendarBuckets,
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './fundpnl.js?v=2.10.3';
+} from './fundpnl.js?v=2.10.4';
 
 export function activePortfolio() {
   const list = state.portfolios || [];

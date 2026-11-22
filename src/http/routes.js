@@ -57,6 +57,8 @@ function createHttpRoutes(deps) {
     // v2.10.3：持仓回收站（删除留档 / 按原值恢复）
     listHoldingTrash,
     restoreHoldingTrash,
+    // v2.10.4：按删除时的 TAB 快照整组恢复
+    restoreHoldingTab,
     // v2.10.0：多份持仓组合（主持仓 + 额外组合）
     mutatePortfolioGroup,
     publicPortfolioList,
@@ -527,6 +529,21 @@ async function handleAdmin(req, res, url) {
       ok: true,
       action: 'portfolio',
       reason: `从回收站恢复 ${target.username} 的 ${out.restored} 条持仓`,
+    });
+    return out;
+  }
+  if (p === '/api/admin/portfolio/trash/restore-tab' && req.method === 'POST') {
+    const body = req.body || {};
+    const id = String(body.userId || '').trim();
+    if (!id) throw Object.assign(new Error('缺少 userId'), { status: 400 });
+    const target = loadUsers().users.find((u) => u.id === id);
+    if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
+    const out = restoreHoldingTab({ user: target, id: body.id, ip: clientIp(req) });
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'portfolio',
+      reason: `按 TAB 快照恢复 ${target.username} 的「${out.portfolioName}」${out.restored} 只持仓`,
     });
     return out;
   }

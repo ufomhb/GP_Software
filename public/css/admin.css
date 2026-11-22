@@ -689,3 +689,10 @@ body.admin-modal-open { overflow: hidden; }
 .admin-ui-row { padding: 9px 2px; border-bottom: 1px dashed rgba(148, 163, 184, .1); }
 .admin-ui-row:last-child { border-bottom: 0; }
 .admin-ui-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: #38bdf8; }
+
+/* v2.10.3 / v2.10.4：持仓回收站（删除记录 + 当时的 TAB 持仓快照） */
+.trash-detail > td { padding: 10px 12px 14px; background: rgba(56, 189, 248, 0.035); }
+.admin-trash-detail-head { margin-bottom: 8px; color: var(--text-2); font-size: 12px; }
+.admin-table.admin-trash-snap { font-size: 12px; background: rgba(8, 14, 24, 0.35); }
+.admin-table.admin-trash-snap th, .admin-table.admin-trash-snap td { padding: 6px 8px; }
+

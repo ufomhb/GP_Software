@@ -12,6 +12,7 @@ const {
   fundPctBucketIndex,
   bucketFundPct,
   themeStreakFromSeries,
+  themeStreakSigned,
   buildThemeIndex,
   dailyPctFromIndex,
   compoundLastN,
@@ -81,6 +82,30 @@ test('连涨：最新一天为平盘 / 下跌 / 无数据', () => {
   assert.equal(themeStreakFromSeries(new Map([['2026-11-19', 1], ['2026-11-20', 0]])), 0);
   assert.equal(themeStreakFromSeries(new Map([['2026-11-19', 1], ['2026-11-20', -0.3]])), 0);
   assert.equal(themeStreakFromSeries(new Map()), null, '没有数据返回 null 而不是 0');
+});
+
+/* ---------------- 连涨 / 连跌（带符号，v2.10.4） ---------------- */
+
+test('带符号连涨连跌：上涨为正、下跌为负、平盘 0、没数据 null', () => {
+  const up = new Map([
+    ['2026-11-17', 1.2],
+    ['2026-11-18', 0.4],
+    ['2026-11-19', 2.1],
+    ['2026-11-20', 0.8],
+  ]);
+  assert.equal(themeStreakSigned(up), 4, '连涨 4 天显示 +4');
+  const down = new Map([
+    ['2026-11-17', 1.2],
+    ['2026-11-18', -0.4],
+    ['2026-11-19', -2.1],
+    ['2026-11-20', -0.8],
+  ]);
+  assert.equal(themeStreakSigned(down), -3, '最近三天连跌显示 -3');
+  down.set('2026-11-17', -0.2);
+  assert.equal(themeStreakSigned(down), -4, '四天连跌显示 -4');
+  assert.equal(themeStreakSigned(new Map([['2026-11-19', 1], ['2026-11-20', 0]])), 0, '平盘 0');
+  assert.equal(themeStreakSigned(new Map()), null, '没数据 null');
+  assert.equal(themeStreakFromSeries(down), 0, '旧的连涨函数语义不变（仍返回 0）');
 });
 
 /* ---------------- 主题等权指数 ---------------- */
@@ -220,6 +245,21 @@ test('主题总览：按主题聚合，连涨天数来自代表 ETF 日线', asy
   assert.equal(mixed.streak, 3, '代表 ETF 最近三天连涨（10→10.2→10.4→10.5）');
   assert.equal(mixed.etfCount, 1);
   assert.ok(data.date);
+});
+
+test('主题总览：代表 ETF 连跌时 streak 为负数（连跌天数）', async () => {
+  const svc = fakeAnalytics({
+    getKline: async () => ({
+      candles: [
+        { d: '2026-11-17', c: 10 }, { d: '2026-11-18', c: 9.8 },
+        { d: '2026-11-19', c: 9.6 }, { d: '2026-11-20', c: 9.5 },
+      ],
+    }),
+  });
+  const data = await svc.getFundThemeOverview();
+  const mixed = data.themes.find((t) => t.sector === '混合均衡');
+  assert.ok(mixed, '缺少混合均衡主题');
+  assert.equal(mixed.streak, -3, '10→9.8→9.6→9.5 连续三天下跌，应返回 -3');
 });
 
 test('主题详情：缺板块名报 400；不存在的主题报 404', async () => {

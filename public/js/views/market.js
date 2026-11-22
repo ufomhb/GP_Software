@@ -7,13 +7,13 @@
      行情小工具，因此 app.js 反过来从这里 import，彼此不构成循环依赖。
 
    依赖：core.js（state）、util.js（格式化/转义）、dom.js（$）、charts.js（sparkline 等）。 */
-import { state } from '../core.js?v=2.10.3';
+import { state } from '../core.js?v=2.10.4';
 import {
   esc, priceFmt, pctFmt, stockFmt, toneClass, cleanName, timeText,
   isNum, nf, yiFmt, compactAmount, safeUrl,
-} from '../util.js?v=2.10.3';
-import { $ } from '../dom.js?v=2.10.3';
-import { sparkline, sectorFlowBar, gaugeChart, COLORS } from '../charts.js?v=2.10.3';
+} from '../util.js?v=2.10.4';
+import { $ } from '../dom.js?v=2.10.4';
+import { sparkline, sectorFlowBar, gaugeChart, COLORS } from '../charts.js?v=2.10.4';
 
 
 /* =========================================================

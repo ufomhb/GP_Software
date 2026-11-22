@@ -45,6 +45,13 @@ for (const mode of ['json', 'sqlite']) {
     assert.equal(item.addedAt, addedAt, '留档原建仓日');
     assert.equal(item.portfolioId, 'default');
     assert.equal(item.portfolioName, '主持仓');
+    // v2.10.4：删除记录带「当时这个 TAB 下的全部持仓」快照
+    assert.ok(Array.isArray(item.tabSnapshot), '要有 TAB 快照');
+    assert.equal(item.tabHoldingCount, 1);
+    assert.equal(item.tabSnapshot[0].code, '510300');
+    assert.equal(item.tabSnapshot[0].shares, 1000);
+    assert.equal(item.tabSnapshot[0].cost, 3.8);
+    assert.equal(item.tabDeleted, false, '只删了一只基金，组合本身还在');
 
     const restored = await c.post('/api/admin/portfolio/trash/restore', { userId: uid, ids: [item.id] });
     assert.equal(restored.status, 200, restored.text);
@@ -116,6 +123,87 @@ for (const mode of ['json', 'sqlite']) {
     assert.equal(got.body.portfolios.length, 1, '原组合已删除，不该被偷偷重建');
     assert.equal(got.body.portfolios[0].id, 'default');
     assert.equal(got.body.holdings['161725'].shares, 500, '恢复到主持仓');
+  });
+
+  test(`回收站（${label}）：只有单只删除时 TAB 快照仍含全组，可整组恢复`, async (t) => {
+    const app = await startApp({ mode });
+    t.after(() => app.stop());
+    const c = await bootstrapAdmin(app);
+    const addedAt = Date.UTC(2026, 4, 6);
+    await c.post('/api/portfolio', {
+      funds: [
+        { code: '510300', name: '沪深300ETF', type: 'etf' },
+        { code: '110022', name: '易方达消费行业', type: 'open' },
+      ],
+      holdings: {
+        '510300': { shares: 1000, cost: 3.8, addedAt },
+        '110022': { shares: 500, cost: 2, addedAt },
+      },
+    });
+    await c.post('/api/portfolio', { holdings: { '510300': { shares: 0, cost: 0, updatedAt: Date.now() } } });
+    const uid = await userIdOf(c);
+    const trash = await c.get(`/api/admin/portfolio/trash?userId=${encodeURIComponent(uid)}`);
+    assert.equal(trash.body.items.length, 1);
+    const item = trash.body.items[0];
+    assert.equal(item.tabHoldingCount, 2, '快照要含这个 TAB 下当时的两只基金');
+    assert.deepEqual(item.tabSnapshot.map((f) => f.code).sort(), ['110022', '510300']);
+    assert.equal(item.tabSnapshot.find((f) => f.code === '110022').name, '易方达消费行业', '快照里要带基金名');
+
+    const out = await c.post('/api/admin/portfolio/trash/restore-tab', { userId: uid, id: item.id });
+    assert.equal(out.status, 200, out.text);
+    assert.equal(out.body.restored, 1, '只补回被删的那只（另一只本来还在）');
+    assert.equal(out.body.skipped.length, 1, '仍在持有的那只跳过');
+    assert.equal(out.body.createdGroup, false, '组合还在，不需要重建');
+    const got = await c.get('/api/portfolio');
+    const mainHold = got.body.portfolios[0].holdings['510300'];
+    assert.equal(mainHold.shares, 1000);
+    assert.equal(mainHold.addedAt, addedAt, '建仓日也要按快照恢复');
+    assert.equal(got.body.holdings['110022'].shares, 500, '原有持仓不能被快照覆盖');
+    const pending = await c.get(`/api/admin/portfolio/trash?userId=${encodeURIComponent(uid)}`);
+    assert.equal(pending.body.items.length, 0, '整组恢复后记录标成已恢复');
+  });
+
+  test(`回收站（${label}）：整组删除后按 TAB 快照重建同名组合`, async (t) => {
+    const app = await startApp({ mode });
+    t.after(() => app.stop());
+    const c = await bootstrapAdmin(app);
+    const created = await c.post('/api/portfolio/groups', { action: 'create', name: '婚后组合' });
+    const gid = created.body.portfolios.find((g) => !g.isDefault).id;
+    await c.post('/api/portfolio', {
+      funds: [
+        { code: '110022', name: '易方达消费行业', type: 'open' },
+        { code: '161725', name: '招商中证白酒', type: 'open' },
+      ],
+      portfolios: [{
+        id: gid,
+        name: '婚后组合',
+        holdings: { '110022': { shares: 800, cost: 2.2 }, '161725': { shares: 500, cost: 1.5 } },
+      }],
+    });
+    const removed = await c.post('/api/portfolio/groups', { action: 'delete', id: gid });
+    assert.equal(removed.status, 200, removed.text);
+
+    const uid = await userIdOf(c);
+    const trash = await c.get(`/api/admin/portfolio/trash?userId=${encodeURIComponent(uid)}`);
+    assert.equal(trash.body.items.length, 2, '组合下两只基金各留一条');
+    const item = trash.body.items[0];
+    assert.equal(item.tabDeleted, true, '整个组合被删除要标出来');
+    assert.equal(item.tabHoldingCount, 2);
+    assert.equal(item.portfolioName, '婚后组合');
+
+    const out = await c.post('/api/admin/portfolio/trash/restore-tab', { userId: uid, id: item.id });
+    assert.equal(out.status, 200, out.text);
+    assert.equal(out.body.restored, 2, '整组快照两只都写回');
+    assert.equal(out.body.createdGroup, true, '原组合已删除，需要重建');
+    assert.equal(out.body.portfolioName, '婚后组合', '按原名称重建');
+    const got = await c.get('/api/portfolio');
+    const rebuilt = got.body.portfolios.find((g) => g.name === '婚后组合');
+    assert.ok(rebuilt, '应该有一个叫「婚后组合」的 TAB');
+    assert.deepEqual(Object.keys(rebuilt.holdings).sort(), ['110022', '161725']);
+    assert.equal(rebuilt.holdings['110022'].shares, 800);
+    assert.equal(rebuilt.holdings['161725'].shares, 500);
+    const pending = await c.get(`/api/admin/portfolio/trash?userId=${encodeURIComponent(uid)}`);
+    assert.equal(pending.body.items.length, 0, '同一 TAB 的删除记录一起标为已恢复');
   });
 }
 

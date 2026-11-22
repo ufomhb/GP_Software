@@ -2314,20 +2314,48 @@ async function loadHoldingTrash() {
       box.innerHTML = `<div class="admin-empty">${includeAll ? '还没有删除记录' : '没有待恢复的持仓（用户删除持仓后会出现在这里）'}</div>`;
       return;
     }
+    const tabNameOf = (it) => it.portfolioName || (it.portfolioId === 'default' ? '主持仓' : it.portfolioId);
     box.innerHTML = `<table class="admin-table"><thead><tr>
-        <th>删除时间</th><th>基金</th><th>组合</th><th>份额</th><th>成本净值</th><th>建仓日</th><th>状态</th><th>操作</th>
-      </tr></thead><tbody>${items.map((it) => `<tr>
+        <th>删除时间</th><th>基金</th><th>TAB（组合）</th><th>份额</th><th>成本净值</th><th>建仓日</th><th>该 TAB 当时持仓</th><th>状态</th><th>操作</th>
+      </tr></thead><tbody>${items.map((it) => {
+        const tabName = tabNameOf(it);
+        const snap = Array.isArray(it.tabSnapshot) ? it.tabSnapshot : [];
+        const snapCount = snap.length || Number(it.tabHoldingCount) || 0;
+        return `<tr>
         <td class="nowrap">${esc(fmtClock(it.deletedAt))}</td>
         <td><span class="nowrap">${esc(it.name || it.code)}</span><span class="muted small"> ${esc(it.code)}</span></td>
-        <td>${esc(it.portfolioName || (it.portfolioId === 'default' ? '主持仓' : it.portfolioId))}</td>
+        <td>${esc(tabName)}${it.tabDeleted ? '<div class="muted small">组合已整体删除</div>' : ''}</td>
         <td class="num">${n(it.shares).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</td>
         <td class="num">${it.cost ? Number(it.cost).toFixed(4) : '-'}</td>
         <td class="nowrap">${it.addedAt ? esc(fmtDayOnly(it.addedAt)) : '<span class="muted">未记录</span>'}</td>
+        <td>${snapCount > 0
+          ? `<button type="button" class="admin-link" data-trash-expand="${esc(it.id)}">${snapCount} 只 · 查看</button>`
+          : '<span class="muted small">旧记录无快照</span>'}</td>
         <td>${it.restoredAt ? `<span class="muted">已恢复 ${esc(fmtClock(it.restoredAt))}</span>` : '<span class="tone-up">待恢复</span>'}</td>
-        <td>${it.restoredAt ? '-' : `<button type="button" class="admin-btn" data-trash-restore="${esc(it.id)}" data-label="${esc(it.name || it.code)}">恢复</button>`}</td>
-      </tr>`).join('')}</tbody></table>`;
+        <td class="nowrap">${it.restoredAt
+          ? '<span class="muted small">-</span>'
+          : `<button type="button" class="admin-btn" data-trash-restore="${esc(it.id)}" data-label="${esc(it.name || it.code)}">恢复</button>${snapCount > 0 ? ` <button type="button" class="admin-btn" data-trash-restore-tab="${esc(it.id)}" data-tab="${esc(tabName)}" data-count="${snapCount}">恢复整个 TAB</button>` : ''}`}</td>
+      </tr>
+      <tr class="trash-detail" data-trash-detail="${esc(it.id)}" hidden><td colspan="9">
+        <div class="admin-trash-detail-head">删除时「${esc(tabName)}」下共 <b>${snapCount || 0}</b> 只持仓${it.tabDeleted ? '，随后这个组合被整体删除' : ''}（快照）</div>
+        ${snap.length ? `<table class="admin-table admin-trash-snap"><thead><tr><th>基金</th><th>代码</th><th>份额</th><th>成本净值</th><th>建仓日</th></tr></thead><tbody>${snap.map((f) => `<tr>
+          <td>${esc(f.name || f.code)}</td>
+          <td class="muted">${esc(f.code)}</td>
+          <td class="num">${n(f.shares).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</td>
+          <td class="num">${f.cost ? Number(f.cost).toFixed(4) : '-'}</td>
+          <td class="nowrap">${f.addedAt ? esc(fmtDayOnly(f.addedAt)) : '<span class="muted">未记录</span>'}</td>
+        </tr>`).join('')}</tbody></table>` : '<div class="muted small">这条旧记录没有保存当时的 TAB 快照。</div>'}
+      </td></tr>`;
+      }).join('')}</tbody></table>`;
     $$('[data-trash-restore]', box).forEach((btn) => btn.addEventListener('click', () => {
       restoreHoldingTrashEntry(uid, btn.getAttribute('data-trash-restore'), btn.getAttribute('data-label'));
+    }));
+    $$('[data-trash-restore-tab]', box).forEach((btn) => btn.addEventListener('click', () => {
+      restoreHoldingTabEntry(uid, btn.getAttribute('data-trash-restore-tab'), btn.getAttribute('data-tab'), Number(btn.getAttribute('data-count')) || 0);
+    }));
+    $$('[data-trash-expand]', box).forEach((btn) => btn.addEventListener('click', () => {
+      const row = box.querySelector(`[data-trash-detail="${btn.getAttribute('data-trash-expand')}"]`);
+      if (row) row.hidden = !row.hidden;
     }));
   } catch (err) {
     box.innerHTML = `<div class="admin-empty">读取失败：${esc(err.message)}</div>`;
@@ -2343,6 +2371,19 @@ async function restoreHoldingTrashEntry(userId, id, label) {
     await loadPortfolioHistory();
   } catch (err) {
     toast(`恢复失败：${err.message}`, 'err', 6000);
+  }
+}
+
+/** 按删除时的 TAB 快照整组恢复（原组合不在了会按原名称重建） */
+async function restoreHoldingTabEntry(userId, id, tabName, count) {
+  if (!window.confirm(`恢复「${tabName || '这个 TAB'}」删除时的整组持仓（${count || 0} 只）？\n会按快照里的原份额 / 成本 / 建仓日写回；现在已经有持仓的基金会跳过，不覆盖后来的操作。`)) return;
+  try {
+    const out = await apiPost('/api/admin/portfolio/trash/restore-tab', { userId, id }, 30000);
+    toast(out.message || '已恢复整组持仓', 'ok', 6000);
+    await loadHoldingTrash();
+    await loadPortfolioHistory();
+  } catch (err) {
+    toast(`恢复整组失败：${err.message}`, 'err', 6000);
   }
 }
 
