@@ -9494,5 +9494,6 @@ export {
   activePortfolio, activeHoldings, switchPortfolio, settleActivePortfolio,
   applyFundModuleVisibility, fundModuleVisible, visibleFundViews, loadUiConfig,
   computeFundDailyPnl, fundCalendarBuckets, portfolioVsIndex, intradayVsIndex, fundTopMovers,
+  init,
 };
 
