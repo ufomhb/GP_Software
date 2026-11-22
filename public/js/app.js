@@ -5307,6 +5307,7 @@ function renderFunds() {
   }
   if (view === 'openfund') {
     renderFundBoard();
+    renderFundBoardCompareBar();
     $$('#fundBoardTabs button').forEach((b) => b.classList.toggle('is-active', b.dataset.fundBoardTab === state.fundBoardTab));
     $$('#fundBoardTypeSeg button').forEach((b) => b.classList.toggle('is-active', b.dataset.fundBoardType === state.fundBoardType && state.fundBoardTab !== 'etf'));
   }
