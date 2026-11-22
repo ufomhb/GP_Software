@@ -71,7 +71,7 @@ function renderFundDistribution() {
 
 const FUND_THEME_SORT_LABEL = {
   day: '按当日涨跌',
-  streak: '按连涨天数',
+  streak: '按连涨/连跌天数',
   day5: '按近5日',
   month: '按近1月',
 };
@@ -178,7 +178,7 @@ function renderFundThemeOverview() {
   table.innerHTML = `
     <thead><tr><th>板块（主题）</th>
       ${themeSortHead('day', '当日涨跌', sortKey, sortDir)}
-      ${themeSortHead('streak', '连涨天数', sortKey, sortDir)}
+      ${themeSortHead('streak', '连涨/连跌天数', sortKey, sortDir)}
       ${themeSortHead('day5', '近5日', sortKey, sortDir)}
       ${themeSortHead('month', '近1月', sortKey, sortDir)}
       <th>涨跌家数</th><th>基金数</th><th>代表 ETF</th></tr></thead>
