@@ -7,8 +7,8 @@
    - portfolioVsIndex：组合 vs 上证（本周 / 本月 / 今年 / 全部）
    - fundTopMovers：今日盈亏 TOP5 / 亏损 TOP5
    口径：份额按当前录入值静态加权；不含申赎费；今日盈亏用「我的持仓」同一份实时/估值价。 */
-import { state } from '../core.js?v=2.10.6';
-import { fundHoldingRow } from './funds.js?v=2.10.6';
+import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.10.7';
+import { fundHoldingRow } from './funds.js?v=2.10.7';
 
 function round2(v) {
   const n = Number(v);
@@ -49,7 +49,9 @@ function normalizePoints(points) {
 
 function holdingStartDate(h) {
   const t = Number(h && h.addedAt);
-  if (!Number.isFinite(t) || t <= 0) return '';
+  // v2.10.7：v2.10.0 之前的老持仓没有建仓日，统一按 2026-11-01 起算（用户 2026-11-22 要求）；
+  // 以前这里返回空串 = 不做裁剪，会把建仓之前的涨跌算进盈亏，也导致盈亏日历起步日期不对。
+  if (!Number.isFinite(t) || t <= 0) return LEGACY_ADDED_DATE;
   return shanghaiDateKey(t);
 }
 

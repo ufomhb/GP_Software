@@ -2,7 +2,11 @@
    版本号、本地存储键、账号命名空间、按账号读写的 localStorage、全局 state。
    视图模块可以 import { state } 与这些读写函数，不再依赖 app.js。 */
 
-const APP_VERSION = '2.10.6';
+const APP_VERSION = '2.10.7';
+
+// v2.10.7：v2.10.0 之前的版本不记建仓日，老持仓统一按 2026-11-01 作为建仓日（用户 2026-11-22 要求）。
+// 与服务端 lib/store.js 的 LEGACY_ADDED_AT 保持一致；盈亏日历 / 统计都按它裁剪。
+const LEGACY_ADDED_DATE = '2026-11-01';
 
 const WATCH_KEY = 'gp.watchlist.v1';
 const ALERTS_KEY = 'gp.alerts.v1';
@@ -353,6 +357,7 @@ function normalizeAlerts(list, seq = 0) {
 
 export {
   APP_VERSION,
+  LEGACY_ADDED_DATE,
   WATCH_KEY, ALERTS_KEY, SETTINGS_KEY, FUND_WATCH_KEY, FUND_HOLD_KEY, MONITOR_SECTORS_KEY,
   ACTIVE_PORTFOLIO_KEY,
   PORTFOLIOS_KEY,

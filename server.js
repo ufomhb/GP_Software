@@ -69,7 +69,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.10.6';
+const VERSION = '2.10.7';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -7500,6 +7500,10 @@ function savePortfolio(user, portfolio) {
   dataStore.savePortfolio(user, portfolio);
 }
 
+// v2.10.7：旧版本（v2.10.0 之前）没有记录建仓日。老持仓与后台恢复的老记录
+// 统一按 2026-11-01 作为建仓日（用户 2026-11-22 要求），盈亏日历 / 统计都按它裁剪。
+const LEGACY_ADDED_AT = dataStore.LEGACY_ADDED_AT;
+
 /* ---------------------------------------------------------
    持仓写入审计与快照（v2.9.2）
    ---------------------------------------------------------
@@ -7916,8 +7920,9 @@ function restoreDeletionEvent({ user, id, ip } = {}) {
     shares: f.shares,
     cost: f.cost,
     updatedAt: now,
-    // 建仓日原样保留；老记录没有建仓日的按恢复时刻算，绝不回填建仓前的历史
-    addedAt: f.addedAt > 0 ? f.addedAt : now,
+    // 建仓日原样保留；老记录没有建仓日的统一按 2026-11-01 算（v2.10.7），
+    // 而不是「恢复时刻」——老数据本来就在更早之前建的仓。
+    addedAt: f.addedAt > 0 ? f.addedAt : LEGACY_ADDED_AT,
   });
   let targetId = portfolioId;
   let targetName = ev.portfolioName || (portfolioId === 'default' ? '主持仓' : '组合');
@@ -8198,7 +8203,7 @@ function restoreHoldingTrash({ user, ids = [], ip } = {}) {
       shares: Number(entry.shares) || 0,
       cost: Number(entry.cost) || 0,
       updatedAt: now,
-      addedAt: Number(entry.addedAt) > 0 ? Number(entry.addedAt) : now,
+      addedAt: Number(entry.addedAt) > 0 ? Number(entry.addedAt) : LEGACY_ADDED_AT,
     };
     entry.restoredAt = now;
     entry.restoredInto = targetId;
@@ -8292,7 +8297,7 @@ function restoreHoldingTab({ user, id, ip } = {}) {
     shares: f.shares,
     cost: f.cost,
     updatedAt: now,
-    addedAt: f.addedAt > 0 ? f.addedAt : now,
+    addedAt: f.addedAt > 0 ? f.addedAt : LEGACY_ADDED_AT,
   });
   let targetId = portfolioId;
   let targetName = entry.portfolioName || (portfolioId === 'default' ? '主持仓' : '组合');
@@ -8401,7 +8406,7 @@ function restorePortfolioSnapshot({ user, rev, ip } = {}) {
     const shares = Number(v && v.shares) || 0;
     if (shares <= 0) continue;
     const entry = { shares, cost: Number(v && v.cost) || 0, updatedAt: now };
-    if (Number(v && v.addedAt) > 0) entry.addedAt = Number(v.addedAt);
+    entry.addedAt = Number(v && v.addedAt) > 0 ? Number(v.addedAt) : LEGACY_ADDED_AT;
     holdings[code] = entry;
   }
   // v2.10.0：恢复额外组合（旧快照没有 portfolios 字段时 = 不动现有组合，避免误删）
@@ -8414,7 +8419,7 @@ function restorePortfolioSnapshot({ user, rev, ip } = {}) {
             const shares = Number(v && v.shares) || 0;
             if (shares <= 0) continue;
             const entry = { shares, cost: Number(v && v.cost) || 0, updatedAt: now };
-            if (Number(v && v.addedAt) > 0) entry.addedAt = Number(v.addedAt);
+            entry.addedAt = Number(v && v.addedAt) > 0 ? Number(v.addedAt) : LEGACY_ADDED_AT;
             groupHoldings[code] = entry;
           }
           return {

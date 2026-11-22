@@ -1,9 +1,9 @@
 /* 基金页渲染（P2 从 app.js 抽出，第一个按视图拆的模块）
    只负责把 state 里的数据渲染成 DOM；数据加载与交互仍留在 app.js。
    依赖：core.js（state）、util.js（格式化/转义）、dom.js（$）。 */
-import { state } from '../core.js?v=2.10.6';
-import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.6';
-import { $ } from '../dom.js?v=2.10.6';
+import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.10.7';
+import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.7';
+import { $ } from '../dom.js?v=2.10.7';
 
 
 function fundCategoryOf(name = '') {
@@ -375,7 +375,10 @@ function renderFundHoldTable() {
   const addedText = (code) => {
     const h = getFundHolding(code);
     const ts = Number(h && h.addedAt);
-    if (!Number.isFinite(ts) || ts <= 0) return '<span class="muted" title="没记录建仓日：盈亏统计按可用净值最早一天">未记录</span>';
+    if (!Number.isFinite(ts) || ts <= 0) {
+      // v2.10.7：旧版本没记录建仓日 → 统一按 2026-11-01 计（不再显示「未记录」）
+      return `<span title="旧版本没记录建仓日：统一按 ${esc(LEGACY_ADDED_DATE)} 起算（点「仓」可修改）">${esc(LEGACY_ADDED_DATE.slice(5))}</span>`;
+    }
     const d = new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
     return `<span title="盈亏从这天起算（点「仓」可修改）">${esc(d.slice(5))}</span>`;
   };

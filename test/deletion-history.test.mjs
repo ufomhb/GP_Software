@@ -170,6 +170,49 @@ test('删除历史：v2.10.4 之前的逐条删除记录会补成 TAB 事件', a
   assert.equal(ev.restoredAt, 0, 'TEST 现在不在持仓里，所以是待恢复');
 });
 
+test('删除历史：旧记录没有建仓日时，恢复统一按 2026-11-01 写回（v2.10.7）', async (t) => {
+  const app = await startApp();
+  t.after(() => app.stop());
+  const c = await bootstrapAdmin(app);
+  const uid = await userIdOf(c);
+  const now = Date.now();
+  const legacy = Date.parse('2026-11-01T00:00:00+08:00');
+  const extrasFile = join(app.dataDir, 'userdata', `${uid}.extras.json`);
+  mkdirSync(join(app.dataDir, 'userdata'), { recursive: true });
+  writeFileSync(extrasFile, JSON.stringify({
+    fund_holding_trash: [{
+      id: 'htlegacy2',
+      code: '021277',
+      name: '广发全球精选股票(QDII)人民币C',
+      type: 'open',
+      portfolioId: 'p-legacy',
+      portfolioName: 'OLD',
+      shares: 10000,
+      cost: 4.5,
+      // 没有 addedAt：v2.10.0 之前的老记录本来就记不了建仓日
+      tabSnapshot: [{ code: '021277', name: '广发全球精选股票(QDII)人民币C', type: 'open', shares: 10000, cost: 4.5 }],
+      tabHoldingCount: 1,
+      tabDeleted: true,
+      deletedAt: now,
+      rev: now,
+      action: 'group-delete',
+      source: 'web',
+      ip: '',
+    }],
+  }), 'utf8');
+  const list = await c.get(`/api/admin/portfolio/deletions?userId=${encodeURIComponent(uid)}`);
+  assert.equal(list.status, 200, list.text);
+  const ev = list.body.items[0];
+  assert.equal(ev.funds[0].addedAt, 0, '旧记录本身没有建仓日');
+  const out = await c.post('/api/admin/portfolio/deletions/restore', { userId: uid, id: ev.id });
+  assert.equal(out.status, 200, out.text);
+  const got = await c.get('/api/portfolio');
+  const tab = got.body.portfolios.find((g) => g.name === 'OLD');
+  assert.ok(tab, '按原名称重建组合');
+  assert.equal(tab.holdings['021277'].shares, 10000);
+  assert.equal(tab.holdings['021277'].addedAt, legacy, '老记录没有建仓日的按 2026-11-01 恢复');
+});
+
 test('删除历史：原 TAB 删除后用户又建了同名 TAB，恢复并入而不是重建 TEST-2', async (t) => {
   const app = await startApp();
   t.after(() => app.stop());

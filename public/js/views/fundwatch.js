@@ -2,18 +2,18 @@
    ---------------------------------------------------------------
    只负责 DOM：多份持仓 TAB、今日盈亏 TOP5、盈亏日历、组合 vs 上证。
    取数仍在 app.js；纯计算在 views/fundpnl.js。 */
-import { state } from '../core.js?v=2.10.6';
-import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.6';
-import { $, $$ } from '../dom.js?v=2.10.6';
-import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.10.6';
-import { fundDayBasis } from './funds.js?v=2.10.6';
+import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.10.7';
+import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.7';
+import { $, $$ } from '../dom.js?v=2.10.7';
+import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.10.7';
+import { fundDayBasis } from './funds.js?v=2.10.7';
 import {
   computeFundDailyPnl,
   fundCalendarBuckets,
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './fundpnl.js?v=2.10.6';
+} from './fundpnl.js?v=2.10.7';
 
 export function activePortfolio() {
   const list = state.portfolios || [];
@@ -207,7 +207,7 @@ export function renderFundPnlCalendar() {
       : `按金额 / 元 · 统计区间 ${range}`;
   }
   if (note) {
-    note.textContent = '统计起点 = 各基金建仓日（没记录建仓日的按可用净值最早一天）；逐日盈亏 = 份额 × 当日净值变动，不含申赎费；月/年按逐日盈亏累加，收益率 = 区间盈亏 ÷ 区间起点市值。';
+    note.textContent = `统计起点 = 各基金建仓日（v2.10.0 之前没记录建仓日的老持仓统一按 ${LEGACY_ADDED_DATE} 计）；逐日盈亏 = 份额 × 当日净值变动，不含申赎费；月/年按逐日盈亏累加，收益率 = 区间盈亏 ÷ 区间起点市值。`;
   }
 }
 

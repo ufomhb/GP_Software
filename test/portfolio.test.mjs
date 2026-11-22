@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startApp, bootstrapAdmin } from './helpers/app.mjs';
 
@@ -265,4 +265,31 @@ test('持仓：SQLite 模式下同样按时间戳合并与留快照', async (t) 
   assert.equal(got.body.holdings['510300'].shares, 900);
   const audit = readFileSync(join(app.dataDir, 'portfolio-writes.jsonl'), 'utf8');
   assert.ok(audit.includes('510300'));
+});
+
+test('持仓：v2.10.7 老数据没有建仓日时，读取统一按 2026-11-01 补上', async (t) => {
+  const app = await startApp();
+  t.after(() => app.stop());
+  const c = await bootstrapAdmin(app, 'alice', 'alice12345');
+  const legacy = Date.parse('2026-11-01T00:00:00+08:00');
+  assert.equal(legacy, 1793462400000, '2026-11-01 00:00 上海 = 1793462400000');
+
+  // 模拟 v2.10.0 之前写下的老数据：只有 shares / cost，没有 addedAt
+  const cfgFile = join(app.dataDir, 'push-config.json');
+  let cfg = {};
+  try { cfg = JSON.parse(readFileSync(cfgFile, 'utf8')); } catch { cfg = {}; }
+  cfg.funds = [{ code: '021277', name: '广发全球精选股票(QDII)人民币C', type: 'open' }];
+  cfg.holdings = { '021277': { shares: 1000, cost: 4.5 } };
+  writeFileSync(cfgFile, JSON.stringify(cfg), 'utf8');
+
+  const got = await c.get('/api/portfolio');
+  assert.equal(got.status, 200, got.text);
+  assert.equal(got.body.holdings['021277'].shares, 1000, '老的 holdings 形状保持不变（仍只有 shares / cost）');
+  assert.equal(got.body.portfolios[0].holdings['021277'].addedAt, legacy, '没有建仓日的老持仓统一按 2026-11-01');
+
+  // 老持仓后续再保存（例如改份额）不能把建仓日冲成今天
+  await c.post('/api/portfolio', { holdings: { '021277': { shares: 1200, cost: 4.5 } } });
+  const after = await c.get('/api/portfolio');
+  assert.equal(after.body.holdings['021277'].shares, 1200);
+  assert.equal(after.body.portfolios[0].holdings['021277'].addedAt, legacy, '后续保存保留 2026-11-01');
 });

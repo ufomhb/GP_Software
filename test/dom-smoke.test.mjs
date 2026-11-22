@@ -1118,7 +1118,9 @@ test('DOM：自选基金盈亏按份额加权，日/月/年口径都对', () => 
     { code: 'A1', name: '基金A', type: 'open' },
     { code: 'B1', name: '基金B', type: 'open' },
   ];
-  app.state.fundHoldings = { A1: { shares: 100, cost: 1 }, B1: { shares: 50, cost: 2 } };
+  // v2.10.7：老持仓没有建仓日会统一按 2026-11-01 裁剪，这条用例验的是加权口径，所以显式给更早的建仓日
+  const early = Date.UTC(2025, 11, 1);
+  app.state.fundHoldings = { A1: { shares: 100, cost: 1, addedAt: early }, B1: { shares: 50, cost: 2, addedAt: early } };
   const data = {
     items: [
       { code: 'A1', points: [{ d: '2026-01-02', c: 1 }, { d: '2026-06-01', c: 1.2 }, { d: '2026-11-18', c: 1.5 }, { d: '2026-11-19', c: 1.6 }] },
@@ -1505,9 +1507,10 @@ test('DOM：逐日盈亏只统计建仓日之后，建仓前不生成数据', ()
   assert.equal(daily.rows.length, 2);
   assert.equal(daily.rows[1].pnl, 40, '100 份 ×（1.6 − 1.2）');
   assert.equal(daily.rows[1].pct, 33.33, '40 ÷ 120 ≈ 33.33%');
-  // 没有建仓日记录时不做裁剪（旧持仓按可用历史）
+  // 没有建仓日记录（v2.10.0 之前的老持仓）→ 统一按 2026-11-01 起算（v2.10.7，用户要求）
   const noStart = app.computeFundDailyPnl(series, { A1: { shares: 100, cost: 1 } });
-  assert.equal(noStart.rows[0].d, '2026-01-02');
+  assert.equal(noStart.rows[0].d, '2026-11-19', '老持仓统一按 2026-11-01 起算，11-19 是第一个交易日');
+  assert.equal(noStart.startDate, '2026-11-19');
   assert.equal(app.computeFundDailyPnl(series, {}), null, '没有持仓返回 null');
 });
 
@@ -1630,6 +1633,65 @@ test('DOM：v2.10.6 建仓日晚于最新净值时不再卡「计算中」，盈
   const holdTable = document.querySelector('#fundHoldTable').textContent;
   assert.match(holdTable, /11-21/, '建仓日要显示 11-21');
   assert.ok(!holdTable.includes('未记录'), '有 addedAt 时不能显示「未记录」');
+
+  app.state.portfolios = prevPortfolios;
+  app.state.activePortfolioId = prevActive;
+  app.state.fundHoldings = prevHold;
+  app.state.fundPnl = prevPnl;
+  app.state.fundWatchlist = prevWatch;
+  app.state.fundWatchData = prevLive;
+  app.state.pnlUnit = prevUnit;
+  app.state.pnlMetric = prevMetric;
+  app.state.pnlYearMonth = prevYm;
+});
+
+test('DOM：v2.10.7 老持仓没有建仓日时统一按 2026-11-01 起算（盈亏日历与持仓表）', () => {
+  const prevPortfolios = app.state.portfolios;
+  const prevActive = app.state.activePortfolioId;
+  const prevHold = app.state.fundHoldings;
+  const prevPnl = app.state.fundPnl;
+  const prevWatch = app.state.fundWatchlist;
+  const prevLive = app.state.fundWatchData;
+  const prevUnit = app.state.pnlUnit;
+  const prevMetric = app.state.pnlMetric;
+  const prevYm = app.state.pnlYearMonth;
+  // v2.10.0 之前的老持仓：只有 shares / cost，没有 addedAt
+  const holdings = { A1: { shares: 100, cost: 1 } };
+  const items = [{
+    code: 'A1',
+    points: [
+      { d: '2026-10-30', c: 1.5 },
+      { d: '2026-11-02', c: 1.52 },
+      { d: '2026-11-03', c: 1.6 },
+    ],
+  }];
+  const daily = app.computeFundDailyPnl(items, holdings);
+  assert.ok(daily, '老持仓也要算得出来');
+  assert.equal(daily.rows[0].d, '2026-11-02', '2026-11-01 之前（10-30）不计入');
+  assert.equal(daily.rows.length, 2);
+  assert.equal(daily.startDate, '2026-11-02');
+
+  app.state.portfolios = [{ id: 'default', name: '主持仓', isDefault: true, holdings }];
+  app.state.activePortfolioId = 'default';
+  app.state.fundHoldings = holdings;
+  app.state.fundPnl = { items, index: null, missing: [] };
+  app.state.fundWatchlist = [{ code: 'A1', name: '基金A', type: 'open' }];
+  app.state.fundWatchData = { items: [{ code: 'A1', name: '基金A', type: 'open', price: 1.61, pct: 0, pctKind: 'navbar' }] };
+  app.state.pnlUnit = 'day';
+  app.state.pnlMetric = 'amount';
+  app.state.pnlYearMonth = '';
+  app.renderFundPnlCalendar();
+  const cal = document.querySelector('#fundPnlCalendar');
+  assert.ok(cal.querySelector('.pnl-calendar'), '老持仓应正常渲染日历');
+  const cells = [...cal.querySelectorAll('.pnl-calendar-cell')];
+  const day2 = cells.find((c) => (c.querySelector('.pnl-calendar-day') || {}).textContent === '2');
+  assert.ok(day2 && !day2.classList.contains('is-rest'), '11-02 应有真实数据（不是 --）');
+  assert.match(document.querySelector('#fundPnlCalendarNote').textContent, /2026-11-01/, '说明要写清老数据统一按 2026-11-01');
+
+  app.renderFundHoldTable();
+  const table = document.querySelector('#fundHoldTable').textContent;
+  assert.match(table, /11-01/, '老持仓的建仓日显示 11-01');
+  assert.ok(!table.includes('未记录'), '不再显示「未记录」');
 
   app.state.portfolios = prevPortfolios;
   app.state.activePortfolioId = prevActive;

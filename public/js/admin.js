@@ -2230,7 +2230,11 @@ function fillPortfolioUserSelect(sel, users) {
    用户删掉「我的持仓」里的一个 TAB 或其中一只基金时，服务端只记录
    被删的那个 TAB（TAB 名称 + 基金 / 份额 / 成本 / 建仓日）。这里按 TAB
    展示删除记录，「详情」看当时的 TAB 数据，「恢复」按原状态写回。
+   旧版本记录没有建仓日的，统一按 LEGACY_ADDED_DATE（2026-11-01）显示 / 恢复（v2.10.7）。
    -------------------------------------------------------------------------- */
+// 与服务端 lib/store.js 的 LEGACY_ADDED_AT、前端 core.js 的 LEGACY_ADDED_DATE 保持一致
+const LEGACY_ADDED_DATE = '2026-11-01';
+
 function fmtDayOnly(ts) {
   if (!ts) return '-';
   try {
@@ -2268,7 +2272,7 @@ async function loadDeletionHistory() {
       <td class="muted">${esc(f.code)}</td>
       <td class="num">${n(f.shares).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</td>
       <td class="num">${f.cost ? Number(f.cost).toFixed(4) : '-'}</td>
-      <td class="nowrap">${f.addedAt ? esc(fmtDayOnly(f.addedAt)) : '<span class="muted">未记录</span>'}</td>
+      <td class="nowrap">${f.addedAt ? esc(fmtDayOnly(f.addedAt)) : `<span title="旧版本没记录建仓日：恢复时统一按 ${LEGACY_ADDED_DATE} 写回">${LEGACY_ADDED_DATE}<span class="muted">（旧记录默认）</span></span>`}</td>
     </tr>`).join('') || '<tr><td colspan="5" class="muted">没有基金记录</td></tr>'}</tbody></table>`;
     box.innerHTML = `<table class="admin-table"><thead><tr>
         <th>删除时间</th><th>TAB 名称</th><th>删除类型</th><th>基金数</th><th>状态</th><th>操作</th>
@@ -2309,7 +2313,7 @@ async function loadDeletionHistory() {
 }
 
 async function restoreDeletionEventEntry(userId, id, tabName, count) {
-  if (!window.confirm(`按删除前的状态恢复「${tabName || '这个 TAB'}」（${count || 0} 只基金）？\n会保留原来的份额 / 成本 / 建仓日，盈亏统计仍从原建仓日开始；TAB 已被删除的会按原名称重建；现在已经有持仓的基金会跳过。`)) return;
+  if (!window.confirm(`按删除前的状态恢复「${tabName || '这个 TAB'}」（${count || 0} 只基金）？\n会保留原来的份额 / 成本 / 建仓日，盈亏统计仍从原建仓日开始（旧记录没有建仓日的按 ${LEGACY_ADDED_DATE} 恢复）；TAB 已被删除的会按原名称重建；现在已经有持仓的基金会跳过。`)) return;
   try {
     const out = await apiPost('/api/admin/portfolio/deletions/restore', { userId, id }, 30000);
     toast(out.message || '已恢复', 'ok', 6000);
