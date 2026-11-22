@@ -7797,11 +7797,19 @@ function listDeletionEvents(user, { includeRestored = true } = {}) {
   for (const g of (doc && doc.portfolios) || []) {
     if (g && !g.isDefault) current.set(g.id, g.holdings || {});
   }
+  // 原 TAB 被删后用户又建了同名 TAB（新 id）：按名字也算「数据已经回来了」
+  const idByName = new Map();
+  for (const g of (doc && doc.portfolios) || []) {
+    if (g && !g.isDefault && g.name) idByName.set(g.name, g.id);
+  }
   const now = Date.now();
   let changed = false;
   for (const ev of events) {
     if (Number(ev.restoredAt)) continue;
-    const map = current.get(ev.portfolioId || 'default') || {};
+    let map = current.get(ev.portfolioId || 'default') || {};
+    if (!current.has(ev.portfolioId || 'default') && ev.portfolioName && idByName.has(ev.portfolioName)) {
+      map = current.get(idByName.get(ev.portfolioName)) || {};
+    }
     const funds = Array.isArray(ev.funds) ? ev.funds : [];
     if (!funds.length) continue;
     // 用户后来又加回来了（手动补录 / 从服务端恢复 / 快照回滚），状态改成已恢复
@@ -7867,9 +7875,14 @@ function restoreDeletionEvent({ user, id, ip } = {}) {
       .map((g) => ({ ...g, holdings: { ...(g.holdings || {}) } })),
   };
   const portfolioId = ev.portfolioId || 'default';
-  const existingGroup = portfolioId === 'default'
+  let existingGroup = portfolioId === 'default'
     ? null
     : doc.portfolios.find((g) => g.id === portfolioId) || null;
+  // 原 TAB 被删后用户又手动建了同名 TAB：直接并进去，别再建一个「TEST-2」
+  if (!existingGroup && portfolioId !== 'default' && ev.portfolioName) {
+    const sameName = doc.portfolios.filter((g) => g.name === ev.portfolioName);
+    if (sameName.length === 1) existingGroup = sameName[0];
+  }
   const baseMap = portfolioId === 'default'
     ? doc.holdings
     : (existingGroup ? existingGroup.holdings : {});

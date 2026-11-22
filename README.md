@@ -198,7 +198,7 @@ Environment=TRUST_PROXY=cloudflare
 
 ```bash
 npm install                               # 只装测试依赖 jsdom（运行时仍然零依赖）
-npm test                                  # 单元 + 集成 + DOM + 路由表 + 日志 + 策略 + 部署 + 指标 + 数据中心 + 基金分析/多组合/持仓删除历史（301 项，起隔离实例，不碰 data/）
+npm test                                  # 单元 + 集成 + DOM + 路由表 + 日志 + 策略 + 部署 + 指标 + 数据中心 + 基金分析/多组合/持仓删除历史（302 项，起隔离实例，不碰 data/）
 npm run selfcheck                         # 安全基线 39 项 + 存储层 23 项
 ```
 
@@ -220,7 +220,7 @@ npm run selfcheck                         # 安全基线 39 项 + 存储层 23 �
 - **口径**：恢复后盈亏统计仍从原建仓日开始，不会把加入持仓之前的历史净值自动算进来；老记录没有建仓日的按恢复时刻算（宁可不统计，也不提前）。
 - **自动对账**：用户后来自己把基金加回来（手动补录 / 从服务端恢复 / 快照回滚）时，删除记录自动标成「已恢复」；v2.10.4 及以前留下的逐条删除记录，第一次打开时自动补成 TAB 事件，可直接查看 / 恢复。
 - **接口**：新增 `GET /api/admin/portfolio/deletions?userId=&pending=1`、`POST /api/admin/portfolio/deletions/restore`（管理员）；旧的 `/api/admin/portfolio/trash*` 接口保留兼容。
-- **测试**：新增 `test/deletion-history.test.mjs` 7 项（JSON + SQLite：只记录被删的 TAB、详情数据、按原名称重建并保留建仓日、单只删除只补缺、手动加回自动标记已恢复、旧记录自动补成事件）；`dom-smoke` 后台卡片断言同步更新。`npm test` 301 项全绿。
+- **测试**：新增 `test/deletion-history.test.mjs` 8 项（JSON + SQLite：只记录被删的 TAB、详情数据、按原名称重建并保留建仓日、单只删除只补缺、手动加回自动标记已恢复、旧记录自动补成事件、同名 TAB 并入不重建）；`dom-smoke` 后台卡片断言同步更新。`npm test` 302 项全绿。
 
 ### v2.10.4 更新（2026-11-22）
 

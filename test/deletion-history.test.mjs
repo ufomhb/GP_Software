@@ -169,3 +169,37 @@ test('删除历史：v2.10.4 之前的逐条删除记录会补成 TAB 事件', a
   assert.equal(ev.tabHoldings[0].shares, 10000);
   assert.equal(ev.restoredAt, 0, 'TEST 现在不在持仓里，所以是待恢复');
 });
+
+test('删除历史：原 TAB 删除后用户又建了同名 TAB，恢复并入而不是重建 TEST-2', async (t) => {
+  const app = await startApp();
+  t.after(() => app.stop());
+  const c = await bootstrapAdmin(app);
+  const addedAt = Date.UTC(2026, 4, 6);
+  const created = await c.post('/api/portfolio/groups', { action: 'create', name: 'TEST' });
+  const gid = created.body.portfolios.find((g) => !g.isDefault).id;
+  await c.post('/api/portfolio', {
+    portfolios: [{ id: gid, name: 'TEST', holdings: { '021277': { shares: 10000, cost: 4.5, addedAt } } }],
+  });
+  await c.post('/api/portfolio/groups', { action: 'delete', id: gid });
+  const uid = await userIdOf(c);
+  const list = await c.get(`/api/admin/portfolio/deletions?userId=${encodeURIComponent(uid)}`);
+  const ev = list.body.items[0];
+  assert.equal(ev.restoredAt, 0, '刚删完是待恢复');
+
+  // 用户手动重建同名 TAB，并加回同一只基金（份额不同）
+  const again = await c.post('/api/portfolio/groups', { action: 'create', name: 'TEST' });
+  const gid2 = again.body.portfolios.find((g) => g.name === 'TEST').id;
+  await c.post('/api/portfolio', {
+    portfolios: [{ id: gid2, name: 'TEST', holdings: { '021277': { shares: 300, cost: 4.2, updatedAt: Date.now() } } }],
+  });
+  const after = await c.get(`/api/admin/portfolio/deletions?userId=${encodeURIComponent(uid)}`);
+  assert.ok(after.body.items[0].restoredAt > 0, '同名 TAB 里的数据回来了也算已恢复');
+
+  const out = await c.post('/api/admin/portfolio/deletions/restore', { userId: uid, id: ev.id });
+  assert.equal(out.status, 200, out.text);
+  assert.equal(out.body.restored, 0, '数据都在，不需要再写回');
+  const got = await c.get('/api/portfolio');
+  const tabs = got.body.portfolios.filter((g) => String(g.name || '').startsWith('TEST'));
+  assert.equal(tabs.length, 1, '不能多出 TEST-2');
+  assert.equal(tabs[0].holdings['021277'].shares, 300, '现有持仓不被旧快照覆盖');
+});
