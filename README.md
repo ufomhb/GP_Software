@@ -202,12 +202,23 @@ npm test                                  # 单元 + 集成 + DOM + 路由表 + 
 npm run selfcheck                         # 安全基线 39 项 + 存储层 23 项
 ```
 
-- 测试在 `test/`：`fund-analytics`（基金分档/连涨天数/主题等权指数/榜单排序）、`portfolio-groups`（多份持仓组合 CRUD、隔离、建仓日、快照恢复）、`auth`（注册/登录/改密/会话失效）、`portfolio`（清洗、跨账号隔离、sqlite 模式）、`security`（安全头、同源校验、穿越、SSRF、后台权限、日志脱敏）、`logs`（轮转、末尾读取、关键词过滤、`/api/admin/logs` 鉴权与路径白名单）、`unit-security`（`src/lib/*` 纯函数）、`unit-push`（时段判断/幂等/配置归一）、`indicators`（KDJ/BOLL 公式与边界）、`datacenter`（席位归一化、上海时区日期、新股/转债申购与席位明细字段口径）、`routes`（解析源码里所有 /api 端点，逐个确认分发器认得）、`dom-smoke`（jsdom 载入真实 index.html，驱动快讯/榜单/基金页/策略页/预警/K 线控件/叠层弹窗的渲染函数）。
+- 测试在 `test/`：`fund-analytics`（基金分档/连涨天数/主题等权指数/榜单排序）、`portfolio-groups`（多份持仓组合 CRUD、隔离、建仓日、快照恢复）、`holding-trash`（删除留档 / 按原值恢复 / 已重新持有跳过 / 删组合留档，JSON 与 SQLite 双跑）、`auth`（注册/登录/改密/会话失效）、`portfolio`（清洗、跨账号隔离、sqlite 模式）、`security`（安全头、同源校验、穿越、SSRF、后台权限、日志脱敏）、`logs`（轮转、末尾读取、关键词过滤、`/api/admin/logs` 鉴权与路径白名单）、`unit-security`（`src/lib/*` 纯函数）、`unit-push`（时段判断/幂等/配置归一）、`indicators`（KDJ/BOLL 公式与边界）、`datacenter`（席位归一化、上海时区日期、新股/转债申购与席位明细字段口径）、`routes`（解析源码里所有 /api 端点，逐个确认分发器认得）、`dom-smoke`（jsdom 载入真实 index.html，驱动快讯/榜单/基金页/策略页/预警/K 线控件/叠层弹窗的渲染函数）。
 - 测试脚手架 `test/helpers/app.mjs` 会把代码复制到临时目录、用随机端口起一个实例，所以**不会改动仓库里的 `data/`**。
 - 服务端纯逻辑在 `src/lib/`（`security.js` / `net-safety.js` / `log-files.js`），推送子系统在 `src/services/push.js`，HTTP 路由分发在 `src/http/routes.js`（三组：`handleAuth` / `handleAdmin` / `handleApi`，依赖由 `createHttpRoutes(deps)` 注入）。
 - 前端已拆出 `public/js/util.js`（格式化/转义）、`public/js/dom.js`（选择器 `$` / `$$`、`toast`、`debounce`）、`public/js/api.js`（`api` / `apiPost` / 401 跳登录）、`public/js/core.js`（版本号、存储键、账号命名空间、预警 v2 结构、本地存储、全局 `state`），以及两个视图模块 `public/js/views/funds.js`（基金页渲染）与 `public/js/views/market.js`（全景页行情渲染 + 只读行情索引）。`app.js` 从 7,285 行降到 **6,828 行**，剩余视图（策略 / 自选 / 板块 / 美股等）按同一模式继续拆。视图模块的边界约定：**只做 state → DOM 的纯渲染**，取数（`load*`）与交互仍留在 `app.js`。
 - 前端渲染约定：**外部文本进 `innerHTML` 前必须 `esc()`；进 `href`/`src` 前必须再过 `safeUrl()`**（`esc` 挡不住 `javascript:` 协议）。2026-11-15 审计了 225 处模板插值，35 处文本型全部安全，并补了 `safeUrl` 覆盖快讯链接等 2 处 href。
 - CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
+
+### v2.10.3 更新（2026-11-22）
+
+> 自选基金页三处按用户要求调整：持仓表改用「当日涨跌 / 当日估值」、新增「持仓调整」批量改份额、删除持仓可在后台回收站恢复。**只在本机 8090 验证，未推 NAS。**
+
+- **我的持仓改用「当日涨跌 / 当日估值」两列**：原表格里的「今日盈亏」整列换成与「我的自选基金」同口径的两列——「当日涨跌」是真实净值涨跌幅（今日净值未出时回退最近一期并标明净值日），「当日估值」是 15:00 冻结的预估涨跌幅（可与真实涨跌对比看估值准不准），并新增「操作」列（改 / 删）。今日盈亏仍然保留在面板顶部的 KPI 卡和「今日盈亏 TOP5」里，只是不再作为明细列重复展示。
+- **新增「持仓调整」**：放在组合 TAB 右侧「新建 / 重命名 / 删除」旁边。一个弹窗里列出当前组合的每只持仓（份额、成本预填），也列出「自选里还没持有」的基金（份额留空、可直接补录）；改完点「保存全部」一次性提交，避免逐只点「仓」。份额填 0 = 清仓。
+- **删除持仓可恢复**：删除仍然是写 `shares=0` 的墓碑（多端合并不会把删掉的数据带回来），同时服务端在每次写入的 before/after 对比里认出被删掉的条目，把**删除前的份额、成本净值、建仓日和所在组合**存进 `user_extras['fund_holding_trash']`（留档 365 天 / 每账号最多 500 条）。逐条删除、持仓调整里删除、删掉整份组合、恢复到旧快照这几种路径都会自动留档，前端不需要额外请求。
+- **后台「持仓数据 → 持仓回收站」**：按账号查看待恢复条目（删除时间 / 基金 / 组合 / 份额 / 成本 / 建仓日 / 状态），点「恢复」按原值写回原组合；如果该基金现在已有新持仓，保留现有数据并跳过（不覆盖用户后来的操作）；原组合已被删除的恢复到「主持仓」。可勾选「含已恢复」查看历史。
+- **接口**：新增 `GET /api/admin/portfolio/trash?userId=&all=1`、`POST /api/admin/portfolio/trash/restore`（管理员）；持仓删除的留档在 `POST /api/portfolio`、`POST /api/portfolio/groups`、快照恢复、本机 ⇄ NAS 拉取的写入链路里统一发生。
+- **测试**：新增 `test/holding-trash.test.mjs`（JSON / SQLite 各 3 项：删除留档原值、后台按原值恢复、已重新持有则跳过、删组合一并留档并回到主持仓；另 1 项权限：未登录 401 / 普通用户 403 / 缺 userId 400）；`dom-smoke` 增至 70 项（持仓表两列与改删按钮、持仓调整弹窗内容、批量保存与删除写墓碑）。`npm test` 285 项全绿。
 
 ### v2.10.2 更新（2026-11-22）
 

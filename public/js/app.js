@@ -6319,13 +6319,15 @@ function openPortfolioAdjust() {
       const costInput = tr.querySelector('[data-adjust-cost]');
       const sharesRaw = String((sharesInput && sharesInput.value) || '').trim();
       const costRaw = String((costInput && costInput.value) || '').trim();
-      if (!sharesRaw && !costRaw) continue;
-      const shares = Number(sharesRaw || 0);
-      const cost = Number(costRaw || 0);
-      if (!Number.isFinite(shares) || shares < 0) { toast('份额要填 0 或正数', 'warn'); return; }
-      if (!Number.isFinite(cost) || cost < 0) { toast('成本净值要填 0 或正数', 'warn'); return; }
       const prevShares = Number(tr.dataset.prevShares) || 0;
       const prevCost = Number(tr.dataset.prevCost) || 0;
+      // 未持有、又什么都没填的行直接跳过；已持有但把份额清空 = 清仓
+      if (!sharesRaw && !costRaw && prevShares <= 0) continue;
+      const shares = sharesRaw === '' ? 0 : Number(sharesRaw);
+      // 成本留空时沿用原成本，避免误删成本净值
+      const cost = costRaw === '' ? prevCost : Number(costRaw);
+      if (!Number.isFinite(shares) || shares < 0) { toast('份额要填 0 或正数', 'warn'); return; }
+      if (!Number.isFinite(cost) || cost < 0) { toast('成本净值要填 0 或正数', 'warn'); return; }
       if (shares === prevShares && Math.abs(cost - prevCost) < 1e-9) continue;
       changed.push({ code: tr.dataset.adjustCode, shares, cost });
     }
