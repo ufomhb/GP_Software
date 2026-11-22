@@ -2333,8 +2333,8 @@ async function loadHoldingTrash() {
           : '<span class="muted small">旧记录无快照</span>'}</td>
         <td>${it.restoredAt ? `<span class="muted">已恢复 ${esc(fmtClock(it.restoredAt))}</span>` : '<span class="tone-up">待恢复</span>'}</td>
         <td class="nowrap">${it.restoredAt
-          ? '<span class="muted small">-</span>'
-          : `<button type="button" class="admin-btn" data-trash-restore="${esc(it.id)}" data-label="${esc(it.name || it.code)}">恢复</button>${snapCount > 0 ? ` <button type="button" class="admin-btn" data-trash-restore-tab="${esc(it.id)}" data-tab="${esc(tabName)}" data-count="${snapCount}">恢复整个 TAB</button>` : ''}`}</td>
+          ? '<span class="muted small">已恢复</span>'
+          : `<button type="button" class="admin-btn" data-trash-restore="${esc(it.id)}" data-label="${esc(it.name || it.code)}">恢复</button>`}${snapCount > 0 ? ` <button type="button" class="admin-btn" data-trash-restore-tab="${esc(it.id)}" data-tab="${esc(tabName)}" data-count="${snapCount}">恢复整个 TAB</button>` : ''}</td>
       </tr>
       <tr class="trash-detail" data-trash-detail="${esc(it.id)}" hidden><td colspan="9">
         <div class="admin-trash-detail-head">删除时「${esc(tabName)}」下共 <b>${snapCount || 0}</b> 只持仓${it.tabDeleted ? '，随后这个组合被整体删除' : ''}（快照）</div>
