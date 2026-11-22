@@ -8647,9 +8647,14 @@ function loadUiConfig(force = false) {
 
 function saveUiConfig(patch = {}) {
   const cur = loadUiConfig(true);
-  const next = normalizeUiConfig({
-    fundModules: patch.fundModules === undefined ? cur.fundModules : patch.fundModules,
-  });
+  // 只提交部分键时按「当前值 + 补丁」合并，避免把没提交的模块重置成默认
+  const merged = { ...cur.fundModules };
+  if (patch.fundModules && typeof patch.fundModules === 'object' && !Array.isArray(patch.fundModules)) {
+    for (const key of FUND_MODULE_KEYS) {
+      if (typeof patch.fundModules[key] === 'boolean') merged[key] = patch.fundModules[key];
+    }
+  }
+  const next = normalizeUiConfig({ fundModules: merged });
   next.updatedAt = Date.now();
   writeJsonSafe(UI_CONFIG_FILE, next);
   uiConfigCache = { at: Date.now(), val: next };
