@@ -54,6 +54,9 @@ function createHttpRoutes(deps) {
     listPortfolioHistory,
     restorePortfolioSnapshot,
     transferPortfolio,
+    // v2.10.3：持仓回收站（删除留档 / 按原值恢复）
+    listHoldingTrash,
+    restoreHoldingTrash,
     // v2.10.0：多份持仓组合（主持仓 + 额外组合）
     mutatePortfolioGroup,
     publicPortfolioList,
@@ -486,6 +489,44 @@ async function handleAdmin(req, res, url) {
       ok: true,
       action: 'portfolio',
       reason: `恢复 ${target.username} 的持仓到快照 ${out.restoredFrom}`,
+    });
+    return out;
+  }
+  /* ---------------------------------------------------------
+     持仓回收站（v2.10.3）
+     - GET  /api/admin/portfolio/trash?userId=&all=1   用户删掉的持仓（原份额 / 成本 / 建仓日）
+     - POST /api/admin/portfolio/trash/restore         按原值恢复；已重新持有的那只会跳过
+     --------------------------------------------------------- */
+  if (p === '/api/admin/portfolio/trash' && req.method === 'GET') {
+    const id = String(q.get('userId') || '').trim();
+    if (!id) throw Object.assign(new Error('缺少 userId'), { status: 400 });
+    const target = loadUsers().users.find((u) => u.id === id);
+    if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
+    const items = listHoldingTrash(target, { includeRestored: q.get('all') === '1' });
+    return {
+      ok: true,
+      user: { id: target.id, username: target.username },
+      items,
+      total: items.length,
+      retentionDays: 365,
+    };
+  }
+  if (p === '/api/admin/portfolio/trash/restore' && req.method === 'POST') {
+    const body = req.body || {};
+    const id = String(body.userId || '').trim();
+    if (!id) throw Object.assign(new Error('缺少 userId'), { status: 400 });
+    const target = loadUsers().users.find((u) => u.id === id);
+    if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
+    const out = restoreHoldingTrash({
+      user: target,
+      ids: Array.isArray(body.ids) ? body.ids : (body.id ? [body.id] : []),
+      ip: clientIp(req),
+    });
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'portfolio',
+      reason: `从回收站恢复 ${target.username} 的 ${out.restored} 条持仓`,
     });
     return out;
   }

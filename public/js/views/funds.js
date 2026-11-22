@@ -1,9 +1,9 @@
 /* 基金页渲染（P2 从 app.js 抽出，第一个按视图拆的模块）
    只负责把 state 里的数据渲染成 DOM；数据加载与交互仍留在 app.js。
    依赖：core.js（state）、util.js（格式化/转义）、dom.js（$）。 */
-import { state } from '../core.js?v=2.10.2';
-import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.2';
-import { $ } from '../dom.js?v=2.10.2';
+import { state } from '../core.js?v=2.10.3';
+import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.3';
+import { $ } from '../dom.js?v=2.10.3';
 
 
 function fundCategoryOf(name = '') {
@@ -358,7 +358,7 @@ function renderFundHoldTable() {
   const items = (state.fundWatchData && state.fundWatchData.items) || [];
   const rows = items.filter((x) => getFundHolding(x.code));
   if (!rows.length) {
-    el.innerHTML = '<div class="empty">还没有录入持仓。切换「自选基金」页签，在表格里点「仓」填写份数与成本净值，就能看到持有收益、当日盈亏和组合结构。</div>';
+    el.innerHTML = '<div class="empty">还没有录入持仓。点组合 TAB 右侧的「持仓调整」批量填份额，或切换「自选基金」页签在表格里点「仓」逐只录入，就能看到持有收益、当日涨跌与组合结构。</div>';
     return;
   }
   const withR = rows.map((x) => ({ x, r: fundHoldingRow(x) })).filter((o) => o.r.marketValue !== null);
@@ -371,7 +371,7 @@ function renderFundHoldTable() {
     return `<span title="盈亏从这天起算（点「仓」可修改）">${esc(d.slice(5))}</span>`;
   };
   el.innerHTML = `<div class="table-scroll"><table class="table fund-hold-table">
-    <thead><tr><th>基金</th><th data-col="shares">份额</th><th data-col="cost">成本净值</th><th data-col="nav">最新</th><th>市值</th><th>持有收益</th><th data-col="ret">收益率</th><th title="口径随时间变：9:00 前按前日净值，9:00–15:00 按当日估值，15:00 后按估值终值，今日净值公布后按今日净值">今日盈亏</th><th title="盈亏统计从建仓日起算，建仓前的净值不参与">建仓日</th><th data-col="weight">占比</th></tr></thead>
+    <thead><tr><th>基金</th><th data-col="shares">份额</th><th data-col="cost">成本净值</th><th data-col="nav">最新</th><th class="t-chg" title="真实净值涨跌幅：今日净值已出就显示今日；未出则显示最近一期已公布净值（QDII 等滞后披露的基金同样回退）；只有普通基金在交易日 15:00 后等当日净值时才显示 --">当日涨跌</th><th class="t-chg" title="15:00 收盘时的预估涨跌幅，冻结后不随准确净值改动；和「当日涨跌」对比就能看估值准不准">当日估值</th><th>市值</th><th>持有收益</th><th data-col="ret">收益率</th><th title="盈亏统计从建仓日起算，建仓前的净值不参与">建仓日</th><th data-col="weight">占比</th><th>操作</th></tr></thead>
     <tbody>${withR.sort((a, b) => b.r.marketValue - a.r.marketValue).map(({ x, r }) => {
       const type = x.type || 'open';
       const share = total > 0 ? (r.marketValue / total) * 100 : null;
@@ -380,18 +380,21 @@ function renderFundHoldTable() {
         <td data-col="shares" class="t-price">${nf(r.shares, 2)}</td>
         <td data-col="cost" class="t-price">${r.cost ? nf(r.cost, 4) : '--'}</td>
         <td data-col="nav" class="t-price">${priceFmt(x.price)}${x.pctKind === 'holdings' || x.pctKind === 'etf' ? '<div class="t-sub">估算净值</div>' : ''}</td>
+        <td class="t-chg ${toneClass(x.navPctShow ?? x.navPctToday ?? (type === 'etf' ? x.pct : null))}">${fundDayPctCell(x)}</td>
+        <td data-col="est" class="t-chg">${fundEstimateCell(x)}</td>
         <td class="t-price">${nf(r.marketValue, 2)}</td>
         <td class="t-chg ${toneClass(r.profit)}">${signedFmt(r.profit, 2)}</td>
         <td data-col="ret" class="t-chg ${toneClass(r.profitPct)}">${isNum(r.profitPct) ? `${r.profitPct >= 0 ? '+' : ''}${Number(r.profitPct).toFixed(2)}%` : '--'}</td>
-        <td class="t-chg ${toneClass(r.dayProfit)}">${r.dayPending
-          ? `<span class="muted" title="${esc(`当日涨跌未出，最新 ${String(r.pctDate || '').slice(5)}${r.navPct !== null ? ` 净值 ${r.navPct > 0 ? '+' : ''}${r.navPct.toFixed(2)}%` : ''}`)}">--</span><div class="t-sub">${esc(`当日未出${r.pctDate ? ` · ${String(r.pctDate).slice(5)}` : ''}`)}</div>`
-          : signedFmt(r.dayProfit, 2)}</td>
         <td class="t-dim">${addedText(x.code)}</td>
         <td data-col="weight" class="t-dim">${isNum(share) ? `${share.toFixed(1)}%` : '--'}</td>
+        <td><div class="fund-watch-actions fund-hold-ops">
+          <button data-hold-action="edit" data-code="${esc(x.code)}" data-name="${esc(cleanName(x.name) || x.code)}" title="修改份额 / 成本 / 建仓日">改</button>
+          <button class="del" data-hold-action="delete" data-code="${esc(x.code)}" data-name="${esc(cleanName(x.name) || x.code)}" title="删除这条持仓（服务端会留档，可在后台「持仓数据 → 持仓回收站」恢复）">删</button>
+        </div></td>
       </tr>`;
     }).join('')}</tbody>
   </table></div>
-  <div class="fund-hold-actions"><button class="btn small" id="fundHoldExport">导出持仓 JSON</button><span class="muted small">份额与成本保存在你的账号里（服务端），换设备会自动恢复；当日涨跌还没出的基金不给今日盈亏，避免拿昨天的净值冒充今天。</span></div>`;
+  <div class="fund-hold-actions"><button class="btn small" id="fundHoldExport">导出持仓 JSON</button><span class="muted small">份额与成本保存在你的账号里（服务端），换设备会自动恢复；当日涨跌 / 当日估值与「我的自选基金」同一口径，删掉的持仓在后台留档 365 天，可以恢复。</span></div>`;
 }
 
 export {

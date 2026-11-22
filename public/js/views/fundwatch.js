@@ -2,18 +2,18 @@
    ---------------------------------------------------------------
    只负责 DOM：多份持仓 TAB、今日盈亏 TOP5、盈亏日历、组合 vs 上证。
    取数仍在 app.js；纯计算在 views/fundpnl.js。 */
-import { state } from '../core.js?v=2.10.2';
-import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.2';
-import { $, $$ } from '../dom.js?v=2.10.2';
-import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.10.2';
-import { fundDayBasis } from './funds.js?v=2.10.2';
+import { state } from '../core.js?v=2.10.3';
+import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.3';
+import { $, $$ } from '../dom.js?v=2.10.3';
+import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.10.3';
+import { fundDayBasis } from './funds.js?v=2.10.3';
 import {
   computeFundDailyPnl,
   fundCalendarBuckets,
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './fundpnl.js?v=2.10.2';
+} from './fundpnl.js?v=2.10.3';
 
 export function activePortfolio() {
   const list = state.portfolios || [];
@@ -42,6 +42,7 @@ export function renderPortfolioTabs() {
       <button data-portfolio-add title="新建一份独立持仓">＋ 新建</button>
       <button data-portfolio-rename ${isDefault ? 'disabled title="主持仓不能改名"' : ''}>重命名</button>
       <button data-portfolio-delete ${isDefault ? 'disabled title="主持仓不能删除"' : ''}>删除</button>
+      <button data-portfolio-adjust title="在一个面板里调整当前组合每只基金的份额 / 成本，也可以删除或在后台恢复">持仓调整</button>
     </div>`;
 }
 

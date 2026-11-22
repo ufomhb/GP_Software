@@ -26,7 +26,7 @@ import {
   intradayCompareChart,
   compareTrendChart,
   COLORS,
-} from './charts.js?v=2.10.2';
+} from './charts.js?v=2.10.3';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -44,11 +44,11 @@ import {
   esc,
   safeUrl,
   timeText,
-} from './util.js?v=2.10.2';
+} from './util.js?v=2.10.3';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.10.2';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.10.2';
+import { $, $$, toast, debounce } from './dom.js?v=2.10.3';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.10.3';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -60,7 +60,7 @@ import {
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.10.2';
+} from './core.js?v=2.10.3';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -77,7 +77,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.10.2';
+} from './views/funds.js?v=2.10.3';
 
 // 基金页新增子页渲染（v2.10.0：涨跌分布 / 板块总览 / 场外基金四榜，见 views/fundpanes.js）
 import {
@@ -86,7 +86,7 @@ import {
   openFundThemeDrawer,
   renderFundBoard,
   renderFundBoardCompareBar,
-} from './views/fundpanes.js?v=2.10.2';
+} from './views/fundpanes.js?v=2.10.3';
 
 // 自选基金：多组合 / 今日 TOP5 / 盈亏日历 / 组合 vs 上证（v2.10.0）
 import {
@@ -96,7 +96,7 @@ import {
   renderFundVsIndex,
   activePortfolio,
   activeHoldings,
-} from './views/fundwatch.js?v=2.10.2';
+} from './views/fundwatch.js?v=2.10.3';
 import {
   computeFundPnl,
   computeFundDailyPnl,
@@ -106,7 +106,7 @@ import {
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './views/fundpnl.js?v=2.10.2';
+} from './views/fundpnl.js?v=2.10.3';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -116,7 +116,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.10.2';
+} from './views/market.js?v=2.10.3';
 
 
 /* =========================================================
@@ -5843,26 +5843,22 @@ function renderStockFundModal(data, fallbackName) {
    我的基金持仓（份额 + 成本净值，保存在本机 localStorage；
    参考养基宝 / 同花顺「我的基金」：按份额与成本算持有收益、当日盈亏。   --------------------------------------------------------- */
 
-function saveFundHolding(code, shares, cost, addedAt) {
+/**
+ * 统一提交当前组合的持仓改动（v2.10.3）
+ * ---------------------------------------------------------------
+ * 逐只编辑与「持仓调整」批量编辑都走这里：只改内存里的组合 holdings，
+ * 然后一次性落本机缓存 + 排队推送服务端。服务端在写入时会对比 before/after，
+ * 把「之前持有、现在不持有」的条目存进后台的持仓回收站。
+ */
+function commitPortfolioHoldings(mutate) {
   if (!state.portfolios || !state.portfolios.length) settleActivePortfolio('default');
   const group = currentPortfolio();
-  const key = String(code);
+  if (!group || typeof mutate !== 'function') return;
   const now = Date.now();
-  const prev = group && group.holdings ? group.holdings[key] : null;
-  let entry;
-  if (!shares || shares <= 0) {
-    // v2.9.2：删除写成「墓碑」（shares=0 + 时间戳）而不是直接消失，
-    // 否则另一台设备合并时会把删掉的条目又带回来。渲染层会忽略 shares<=0 的条目。
-    entry = { shares: 0, cost: 0, updatedAt: now };
-  } else {
-    entry = { shares: Number(shares), cost: Number(cost) || 0, updatedAt: now };
-    // v2.10.0：建仓日只在第一次录入时写，后续改份额不重置；没记录时默认今天
-    const wanted = Number(addedAt);
-    const kept = Number(prev && prev.addedAt);
-    entry.addedAt = Number.isFinite(wanted) && wanted > 0 ? wanted : (Number.isFinite(kept) && kept > 0 ? kept : now);
-  }
-  if (group) group.holdings = { ...(group.holdings || {}), [key]: entry };
-  state.fundHoldings = (group && group.holdings) || { [key]: entry };
+  const next = { ...(group.holdings || {}) };
+  mutate(next, now);
+  group.holdings = next;
+  state.fundHoldings = next;
   saveJSON(PORTFOLIOS_KEY, state.portfolios);
   const main = findPortfolio('default');
   if (main) saveJSON(FUND_HOLD_KEY, main.holdings);
@@ -5872,12 +5868,73 @@ function saveFundHolding(code, shares, cost, addedAt) {
   savePortfolioMeta();
   renderFundSyncState();
   schedulePushSync();
+  renderPortfolioTabs();
   renderFundHoldSummary();
   renderFundWatchTable();
   renderFundHoldTable();
   renderFundTopMovers();
   // v2.8.0：持仓变化后盈亏曲线要跟着变（份额变了但净值序列可以复用）
   loadFundPnl(true);
+}
+
+function saveFundHolding(code, shares, cost, addedAt) {
+  const key = String(code);
+  const group = currentPortfolio();
+  const prev = group && group.holdings ? group.holdings[key] : null;
+  let entry;
+  if (!shares || shares <= 0) {
+    // v2.9.2：删除写成「墓碑」（shares=0 + 时间戳）而不是直接消失，
+    // 否则另一台设备合并时会把删掉的条目又带回来。渲染层会忽略 shares<=0 的条目。
+    entry = { shares: 0, cost: 0, updatedAt: Date.now() };
+  } else {
+    const now = Date.now();
+    entry = { shares: Number(shares), cost: Number(cost) || 0, updatedAt: now };
+    // v2.10.0：建仓日只在第一次录入时写，后续改份额不重置；没记录时默认今天
+    const wanted = Number(addedAt);
+    const kept = Number(prev && prev.addedAt);
+    entry.addedAt = Number.isFinite(wanted) && wanted > 0 ? wanted : (Number.isFinite(kept) && kept > 0 ? kept : now);
+  }
+  commitPortfolioHoldings((map) => { map[key] = entry; });
+}
+
+/** 批量保存（「持仓调整」面板）：只传改动过的行，未改动的保持原样 */
+function savePortfolioHoldingsBatch(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return;
+  commitPortfolioHoldings((map, now) => {
+    for (const row of list) {
+      const key = String(row && row.code ? row.code : '');
+      if (!key) continue;
+      const prev = map[key] || {};
+      const shares = Number(row.shares);
+      if (!Number.isFinite(shares) || shares <= 0) {
+        if (Number(prev.shares) > 0) map[key] = { shares: 0, cost: 0, updatedAt: now };
+        continue;
+      }
+      const entry = { shares, cost: Number(row.cost) || 0, updatedAt: now };
+      const wanted = Number(row.addedAt);
+      const kept = Number(prev.addedAt);
+      entry.addedAt = Number.isFinite(wanted) && wanted > 0 ? wanted : (Number(kept) > 0 ? kept : now);
+      map[key] = entry;
+    }
+  });
+}
+
+/** 删除一条持仓：本机写墓碑（0 份），服务端会保留原始份额/成本/建仓日到后台回收站 */
+function deleteFundHolding(code, name) {
+  const group = currentPortfolio();
+  const held = group && group.holdings ? group.holdings[String(code)] : null;
+  if (!held || !(Number(held.shares) > 0)) {
+    toast('这条持仓已经不存在了', 'warn');
+    return false;
+  }
+  const label = cleanName(name) || String(code);
+  const sharesText = Number(held.shares).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+  const ok = window.confirm(`从「${group.name}」删除持仓「${label}」？\n当前份额 ${sharesText} 份。\n\n删除后后台会保留这条数据（份额 / 成本 / 建仓日），可在「后台 → 持仓数据 → 持仓回收站」恢复；自选基金本身不受影响。`);
+  if (!ok) return false;
+  saveFundHolding(code, 0, 0);
+  toast('已删除，后台「持仓回收站」可恢复', 'ok', 2600);
+  return true;
 }
 
 
@@ -6146,6 +6203,141 @@ async function deleteActivePortfolio() {
     toast(`已删除组合「${cur.name}」`, 'ok');
   } catch { /* 已提示 */ }
 }
+
+/* ---------------------------------------------------------
+   持仓调整（v2.10.3）
+   ---------------------------------------------------------
+   在同一个面板里改当前组合每只基金的份额 / 成本，不用逐只点「仓」。
+   空着的自选基金也可以直接填份额补录；每行的「删除」立即生效，
+   服务端留档，可在后台「持仓回收站」恢复。
+   --------------------------------------------------------- */
+function openPortfolioAdjust() {
+  const group = currentPortfolio();
+  if (!group) { toast('还没有可调整的持仓组合', 'warn'); return; }
+  const holdings = group.holdings || {};
+  const items = (state.fundWatchData && state.fundWatchData.items) || [];
+  const itemByCode = new Map(items.map((x) => [String(x.code), x]));
+  const watch = (state.fundWatchlist || []).slice();
+  const watchByCode = new Map(watch.map((f) => [String(f.code), f]));
+  const infoOf = (code, fallbackName, fallbackType) => {
+    const w = watchByCode.get(code);
+    const it = itemByCode.get(code);
+    return {
+      name: (w && w.name) || (it && it.name) || fallbackName || code,
+      type: (w && w.type) || (it && it.type) || fallbackType || 'open',
+      price: it && isNum(it.price) ? Number(it.price) : null,
+    };
+  };
+  const heldRows = Object.entries(holdings)
+    .filter(([, h]) => h && Number(h.shares) > 0)
+    .map(([code, h]) => {
+      const info = infoOf(code);
+      const shares = Number(h.shares) || 0;
+      return {
+        code,
+        name: info.name,
+        type: info.type,
+        shares,
+        cost: Number(h.cost) || 0,
+        value: info.price !== null ? info.price * shares : 0,
+      };
+    })
+    .sort((a, b) => b.value - a.value);
+  const heldCodes = new Set(heldRows.map((r) => r.code));
+  const addRows = watch
+    .filter((f) => f && f.code && !heldCodes.has(String(f.code)))
+    .map((f) => ({ code: String(f.code), name: f.name || String(f.code), type: f.type || 'open', shares: 0, cost: 0, value: 0 }));
+  const rows = [...heldRows, ...addRows];
+  const totalValue = heldRows.reduce((sum, r) => sum + r.value, 0);
+  mountOverlay(`<div class="modal modal-adjust">
+    <div class="modal-head"><div class="modal-title"><h2>持仓调整</h2><span class="code">组合：${esc(group.name)} · ${heldRows.length} 只已持有</span></div><button class="modal-close" data-close>×</button></div>
+    <div class="hold-form">
+      <p class="muted small">直接改「新份额」再点保存，就会批量更新这个组合；份额填 0 等于清仓。点「删除」立即移除该条持仓，服务端会留档，可在后台「持仓数据 → 持仓回收站」恢复原份额 / 成本 / 建仓日。</p>
+      <div class="table-scroll"><table class="table fund-hold-adjust-table">
+        <thead><tr><th>基金</th><th>当前份额</th><th>新份额</th><th>成本净值</th><th>市值</th><th>操作</th></tr></thead>
+        <tbody id="holdAdjustBody">${rows.map((r) => {
+          const type = r.type === 'etf' ? 'etf' : 'open';
+          return `<tr data-adjust-code="${esc(r.code)}" data-prev-shares="${r.shares}" data-prev-cost="${r.cost}">
+            <td><span class="t-name">${esc(cleanName(r.name) || r.code)}</span><span class="t-code">${esc(r.code)} · <span class="fund-tag ${type}">${type === 'etf' ? 'ETF' : '场外'}</span></span></td>
+            <td class="t-dim">${r.shares > 0 ? `${nf(r.shares, 2)} 份` : '<span class="muted">未持有</span>'}</td>
+            <td><input class="hold-adjust-input" data-adjust-shares type="number" step="0.01" min="0" value="${r.shares > 0 ? r.shares : ''}" placeholder="0"></td>
+            <td><input class="hold-adjust-input" data-adjust-cost type="number" step="0.0001" min="0" value="${r.cost > 0 ? r.cost : ''}" placeholder="成本净值"></td>
+            <td class="t-price">${r.value > 0 ? nf(r.value, 2) : '<span class="muted">--</span>'}</td>
+            <td>${r.shares > 0
+              ? `<button type="button" class="btn small danger" data-adjust-delete="${esc(r.code)}" data-adjust-name="${esc(cleanName(r.name) || r.code)}">删除</button>`
+              : '<span class="muted small">--</span>'}</td>
+          </tr>`;
+        }).join('') || '<tr><td colspan="6"><div class="empty">这个组合还没有持仓，自选基金也还没加入。</div></td></tr>'}</tbody>
+      </table></div>
+      <p class="muted small mt8">${totalValue > 0 ? `按最新价估算，当前组合市值 ${nf(totalValue, 2)} 元；` : ''}份额为 0 的行保存后会清仓（等同于删除，后台同样留档）。</p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn primary" id="holdAdjustSave">保存全部</button>
+      <button class="btn" data-close>取消</button>
+    </div>
+  </div>`);
+
+  const body = $('#holdAdjustBody');
+  if (body) {
+    body.addEventListener('click', (e) => {
+      const del = e.target.closest('[data-adjust-delete]');
+      if (!del) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const tr = del.closest('tr');
+      const code = del.dataset.adjustDelete;
+      const name = del.dataset.adjustName || code;
+      const prevShares = Number(tr && tr.dataset.prevShares) || 0;
+      if (!(prevShares > 0)) return;
+      const ok = window.confirm(`删除「${name}」的持仓（${prevShares.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} 份）？\n后台会保留原数据，可在「后台 → 持仓数据 → 持仓回收站」恢复。`);
+      if (!ok) return;
+      if (!deleteFundHolding(code, name)) return;
+      // 面板不重建，避免丢掉其它行还没保存的输入；这一行就地变成「已删除」
+      if (tr) {
+        tr.dataset.deleted = '1';
+        tr.classList.add('is-deleted');
+        const sharesInput = tr.querySelector('[data-adjust-shares]');
+        const costInput = tr.querySelector('[data-adjust-cost]');
+        if (sharesInput) { sharesInput.value = ''; sharesInput.disabled = true; }
+        if (costInput) { costInput.value = ''; costInput.disabled = true; }
+        const curCell = tr.children[1];
+        if (curCell) curCell.innerHTML = '<span class="muted">已删除</span>';
+        del.disabled = true;
+        del.textContent = '已删除';
+        del.className = 'btn small';
+      }
+    });
+  }
+
+  const save = $('#holdAdjustSave');
+  if (save) save.addEventListener('click', () => {
+    const trs = body ? [...body.querySelectorAll('tr[data-adjust-code]')] : [];
+    const changed = [];
+    for (const tr of trs) {
+      if (tr.dataset.deleted === '1') continue;
+      const sharesInput = tr.querySelector('[data-adjust-shares]');
+      const costInput = tr.querySelector('[data-adjust-cost]');
+      const sharesRaw = String((sharesInput && sharesInput.value) || '').trim();
+      const costRaw = String((costInput && costInput.value) || '').trim();
+      if (!sharesRaw && !costRaw) continue;
+      const shares = Number(sharesRaw || 0);
+      const cost = Number(costRaw || 0);
+      if (!Number.isFinite(shares) || shares < 0) { toast('份额要填 0 或正数', 'warn'); return; }
+      if (!Number.isFinite(cost) || cost < 0) { toast('成本净值要填 0 或正数', 'warn'); return; }
+      const prevShares = Number(tr.dataset.prevShares) || 0;
+      const prevCost = Number(tr.dataset.prevCost) || 0;
+      if (shares === prevShares && Math.abs(cost - prevCost) < 1e-9) continue;
+      changed.push({ code: tr.dataset.adjustCode, shares, cost });
+    }
+    if (!changed.length) { closeOverlay(); toast('没有改动', 'info'); return; }
+    const adds = changed.filter((r) => r.shares > 0).length;
+    const removes = changed.filter((r) => r.shares <= 0).length;
+    savePortfolioHoldingsBatch(changed);
+    closeOverlay();
+    toast(`持仓已更新：${adds} 项设置份额${removes ? `，${removes} 项清仓` : ''}`, 'ok', 2600);
+  });
+}
+
 
 /* ---------------------------------------------------------
    持仓同步状态（v2.9.2）
@@ -8540,6 +8732,8 @@ function bindEvents() {
     }
     // 「对比」勾选框不能被行点击当成「打开详情」：先吃掉，交给各表格自己的 change 监听
     if (e.target.closest('[data-compare-code]')) return;
+    // 持仓表的「改 / 删」按钮同理，别冒泡成打开基金详情
+    if (e.target.closest('[data-hold-action]')) return;
     const fundStockRow = e.target.closest('[data-stock-fund-code]');
     if (fundStockRow && !fundStockRow.closest('#stockFundTable') && !fundStockRow.closest('#fundBoardTable')) {
       e.preventDefault();
@@ -8892,6 +9086,15 @@ function bindEvents() {
     const row = e.target.closest('[data-fund-code]');
     if (row) openFund(row.dataset.fundCode, row.dataset.fundName, row.dataset.fundType);
   });
+  $('#fundHoldTable') && $('#fundHoldTable').addEventListener('click', (e) => {
+    const action = e.target.closest('[data-hold-action]');
+    if (!action) return;
+    e.stopPropagation();
+    const code = action.dataset.code;
+    const name = action.dataset.name || code;
+    if (action.dataset.holdAction === 'edit') openFundHoldEditor(code, name);
+    if (action.dataset.holdAction === 'delete') deleteFundHolding(code, name);
+  });
   $('#fundExport') && $('#fundExport').addEventListener('click', () => {
     const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), funds: state.fundWatchlist }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -8944,6 +9147,8 @@ function bindEvents() {
     if (rename) { openPortfolioRename(); return; }
     const del = e.target.closest('[data-portfolio-delete]');
     if (del) { deleteActivePortfolio(); return; }
+    const adjust = e.target.closest('[data-portfolio-adjust]');
+    if (adjust) { openPortfolioAdjust(); return; }
     const tab = e.target.closest('[data-portfolio-tab]');
     if (!tab) return;
     if (tab.dataset.portfolioTab === state.activePortfolioId) return;
@@ -9496,6 +9701,8 @@ export {
   activePortfolio, activeHoldings, switchPortfolio, settleActivePortfolio,
   applyFundModuleVisibility, fundModuleVisible, visibleFundViews, loadUiConfig,
   computeFundDailyPnl, fundCalendarBuckets, portfolioVsIndex, intradayVsIndex, fundTopMovers,
+  // v2.10.3：持仓调整 / 删除（后台回收站可恢复）
+  openPortfolioAdjust, savePortfolioHoldingsBatch, saveFundHolding, deleteFundHolding, commitPortfolioHoldings,
   init,
 };
 

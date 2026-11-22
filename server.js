@@ -69,7 +69,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.10.2';
+const VERSION = '2.10.3';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -7665,8 +7665,195 @@ function recordPortfolioWrite({ user, ip, action, before, after, rev, source } =
   };
   appendPortfolioAudit(line);
   savePortfolioSnapshot(user, after || {}, { rev: line.rev, action: line.action, source: line.source });
+  // v2.10.3：任何写入路径里「之前持有、现在不持有」的条目都留档到回收站
+  try {
+    archiveDeletedHoldings({ user, before, after, rev: line.rev, action: line.action, source: line.source, ip });
+  } catch { /* 留档失败不能影响持仓正常保存 */ }
   return line;
 }
+
+/* ---------------------------------------------------------
+   持仓回收站（v2.10.3）
+   ---------------------------------------------------------
+   用户在「我的持仓」里删除某条持仓时，前端只写 shares=0 的墓碑；
+   这里在每次写入的 before/after 里认出被删掉的条目，把删除前的
+   份额 / 成本 / 建仓日 / 所在组合一起存进 user_extras['fund_holding_trash']。
+   好处：逐条删除、持仓调整批量删除、删组合、恢复旧快照都会自动留档，
+   前端不需要额外请求，也不会因为换设备/重装而丢。
+   后台「持仓数据 → 持仓回收站」按原值恢复；如果该基金已经有新持仓，
+   保留现有数据并跳过（不覆盖用户后来的操作）。
+   --------------------------------------------------------- */
+const HOLDING_TRASH_KEY = 'fund_holding_trash';
+const HOLDING_TRASH_MAX = 500;
+const HOLDING_TRASH_TTL = 365 * 86400000;
+
+function holdingTrashStore(user) {
+  if (!user || !user.id) return [];
+  const raw = dataStore.loadUserExtra(user.id, HOLDING_TRASH_KEY, []);
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((x) => x && x.id && x.code);
+}
+
+function saveHoldingTrashStore(user, list) {
+  if (!user || !user.id) return [];
+  const now = Date.now();
+  const cleaned = (Array.isArray(list) ? list : [])
+    .filter((x) => x && x.id && x.code && (!Number(x.deletedAt) || now - Number(x.deletedAt) <= HOLDING_TRASH_TTL))
+    .sort((a, b) => (Number(b.deletedAt) || 0) - (Number(a.deletedAt) || 0))
+    .slice(0, HOLDING_TRASH_MAX);
+  dataStore.saveUserExtra(user.id, HOLDING_TRASH_KEY, cleaned);
+  return cleaned;
+}
+
+/** before/after 里所有组合的持仓对比，找出被删除的条目并入档 */
+function archiveDeletedHoldings({ user, before, after, rev, action, source, ip } = {}) {
+  if (!user || !user.id || !before) return [];
+  const afterMap = new Map();
+  afterMap.set('default', { name: '主持仓', holdings: (after && after.holdings) || {} });
+  for (const g of (after && after.portfolios) || []) {
+    if (g && !g.isDefault) afterMap.set(g.id, { name: g.name || '', holdings: g.holdings || {} });
+  }
+  const fundMeta = new Map();
+  for (const f of [...((before && before.funds) || []), ...((after && after.funds) || [])]) {
+    if (f && f.code) fundMeta.set(String(f.code), f);
+  }
+  const now = Date.now();
+  const found = [];
+  const inspect = (portfolioId, portfolioName, holdings) => {
+    const next = afterMap.get(portfolioId);
+    const nextHoldings = (next && next.holdings) || {};
+    for (const [code, v] of Object.entries(holdings || {})) {
+      const shares = Number(v && v.shares) || 0;
+      if (shares <= 0) continue; // 本来就是墓碑，不是这次删的
+      const kept = nextHoldings[code];
+      if (kept && Number(kept.shares) > 0) continue; // 还持有 / 只是改了份额
+      const meta = fundMeta.get(String(code)) || {};
+      found.push({
+        id: `ht${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        code: String(code),
+        name: String(meta.name || ''),
+        type: meta.type === 'etf' ? 'etf' : 'open',
+        portfolioId,
+        portfolioName: portfolioName || '',
+        shares,
+        cost: Number(v && v.cost) || 0,
+        addedAt: Number(v && v.addedAt) > 0 ? Number(v.addedAt) : 0,
+        deletedAt: now,
+        rev: Number(rev) || 0,
+        action: action || 'save',
+        source: source || '',
+        ip: ip || '',
+      });
+    }
+  };
+  inspect('default', '主持仓', before.holdings || {});
+  // 组合被整份删除时，它下面的每一条持仓也一并留档
+  for (const g of before.portfolios || []) {
+    if (g && !g.isDefault) inspect(g.id, g.name || '', g.holdings || {});
+  }
+  if (!found.length) return [];
+  const list = holdingTrashStore(user);
+  for (const entry of found) {
+    // 同一只基金 + 同一组合在极短时间内只留一条（防止重复保存导致重复入档）
+    const dup = list.some((x) => x.code === entry.code
+      && x.portfolioId === entry.portfolioId
+      && !Number(x.restoredAt)
+      && Math.abs((Number(x.deletedAt) || 0) - now) < 3000);
+    if (!dup) list.push(entry);
+  }
+  saveHoldingTrashStore(user, list);
+  return found;
+}
+
+/** 后台：某账号的持仓回收站（默认只看待恢复的） */
+function listHoldingTrash(user, { includeRestored = false } = {}) {
+  const list = holdingTrashStore(user);
+  const filtered = includeRestored ? list : list.filter((x) => !Number(x.restoredAt));
+  return filtered.map((x) => ({
+    id: x.id,
+    code: x.code,
+    name: x.name || '',
+    type: x.type === 'etf' ? 'etf' : 'open',
+    portfolioId: x.portfolioId || 'default',
+    portfolioName: x.portfolioName || (x.portfolioId === 'default' ? '主持仓' : ''),
+    shares: Number(x.shares) || 0,
+    cost: Number(x.cost) || 0,
+    addedAt: Number(x.addedAt) || 0,
+    deletedAt: Number(x.deletedAt) || 0,
+    rev: Number(x.rev) || 0,
+    action: x.action || 'save',
+    source: x.source || '',
+    ip: x.ip || '',
+    restoredAt: Number(x.restoredAt) || 0,
+    restoredInto: x.restoredInto || '',
+  }));
+}
+
+/** 后台：按原值恢复选中的持仓（组合还在就回原组合，组合被删了回主持仓） */
+function restoreHoldingTrash({ user, ids = [], ip } = {}) {
+  if (!user) throw Object.assign(new Error('用户不存在'), { status: 404 });
+  const wanted = new Set((Array.isArray(ids) ? ids : [ids]).map((x) => String(x || '')).filter(Boolean));
+  if (!wanted.size) throw Object.assign(new Error('请选择要恢复的持仓'), { status: 400 });
+  const list = holdingTrashStore(user);
+  const picked = list.filter((x) => wanted.has(String(x.id)) && !Number(x.restoredAt));
+  if (!picked.length) throw Object.assign(new Error('没有可恢复的持仓记录（可能已经恢复过）'), { status: 404 });
+  const before = loadPortfolio(user);
+  const now = Date.now();
+  const doc = {
+    funds: (before.funds || []).slice(),
+    holdings: { ...(before.holdings || {}) },
+    watchlist: (before.watchlist || []).slice(),
+    portfolios: (before.portfolios || [])
+      .filter((g) => g && !g.isDefault)
+      .map((g) => ({ ...g, holdings: { ...(g.holdings || {}) } })),
+  };
+  const results = [];
+  for (const entry of picked) {
+    let target = doc.holdings;
+    let targetId = 'default';
+    if (entry.portfolioId && entry.portfolioId !== 'default') {
+      const group = doc.portfolios.find((g) => g.id === entry.portfolioId);
+      if (group) {
+        target = group.holdings;
+        targetId = group.id;
+        group.updatedAt = now;
+      }
+    }
+    const cur = target[entry.code];
+    if (cur && Number(cur.shares) > 0) {
+      results.push({ id: entry.id, code: entry.code, status: 'exists' });
+      continue;
+    }
+    target[entry.code] = {
+      shares: Number(entry.shares) || 0,
+      cost: Number(entry.cost) || 0,
+      updatedAt: now,
+      addedAt: Number(entry.addedAt) > 0 ? Number(entry.addedAt) : now,
+    };
+    entry.restoredAt = now;
+    entry.restoredInto = targetId;
+    results.push({ id: entry.id, code: entry.code, status: 'restored', portfolioId: targetId, portfolioName: targetId === 'default' ? '主持仓' : (entry.portfolioName || '') });
+  }
+  const restoredCount = results.filter((r) => r.status === 'restored').length;
+  if (restoredCount) {
+    savePortfolio(user, doc);
+    const after = loadPortfolio(user);
+    recordPortfolioWrite({
+      user, ip, action: 'trash-restore', before, after, rev: portfolioRevOf(user), source: 'admin:trash',
+    });
+  }
+  saveHoldingTrashStore(user, list);
+  return {
+    ok: true,
+    restored: restoredCount,
+    skipped: results.filter((r) => r.status !== 'restored'),
+    results,
+    message: restoredCount
+      ? `已恢复 ${restoredCount} 条持仓${results.some((r) => r.status === 'exists') ? `，${results.filter((r) => r.status === 'exists').length} 条因已有新持仓被跳过` : ''}`
+      : '这些持仓现在都还在，没有需要恢复的条目',
+  };
+}
+
 
 /** 后台：某账号最近 N 次持仓快照（倒序，只给摘要，不含完整持仓） */
 function listPortfolioHistory(userId, limit = 20) {
@@ -9303,6 +9490,9 @@ const httpRoutes = createHttpRoutes({
   lanAddresses,
   lastDateKeys,
   listPortfolioHistory,
+  // v2.10.3：持仓回收站（删除的持仓留档 / 按原值恢复）
+  listHoldingTrash,
+  restoreHoldingTrash,
   loadPortfolio,
   // v2.10.0：多份持仓组合
   mutatePortfolioGroup,

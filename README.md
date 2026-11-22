@@ -198,7 +198,7 @@ Environment=TRUST_PROXY=cloudflare
 
 ```bash
 npm install                               # 只装测试依赖 jsdom（运行时仍然零依赖）
-npm test                                  # 单元 + 集成 + DOM + 路由表 + 日志 + 策略 + 部署 + 指标 + 数据中心 + 基金分析/多组合（274 项，起隔离实例，不碰 data/）
+npm test                                  # 单元 + 集成 + DOM + 路由表 + 日志 + 策略 + 部署 + 指标 + 数据中心 + 基金分析/多组合/持仓回收站（285 项，起隔离实例，不碰 data/）
 npm run selfcheck                         # 安全基线 39 项 + 存储层 23 项
 ```
 
@@ -748,6 +748,8 @@ node server.js --port=8091
 | `POST /api/portfolio` | 保存持仓：条目级合并 + 删除墓碑；可带 `baseRev`，过期提交返回 `conflict` 与服务器快照 |
 | `GET /api/admin/portfolio/history?userId=&limit=` | 某账号最近的持仓写入快照（后台「持仓保存历史」） |
 | `POST /api/admin/portfolio/restore` | 恢复到指定快照 `{userId, rev}`（先自动留一份当前快照） |
+| `GET /api/admin/portfolio/trash?userId=&all=1` | 持仓回收站：用户删掉的持仓（原份额 / 成本 / 建仓日 / 组合，留档 365 天） |
+| `POST /api/admin/portfolio/trash/restore` | 按原值恢复 `{userId, ids: [...]}`；已重新持有的那只会跳过 |
 | `POST /api/admin/portfolio/transfer` | 本机 ⇄ NAS 持仓互通 `{direction: push\|pull, userId, mode: merge\|replace, dryRun}`（超级管理员） |
 | `GET /api/news?limit=40` | 财经快讯 + 情绪统计 |
 | `GET /api/search?q=茅台` | 股票搜索 |

@@ -1735,3 +1735,118 @@ test('DOM：v2.10.2 我的持仓面板排在今日盈亏 TOP5 之前', () => {
   assert.ok(kids.indexOf(tabs) < kids.indexOf(hold), '组合 TAB 应在我的持仓上面');
   assert.ok(kids.indexOf(hold) < kids.indexOf(top), '我的持仓应在今日盈亏 TOP5 上面');
 });
+
+/* ---------------------------------------------------------
+   v2.10.3：我的持仓改用「当日涨跌 / 当日估值」，并支持持仓调整与可恢复删除
+   --------------------------------------------------------- */
+
+test('DOM：v2.10.3 我的持仓表用「当日涨跌 / 当日估值」两列，并带改 / 删按钮', () => {
+  const prevWatch = app.state.fundWatchlist;
+  const prevHold = app.state.fundHoldings;
+  const prevLive = app.state.fundWatchData;
+  app.state.fundWatchlist = [{ code: 'A1', name: '基金A', type: 'open' }];
+  app.state.fundHoldings = { A1: { shares: 1000, cost: 1 } };
+  app.state.fundWatchData = {
+    items: [{
+      code: 'A1', name: '基金A', type: 'open', price: 1.2, pct: 0.8, pctKind: 'holdings', pctStale: false,
+      navPctToday: 1.1, estimatePct: 0.8, estimateFrozen: true, estimateKind: 'holdings', estimateAt: '2026-11-19 15:00', date: '2026-11-19',
+    }],
+  };
+  app.renderFundHoldTable();
+  const table = document.querySelector('#fundHoldTable table');
+  assert.ok(table, '持仓表要能渲染');
+  const heads = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+  assert.ok(heads.includes('当日涨跌'), '要有「当日涨跌」列');
+  assert.ok(heads.includes('当日估值'), '要有「当日估值」列');
+  assert.equal(heads.includes('今日盈亏'), false, '「今日盈亏」列已被当日涨跌 / 当日估值替换');
+  const bodyText = table.querySelector('tbody').textContent;
+  assert.match(bodyText, /今日净值|最新净值/, '当日涨跌要标明净值日口径');
+  assert.match(bodyText, /15:00 估值|盘中估值/, '当日估值要标明口径');
+  const btns = [...table.querySelectorAll('[data-hold-action]')];
+  assert.deepEqual(btns.map((b) => b.getAttribute('data-hold-action')), ['edit', 'delete'], '每行要有改 / 删两个动作');
+  assert.match(btns[1].getAttribute('title'), /回收站|后台/, '删除按钮要说明后台可恢复');
+  app.state.fundWatchlist = prevWatch;
+  app.state.fundHoldings = prevHold;
+  app.state.fundWatchData = prevLive;
+});
+
+test('DOM：v2.10.3 组合 TAB 旁有「持仓调整」，弹窗列出已持有与未持有的自选基金', () => {
+  const prevPortfolios = app.state.portfolios;
+  const prevActive = app.state.activePortfolioId;
+  const prevHold = app.state.fundHoldings;
+  const prevWatch = app.state.fundWatchlist;
+  const prevLive = app.state.fundWatchData;
+  app.state.portfolios = [{ id: 'default', name: '主持仓', isDefault: true, holdings: { A1: { shares: 100, cost: 1 } } }];
+  app.state.activePortfolioId = 'default';
+  app.state.fundHoldings = { A1: { shares: 100, cost: 1 } };
+  app.state.fundWatchlist = [
+    { code: 'A1', name: '基金A', type: 'open' },
+    { code: 'B2', name: '基金B', type: 'etf' },
+  ];
+  app.state.fundWatchData = { items: [{ code: 'A1', price: 1.2 }, { code: 'B2', price: 2 }] };
+  app.renderPortfolioTabs();
+  const actions = document.querySelector('#fundPortfolioTabs .fund-portfolio-actions');
+  assert.ok(actions, '组合操作区要存在');
+  assert.match(actions.textContent, /新建/);
+  assert.match(actions.textContent, /重命名/);
+  const adjust = actions.querySelector('[data-portfolio-adjust]');
+  assert.ok(adjust, '新建 / 重命名旁边要有「持仓调整」');
+  assert.equal(adjust.textContent.trim(), '持仓调整');
+
+  app.openPortfolioAdjust();
+  const modal = document.querySelector('.modal.modal-adjust');
+  assert.ok(modal, '持仓调整弹窗要打开');
+  const rows = [...modal.querySelectorAll('tbody tr[data-adjust-code]')];
+  assert.equal(rows.length, 2, '已持有的和自选里未持有的都要列出来');
+  assert.equal(rows[0].getAttribute('data-adjust-code'), 'A1', '已持有的排在前面');
+  assert.equal(rows[0].querySelector('[data-adjust-shares]').value, '100', '当前份额要预填');
+  assert.equal(rows[1].querySelector('[data-adjust-shares]').value, '', '未持有的份额留空');
+  assert.ok(rows[0].querySelector('[data-adjust-delete]'), '已持有的行有删除按钮');
+  assert.equal(rows[1].querySelector('[data-adjust-delete]'), null, '未持有的行没有删除按钮');
+  app.closeOverlay();
+
+  app.state.portfolios = prevPortfolios;
+  app.state.activePortfolioId = prevActive;
+  app.state.fundHoldings = prevHold;
+  app.state.fundWatchlist = prevWatch;
+  app.state.fundWatchData = prevLive;
+});
+
+test('DOM：v2.10.3 持仓调整批量保存与删除都会改当前组合（删除写墓碑）', () => {
+  const prevPortfolios = app.state.portfolios;
+  const prevActive = app.state.activePortfolioId;
+  const prevHold = app.state.fundHoldings;
+  app.state.portfolios = [{
+    id: 'default', name: '主持仓', isDefault: true,
+    holdings: { A1: { shares: 100, cost: 1 }, B2: { shares: 50, cost: 2 } },
+  }];
+  app.state.activePortfolioId = 'default';
+  app.state.fundHoldings = { ...app.state.portfolios[0].holdings };
+
+  app.savePortfolioHoldingsBatch([
+    { code: 'A1', shares: 300, cost: 1.5 },
+    { code: 'B2', shares: 0, cost: 0 },
+    { code: 'C3', shares: 20, cost: 3 },
+  ]);
+  const group = app.state.portfolios.find((g) => g.id === 'default');
+  assert.equal(group.holdings.A1.shares, 300, '份额要按输入更新');
+  assert.equal(group.holdings.A1.cost, 1.5);
+  assert.equal(group.holdings.B2.shares, 0, '填 0 = 清仓（写墓碑，不直接消失）');
+  assert.ok(group.holdings.B2.updatedAt > 0, '墓碑要带时间戳，多端合并才不会把旧数据带回来');
+  assert.equal(group.holdings.C3.shares, 20, '未持有的自选基金可以补录');
+  assert.equal(group.holdings.A1.addedAt > 0, true, '建仓日要保留 / 自动补上');
+
+  const prevConfirm = window.confirm;
+  window.confirm = () => true;
+  try {
+    assert.equal(app.deleteFundHolding('A1', '基金A'), true, '确认后应该删除');
+  } finally {
+    window.confirm = prevConfirm;
+  }
+  assert.equal(group.holdings.A1.shares, 0, '删除同样写墓碑，后台据此留档');
+  assert.equal(app.state.fundHoldings.A1.shares, 0, 'state.fundHoldings 要跟着当前组合');
+
+  app.state.portfolios = prevPortfolios;
+  app.state.activePortfolioId = prevActive;
+  app.state.fundHoldings = prevHold;
+});
