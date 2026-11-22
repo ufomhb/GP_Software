@@ -5564,14 +5564,20 @@ function toggleCompareFund(code, name, checked) {
     if (state.compareFunds.some((f) => f.code === code)) return;
     if (state.compareFunds.length >= 4) {
       toast('最多选择 4 只基金进行对比', 'warn');
+      // 把多勾上的那一个还原（股票型基金表 / 场外基金榜各自重渲染一次）
       renderStockFund();
+      renderFundBoard();
+      renderFundBoardCompareBar();
       return;
     }
     state.compareFunds.push({ code, name });
   } else {
     state.compareFunds = state.compareFunds.filter((f) => f.code !== code);
   }
+  // 两个页签各有一条「已选」对比条，必须一起刷新：
+  // v2.10.4 之前只刷了股票型基金那条，场外基金页的计数一直停在 0/4，按钮点不动。
   renderCompareBar();
+  renderFundBoardCompareBar();
 }
 
 async function openFundCompare(codes) {
@@ -8929,14 +8935,28 @@ function bindEvents() {
   $('#fundThemeSortSeg') && $('#fundThemeSortSeg').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-fund-theme-sort]');
     if (!btn) return;
-    state.fundThemeSort = ['day', 'streak', 'month'].includes(btn.dataset.fundThemeSort)
+    state.fundThemeSort = ['day', 'streak', 'day5', 'month'].includes(btn.dataset.fundThemeSort)
       ? btn.dataset.fundThemeSort
       : 'day';
+    state.fundThemeSortDir = 'desc';
     renderFundThemeOverview();
-    $$('#fundThemeSortSeg button').forEach((b) => b.classList.toggle('is-active', b === btn));
   });
 
   $('#fundThemeTable') && $('#fundThemeTable').addEventListener('click', (e) => {
+    // v2.10.4：表头点击排序（同列再点一次切换升序 / 降序）
+    const th = e.target.closest('[data-fund-theme-sort]');
+    if (th) {
+      const key = th.dataset.fundThemeSort;
+      if (!['day', 'streak', 'day5', 'month'].includes(key)) return;
+      if (state.fundThemeSort === key) {
+        state.fundThemeSortDir = state.fundThemeSortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        state.fundThemeSort = key;
+        state.fundThemeSortDir = 'desc';
+      }
+      renderFundThemeOverview();
+      return;
+    }
     const row = e.target.closest('[data-fund-theme]');
     if (!row) return;
     openFundTheme(row.dataset.fundTheme);

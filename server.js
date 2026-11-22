@@ -7719,15 +7719,41 @@ function archiveDeletedHoldings({ user, before, after, rev, action, source, ip }
   }
   const now = Date.now();
   const found = [];
+  // v2.10.4：每条删除记录都带上「当时这个 TAB 下的全部持仓」快照，
+  // 后台既能看到组合名 + 该 TAB 的基金 / 份额，也能一键恢复整个 TAB。
+  const tabSnapshotCache = new Map();
+  const snapshotOf = (portfolioId, holdings) => {
+    if (tabSnapshotCache.has(portfolioId)) return tabSnapshotCache.get(portfolioId);
+    const rows = Object.entries(holdings || {})
+      .filter(([, v]) => Number(v && v.shares) > 0)
+      .map(([code, v]) => {
+        const meta = fundMeta.get(String(code)) || {};
+        return {
+          code: String(code),
+          name: String(meta.name || ''),
+          type: meta.type === 'etf' ? 'etf' : 'open',
+          shares: Number(v.shares) || 0,
+          cost: Number(v.cost) || 0,
+          addedAt: Number(v.addedAt) > 0 ? Number(v.addedAt) : 0,
+        };
+      })
+      .sort((a, b) => b.shares - a.shares)
+      .slice(0, 60);
+    tabSnapshotCache.set(portfolioId, rows);
+    return rows;
+  };
   const inspect = (portfolioId, portfolioName, holdings) => {
     const next = afterMap.get(portfolioId);
     const nextHoldings = (next && next.holdings) || {};
+    // 组合整体被删除时，after 里已经没有这个组合 → tabDeleted
+    const tabDeleted = !afterMap.has(portfolioId);
     for (const [code, v] of Object.entries(holdings || {})) {
       const shares = Number(v && v.shares) || 0;
       if (shares <= 0) continue; // 本来就是墓碑，不是这次删的
       const kept = nextHoldings[code];
       if (kept && Number(kept.shares) > 0) continue; // 还持有 / 只是改了份额
       const meta = fundMeta.get(String(code)) || {};
+      const tabSnapshot = snapshotOf(portfolioId, holdings);
       found.push({
         id: `ht${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`,
         code: String(code),
@@ -7738,6 +7764,10 @@ function archiveDeletedHoldings({ user, before, after, rev, action, source, ip }
         shares,
         cost: Number(v && v.cost) || 0,
         addedAt: Number(v && v.addedAt) > 0 ? Number(v.addedAt) : 0,
+        // 删除时该 TAB 下的全部持仓（含刚删的这只），后台用于展示与「恢复整组」
+        tabSnapshot,
+        tabHoldingCount: tabSnapshot.length,
+        tabDeleted,
         deletedAt: now,
         rev: Number(rev) || 0,
         action: action || 'save',
@@ -7769,24 +7799,43 @@ function archiveDeletedHoldings({ user, before, after, rev, action, source, ip }
 function listHoldingTrash(user, { includeRestored = false } = {}) {
   const list = holdingTrashStore(user);
   const filtered = includeRestored ? list : list.filter((x) => !Number(x.restoredAt));
-  return filtered.map((x) => ({
-    id: x.id,
-    code: x.code,
-    name: x.name || '',
-    type: x.type === 'etf' ? 'etf' : 'open',
-    portfolioId: x.portfolioId || 'default',
-    portfolioName: x.portfolioName || (x.portfolioId === 'default' ? '主持仓' : ''),
-    shares: Number(x.shares) || 0,
-    cost: Number(x.cost) || 0,
-    addedAt: Number(x.addedAt) || 0,
-    deletedAt: Number(x.deletedAt) || 0,
-    rev: Number(x.rev) || 0,
-    action: x.action || 'save',
-    source: x.source || '',
-    ip: x.ip || '',
-    restoredAt: Number(x.restoredAt) || 0,
-    restoredInto: x.restoredInto || '',
-  }));
+  return filtered.map((x) => {
+    const tabSnapshot = Array.isArray(x.tabSnapshot)
+      ? x.tabSnapshot
+          .filter((f) => f && f.code)
+          .map((f) => ({
+            code: String(f.code),
+            name: String(f.name || ''),
+            type: f.type === 'etf' ? 'etf' : 'open',
+            shares: Number(f.shares) || 0,
+            cost: Number(f.cost) || 0,
+            addedAt: Number(f.addedAt) || 0,
+          }))
+      : [];
+    return {
+      id: x.id,
+      code: x.code,
+      name: x.name || '',
+      type: x.type === 'etf' ? 'etf' : 'open',
+      portfolioId: x.portfolioId || 'default',
+      portfolioName: x.portfolioName || (x.portfolioId === 'default' ? '主持仓' : ''),
+      shares: Number(x.shares) || 0,
+      cost: Number(x.cost) || 0,
+      addedAt: Number(x.addedAt) || 0,
+      deletedAt: Number(x.deletedAt) || 0,
+      rev: Number(x.rev) || 0,
+      action: x.action || 'save',
+      source: x.source || '',
+      ip: x.ip || '',
+      // v2.10.4：删除时该 TAB 下的全部持仓 + 组合是否被整体删除
+      tabSnapshot,
+      tabHoldingCount: tabSnapshot.length,
+      tabDeleted: Boolean(x.tabDeleted),
+      restoredAt: Number(x.restoredAt) || 0,
+      restoredInto: x.restoredInto || '',
+      restoredBy: x.restoredBy || '',
+    };
+  });
 }
 
 /** 后台：按原值恢复选中的持仓（组合还在就回原组合，组合被删了回主持仓） */

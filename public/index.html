@@ -695,8 +695,8 @@
       </div>
 
       <div class="fund-subnav" id="fundSubnav">
-        <button class="is-active" data-fund-view="sector">板块资金</button>
         <button data-fund-view="theme">板块总览</button>
+        <button class="is-active" data-fund-view="sector">板块资金</button>
         <button data-fund-view="dist">基金涨跌分布</button>
         <button data-fund-view="openfund">场外基金</button>
         <button data-fund-view="openflow">场外资金流</button>
@@ -776,6 +776,7 @@
           <div class="seg" id="fundThemeSortSeg">
             <button class="is-active" data-fund-theme-sort="day">按当日涨跌</button>
             <button data-fund-theme-sort="streak">按连涨天数</button>
+            <button data-fund-theme-sort="day5">按近5日</button>
             <button data-fund-theme-sort="month">按近1月</button>
           </div>
           <span class="muted small" id="fundThemeMeta">--</span>
@@ -783,7 +784,7 @@
         <div class="fund-summary-grid" id="fundThemeSummary"></div>
         <article class="panel">
           <div class="panel-head">
-            <div><div class="eyebrow">FUND THEME ROTATION</div><h3>基金主题板块总览</h3><span class="muted small">点任意一行看当日涨跌图与历史走势</span></div>
+            <div><div class="eyebrow">FUND THEME ROTATION</div><h3>基金主题板块总览</h3><span class="muted small">点表头（当日涨跌 / 连涨天数 / 近5日 / 近1月）排序，再点一次切换升降序；点任意一行看当日涨跌图与历史走势</span></div>
             <span class="badge">主题口径</span>
           </div>
           <div class="table-scroll tall-table">

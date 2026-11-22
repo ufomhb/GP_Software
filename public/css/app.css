@@ -3262,6 +3262,11 @@ button[hidden] { display: none !important; }
 .compare-trend-wrap { margin-bottom: 12px; }
 .compare-trend { height: 250px; }
 .fund-theme-chart { height: 240px; }
+/* v2.10.4：板块总览表头可点击排序 */
+#fundThemeTable th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+#fundThemeTable th.sortable:hover { color: var(--text); }
+#fundThemeTable th.sortable .sort-mark { margin-left: 3px; font-size: 9px; color: var(--accent); }
+#fundThemeTable th.is-sorted { color: #bfe9ff; }
 .fund-portfolio-tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.025); overflow-x: auto; }
 .fund-portfolio-tab { flex: none; padding: 7px 12px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; white-space: nowrap; }
 .fund-portfolio-tab:hover { color: var(--text); background: rgba(255,255,255,.03); }

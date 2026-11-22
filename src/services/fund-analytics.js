@@ -103,6 +103,35 @@ function themeStreakFromSeries(dailyPctByDate, maxDays = 30) {
 }
 
 /**
+ * 连涨 / 连跌天数（带符号，v2.10.4）：
+ *   最新一天上涨 → +N（连续上涨 N 天）
+ *   最新一天下跌 → -N（连续下跌 N 天）
+ *   最新一天平盘 → 0；没有行情 → null
+ * 板块总览的「连涨天数」列直接用它：正数显示上涨天数，负数显示连续下跌天数。
+ */
+function themeStreakSigned(dailyPctByDate, maxDays = 30) {
+  const entries = dailyPctByDate instanceof Map
+    ? [...dailyPctByDate.entries()]
+    : Object.entries(dailyPctByDate || {});
+  const rows = entries
+    .map(([d, v]) => [String(d), Number(v)])
+    .filter(([d, v]) => /^\d{4}-\d{2}-\d{2}/.test(d) && Number.isFinite(v))
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  if (!rows.length) return null;
+  const last = Number(rows[rows.length - 1][1]);
+  if (!Number.isFinite(last) || last === 0) return 0;
+  const dir = last > 0 ? 1 : -1;
+  let streak = 0;
+  for (let i = rows.length - 1; i >= 0 && streak < maxDays; i -= 1) {
+    const v = Number(rows[i][1]);
+    if (Number.isFinite(v) && (dir > 0 ? v > 0 : v < 0)) streak += 1;
+    else break;
+  }
+  return dir * streak;
+}
+
+
+/**
  * 多只标的 → 等权指数（起点 100）。
  * 每个交易日：取「当天有收盘且前一天也有收盘」的标的，算等权平均日涨跌，再链式累乘。
  * 这样即使某只 ETF 上市晚 / 某天缺数据，也不会把整条曲线拉平。
@@ -385,7 +414,7 @@ function createFundAnalytics(deps = {}) {
         const avg = (arr) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null);
         const etfAvg = avg(etfPct);
         const fundAvgDay = avg(fundDay);
-        const streak = themeStreakFromSeries(daily);
+        const streak = themeStreakSigned(daily);
         const pcts = [...etfPct, ...fundDay];
         return {
           sector: group.sector,
@@ -520,7 +549,7 @@ function createFundAnalytics(deps = {}) {
         summary: {
           avgDay: round(avg(etfPct) !== null ? avg(etfPct) : (avg(fundDay) || 0), 2),
           avgMonth: avg(fundMonth),
-          streak: themeStreakFromSeries(daily),
+          streak: themeStreakSigned(daily),
           day5: compoundLastN(daily, 5),
           day20: compoundLastN(daily, 20),
           etfCount: group.etfs.length,
@@ -818,6 +847,7 @@ module.exports = {
   fundPctBucketIndex,
   bucketFundPct,
   themeStreakFromSeries,
+  themeStreakSigned,
   buildThemeIndex,
   dailyPctFromIndex,
   compoundLastN,

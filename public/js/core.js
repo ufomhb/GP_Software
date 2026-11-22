@@ -104,6 +104,7 @@ const state = {
   fundDistScope: 'equity',
   fundThemes: null,
   fundThemeSort: 'day',
+  fundThemeSortDir: 'desc',
   fundThemeDetail: null,
   fundThemeSector: '',
   fundThemeDetailDate: '',

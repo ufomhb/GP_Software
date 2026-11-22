@@ -10,7 +10,7 @@
    --------------------------------------------------------------- */
 import { state } from '../core.js?v=2.10.3';
 import { isNum, nf, priceFmt, pctFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.3';
-import { $ } from '../dom.js?v=2.10.3';
+import { $, $$ } from '../dom.js?v=2.10.3';
 import { distributionChart, themeHistoryChart, intradayChart } from '../charts.js?v=2.10.3';
 
 /* ---------------- 基金涨跌分布 ---------------- */
@@ -72,8 +72,46 @@ function renderFundDistribution() {
 const FUND_THEME_SORT_LABEL = {
   day: '按当日涨跌',
   streak: '按连涨天数',
+  day5: '按近5日',
   month: '按近1月',
 };
+
+const FUND_THEME_SORT_FIELD = {
+  day: 'avgDay',
+  streak: 'streak',
+  day5: 'day5',
+  month: 'avgMonth',
+};
+
+function themeSortValue(x, key) {
+  const field = FUND_THEME_SORT_FIELD[key] || 'avgDay';
+  const v = Number(x && x[field]);
+  return Number.isFinite(v) ? v : null;
+}
+
+/** 表头：点一次排序，再点同一列切换升序 / 降序 */
+function themeSortHead(key, label, sortKey, sortDir) {
+  const active = sortKey === key;
+  const mark = active ? (sortDir === 'asc' ? '▲' : '▼') : '';
+  return `<th class="sortable${active ? ' is-sorted' : ''}" data-fund-theme-sort="${key}" title="点击按「${label}」${active ? (sortDir === 'asc' ? '降序' : '升序') : '排序'}，再点同一列切换升降序">${label}${mark ? `<span class="sort-mark">${mark}</span>` : ''}</th>`;
+}
+
+/** 连涨天数（带符号）：正数 = 连续上涨天数，负数 = 连续下跌天数 */
+function themeStreakCell(x) {
+  const v = Number(x.streak);
+  if (!Number.isFinite(v) || v === 0) {
+    const tip = v === 0 ? '最新交易日代表 ETF 等权平盘，没有连涨 / 连跌' : '代表 ETF 日线不足，暂无连涨 / 连跌数据';
+    return `<span class="muted" title="${esc(tip)}">--</span>`;
+  }
+  if (v > 0) return `<span class="tone-up" title="连续上涨 ${v} 天（代表 ETF 等权日涨跌连续为正）">${v} 天</span>`;
+  return `<span class="tone-down" title="连续下跌 ${Math.abs(v)} 天（代表 ETF 等权日涨跌连续为负）">-${Math.abs(v)} 天</span>`;
+}
+
+function themeStreakText(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n === 0) return '<span class="muted">--</span>';
+  return n > 0 ? `<span class="tone-up">${n} 天</span>` : `<span class="tone-down">-${Math.abs(n)} 天</span>`;
+}
 
 function themeValueCell(x) {
   return `<span class="${toneClass(x.avgDay)}">${pctFmt(x.avgDay)}</span>`;
@@ -101,37 +139,43 @@ function renderFundThemeOverview() {
     if (meta) meta.textContent = d.note || '暂不可用';
     return;
   }
-  const sortKey = state.fundThemeSort || 'day';
+  const sortKey = ['day', 'streak', 'day5', 'month'].includes(state.fundThemeSort) ? state.fundThemeSort : 'day';
+  const sortDir = state.fundThemeSortDir === 'asc' ? 'asc' : 'desc';
   const themes = [...(d.themes || [])].sort((a, b) => {
-    if (sortKey === 'streak') {
-      const av = a.streak === null || a.streak === undefined ? -999 : Number(a.streak);
-      const bv = b.streak === null || b.streak === undefined ? -999 : Number(b.streak);
-      if (bv !== av) return bv - av;
-      return (Number(b.avgDay) || -999) - (Number(a.avgDay) || -999);
-    }
-    if (sortKey === 'month') return (Number(b.avgMonth) || -999) - (Number(a.avgMonth) || -999);
-    return (Number(b.avgDay) || -999) - (Number(a.avgDay) || -999);
+    const av = themeSortValue(a, sortKey);
+    const bv = themeSortValue(b, sortKey);
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1; // 没数据的永远排最后，升序降序都一样
+    if (bv === null) return -1;
+    if (av === bv) return (Number(b.avgDay) || -999) - (Number(a.avgDay) || -999);
+    return sortDir === 'asc' ? av - bv : bv - av;
   });
   const upThemes = themes.filter((x) => Number(x.avgDay) > 0).length;
   const downThemes = themes.filter((x) => Number(x.avgDay) < 0).length;
-  const longest = [...themes].sort((a, b) => (Number(b.streak) || 0) - (Number(a.streak) || 0))[0];
+  const longest = [...themes].filter((x) => Number(x.streak) > 0).sort((a, b) => Number(b.streak) - Number(a.streak))[0];
   const best = [...themes].sort((a, b) => (Number(b.avgDay) || -999) - (Number(a.avgDay) || -999))[0];
+  $$('#fundThemeSortSeg button').forEach((b) => b.classList.toggle('is-active', b.dataset.fundThemeSort === sortKey));
   if (meta) {
-    meta.textContent = `${themes.length} 个基金主题 · 更新 ${d.date || '--'} · ${FUND_THEME_SORT_LABEL[sortKey] || ''}`;
+    meta.textContent = `${themes.length} 个基金主题 · 更新 ${d.date || '--'} · ${FUND_THEME_SORT_LABEL[sortKey] || ''}（${sortDir === 'asc' ? '升序' : '降序'}）`;
   }
   if (summary) {
     summary.innerHTML = `
       <div class="summary-card"><div class="sc-label">上涨主题 / 下跌主题</div><div class="sc-value"><span class="tone-up">${upThemes}</span> <span class="muted">/</span> <span class="tone-down">${downThemes}</span></div><div class="sc-sub">共 ${themes.length} 个主题</div></div>
       <div class="summary-card"><div class="sc-label">当日最强主题</div><div class="sc-value">${esc(best ? best.sector : '--')}</div><div class="sc-sub ${best ? toneClass(best.avgDay) : ''}">${best ? pctFmt(best.avgDay) : '--'}</div></div>
-      <div class="summary-card"><div class="sc-label">连涨最长</div><div class="sc-value">${longest && Number(longest.streak) > 0 ? `${esc(longest.sector)} · ${Number(longest.streak)} 天` : '--'}</div><div class="sc-sub">按代表 ETF 等权涨跌连续为正</div></div>
+      <div class="summary-card"><div class="sc-label">连涨最长</div><div class="sc-value">${longest ? `${esc(longest.sector)} · ${Number(longest.streak)} 天` : '--'}</div><div class="sc-sub">按代表 ETF 等权涨跌连续为正；连跌在表里用负数显示</div></div>
       <div class="summary-card"><div class="sc-label">覆盖基金</div><div class="sc-value">${nf(d.fundCount, 0)}</div><div class="sc-sub">ETF ${nf(d.etfCount, 0)} 只 + 场外 ${nf(d.stockCount, 0)} 只</div></div>`;
   }
   table.innerHTML = `
-    <thead><tr><th>板块（主题）</th><th>当日涨跌</th><th>连涨天数</th><th>近5日</th><th>近1月</th><th>涨跌家数</th><th>基金数</th><th>代表 ETF</th></tr></thead>
+    <thead><tr><th>板块（主题）</th>
+      ${themeSortHead('day', '当日涨跌', sortKey, sortDir)}
+      ${themeSortHead('streak', '连涨天数', sortKey, sortDir)}
+      ${themeSortHead('day5', '近5日', sortKey, sortDir)}
+      ${themeSortHead('month', '近1月', sortKey, sortDir)}
+      <th>涨跌家数</th><th>基金数</th><th>代表 ETF</th></tr></thead>
     <tbody>${themes.map((x) => `<tr class="sector-row" data-fund-theme="${esc(x.sector)}">
       <td><span class="sector-name-cell"><i class="s-dot"></i>${esc(x.sector)}</span></td>
       <td class="t-chg">${themeValueCell(x)}</td>
-      <td class="t-price">${Number(x.streak) > 0 ? `<span class="tone-up">${Number(x.streak)} 天</span>` : '<span class="muted">--</span>'}</td>
+      <td class="t-price">${themeStreakCell(x)}</td>
       <td class="t-chg ${toneClass(x.day5)}">${pctFmt(x.day5)}</td>
       <td class="t-chg ${toneClass(x.avgMonth)}">${pctFmt(x.avgMonth)}</td>
       <td class="t-dim"><span class="tone-up">${nf(x.upCount, 0)}</span> / <span class="tone-down">${nf(x.downCount, 0)}</span></td>
@@ -153,7 +197,7 @@ function openFundThemeDrawer() {
     <div class="drawer-head"><div><div class="eyebrow">FUND THEME</div><h2>${esc(sector)}</h2><span class="code">基金主题板块 · ${esc(state.fundThemeDetailDate || '')}</span></div><button class="modal-close" data-close>×</button></div>
     <div class="fund-summary-grid">
       <div class="summary-card"><div class="sc-label">当日涨跌</div><div class="sc-value ${toneClass(summary.avgDay)}">${pctFmt(summary.avgDay)}</div><div class="sc-sub">组内等权</div></div>
-      <div class="summary-card"><div class="sc-label">连涨天数</div><div class="sc-value">${Number(summary.streak) > 0 ? `${Number(summary.streak)} 天` : '--'}</div><div class="sc-sub">代表 ETF 等权</div></div>
+      <div class="summary-card"><div class="sc-label">连涨 / 连跌天数</div><div class="sc-value">${themeStreakText(summary.streak)}</div><div class="sc-sub">代表 ETF 等权；负数 = 连续下跌</div></div>
       <div class="summary-card"><div class="sc-label">近5日 / 近1月</div><div class="sc-value"><span class="${toneClass(summary.day5)}">${pctFmt(summary.day5)}</span> <span class="muted">/</span> <span class="${toneClass(summary.avgMonth)}">${pctFmt(summary.avgMonth)}</span></div><div class="sc-sub">区间涨跌</div></div>
       <div class="summary-card"><div class="sc-label">覆盖基金</div><div class="sc-value">${nf(summary.fundCount, 0)}</div><div class="sc-sub">ETF ${nf(summary.etfCount, 0)} · 场外 ${nf(summary.stockCount, 0)}</div></div>
     </div>
