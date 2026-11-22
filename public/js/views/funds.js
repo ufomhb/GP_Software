@@ -1,9 +1,9 @@
 /* 基金页渲染（P2 从 app.js 抽出，第一个按视图拆的模块）
    只负责把 state 里的数据渲染成 DOM；数据加载与交互仍留在 app.js。
    依赖：core.js（state）、util.js（格式化/转义）、dom.js（$）。 */
-import { state } from '../core.js?v=2.10.5';
-import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.5';
-import { $ } from '../dom.js?v=2.10.5';
+import { state } from '../core.js?v=2.10.6';
+import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.6';
+import { $ } from '../dom.js?v=2.10.6';
 
 
 function fundCategoryOf(name = '') {
@@ -22,7 +22,16 @@ function getFundHolding(code) {
   const shares = Number(h.shares);
   const cost = Number(h.cost);
   if (!Number.isFinite(shares) || shares <= 0) return null;
-  return { shares, cost: Number.isFinite(cost) && cost > 0 ? cost : null };
+  // v2.10.6：这里以前只回 shares / cost，把 addedAt 丢了，导致「我的持仓」表的建仓日
+  // 永远显示「未记录」（后台恢复持仓保留了原建仓日也看不出来）。建仓日原样带出去。
+  const addedAt = Number(h.addedAt);
+  const updatedAt = Number(h.updatedAt);
+  return {
+    shares,
+    cost: Number.isFinite(cost) && cost > 0 ? cost : null,
+    addedAt: Number.isFinite(addedAt) && addedAt > 0 ? addedAt : null,
+    updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : null,
+  };
 }
 
 function fundHoldingRow(x) {

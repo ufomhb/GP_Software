@@ -1575,6 +1575,73 @@ test('DOM：盈亏日历「日」视图是周一到周五网格，周末不占�
   app.state.pnlYearMonth = prevYm;
 });
 
+test('DOM：v2.10.6 建仓日晚于最新净值时不再卡「计算中」，盈亏日历与统计给出等待状态', () => {
+  const prevPortfolios = app.state.portfolios;
+  const prevActive = app.state.activePortfolioId;
+  const prevHold = app.state.fundHoldings;
+  const prevPnl = app.state.fundPnl;
+  const prevWatch = app.state.fundWatchlist;
+  const prevLive = app.state.fundWatchData;
+  const prevUnit = app.state.pnlUnit;
+  const prevMetric = app.state.pnlMetric;
+  const prevYm = app.state.pnlYearMonth;
+  // 后台恢复持仓会把原建仓日写回：2026-11-21 12:00（上海），而净值只公布到 11-19
+  const holdings = { A1: { shares: 100, cost: 1, addedAt: Date.UTC(2026, 10, 21, 4) } };
+  const series = [{ code: 'A1', points: [{ d: '2026-11-18', c: 1.5 }, { d: '2026-11-19', c: 1.6 }] }];
+  const daily = app.computeFundDailyPnl(series, holdings);
+  assert.ok(daily, '建仓后还没有新净值时不能返回 null（否则前端永远停在计算中）');
+  assert.equal(daily.pending, true);
+  assert.equal(daily.rows.length, 0, '建仓日之前不能生成逐日盈亏');
+  assert.equal(daily.pendingStart, '2026-11-21');
+  assert.equal(daily.lastNavDate, '2026-11-19');
+  assert.equal(daily.marketValue, 160, '100 份 × 最新净值 1.6');
+  assert.equal(app.fundPnlPending(holdings, series).pending, true);
+  assert.equal(app.fundPnlPending({}, series), null, '没有持仓不算等待');
+
+  app.state.portfolios = [{ id: 'default', name: '主持仓', isDefault: true, holdings }];
+  app.state.activePortfolioId = 'default';
+  app.state.fundHoldings = holdings;
+  app.state.fundPnl = { items: series, index: null, missing: [] };
+  app.state.pnlUnit = 'day';
+  app.state.pnlMetric = 'amount';
+  app.state.pnlYearMonth = '';
+  app.renderFundPnlCalendar();
+  const cal = document.querySelector('#fundPnlCalendar');
+  assert.ok(cal.querySelector('.pnl-calendar'), '等待期间也要渲染日历网格，不能只剩一句「计算中」');
+  assert.ok(!cal.textContent.includes('正在计算'), '不能停在「正在计算」');
+  assert.match(document.querySelector('#fundPnlCalendarMeta').textContent, /等待新净值/);
+  const calNote = document.querySelector('#fundPnlCalendarNote').textContent;
+  assert.match(calNote, /还没有已公布净值/);
+  assert.match(calNote, /建仓之前的涨跌不计入/);
+
+  app.state.fundWatchlist = [{ code: 'A1', name: '基金A', type: 'open' }];
+  app.state.fundWatchData = { items: [{ code: 'A1', name: '基金A', type: 'open', price: 1.6, pct: 0, pctKind: 'navbar' }] };
+  app.renderFundPnl();
+  const kpi = document.querySelector('#fundPnlKpis').textContent;
+  assert.match(kpi, /今日盈亏/);
+  assert.match(kpi, /组合市值/);
+  assert.match(kpi, /建仓后暂无新净值/);
+  assert.ok(!kpi.includes('净值历史不足'), '不要再说「净值历史不足」误导用户');
+  assert.match(document.querySelector('#fundPnlNote').textContent, /还没有已公布净值/);
+  assert.match(document.querySelector('#fundPnlChart').textContent, /还没有已公布净值/);
+
+  // 我的持仓表要真的显示建仓日（v2.10.6 修 getFundHolding 丢掉 addedAt 的问题）
+  app.renderFundHoldTable();
+  const holdTable = document.querySelector('#fundHoldTable').textContent;
+  assert.match(holdTable, /11-21/, '建仓日要显示 11-21');
+  assert.ok(!holdTable.includes('未记录'), '有 addedAt 时不能显示「未记录」');
+
+  app.state.portfolios = prevPortfolios;
+  app.state.activePortfolioId = prevActive;
+  app.state.fundHoldings = prevHold;
+  app.state.fundPnl = prevPnl;
+  app.state.fundWatchlist = prevWatch;
+  app.state.fundWatchData = prevLive;
+  app.state.pnlUnit = prevUnit;
+  app.state.pnlMetric = prevMetric;
+  app.state.pnlYearMonth = prevYm;
+});
+
 test('DOM：今日盈亏 TOP5 分开盈利与亏损，没有盈利时默认落到亏损 TAB', () => {
   const prevHold = app.state.fundHoldings;
   const prevData = app.state.fundWatchData;
