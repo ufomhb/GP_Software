@@ -1548,6 +1548,12 @@ test('DOM：盈亏日历「日」视图是周一到周五网格，周末不占�
   assert.ok(dayTexts.includes('3'), '周二 3 号要有格子');
   const cells = [...box.querySelectorAll('.pnl-calendar-cell')];
   assert.ok(cells.some((c) => c.classList.contains('is-up')), '11-03 上涨应有红色格');
+  // 没有当天数据的交易日要显示 --，不能显示「休」（用户反馈）
+  const emptyCell = cells.find((c) => (c.querySelector('.pnl-calendar-day') || {}).textContent === '5');
+  assert.ok(emptyCell, '11-05 应有格子（周四）');
+  assert.equal(emptyCell.querySelector('.pnl-calendar-val').textContent.trim(), '--', '没有数据要显示 --');
+  assert.ok(!box.textContent.includes('休'), '日历里不应出现「休」字');
+
   assert.ok(cells.some((c) => c.classList.contains('is-down')), '11-04 下跌应有绿色格');
   assert.match(document.querySelector('#fundPnlCalendarNote').textContent, /建仓日/, '要写明统计起点');
 

@@ -2,18 +2,18 @@
    ---------------------------------------------------------------
    只负责 DOM：多份持仓 TAB、今日盈亏 TOP5、盈亏日历、组合 vs 上证。
    取数仍在 app.js；纯计算在 views/fundpnl.js。 */
-import { state } from '../core.js?v=2.10.0';
-import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.0';
-import { $, $$ } from '../dom.js?v=2.10.0';
-import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.10.0';
-import { fundDayBasis } from './funds.js?v=2.10.0';
+import { state } from '../core.js?v=2.10.1';
+import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.1';
+import { $, $$ } from '../dom.js?v=2.10.1';
+import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.10.1';
+import { fundDayBasis } from './funds.js?v=2.10.1';
 import {
   computeFundDailyPnl,
   fundCalendarBuckets,
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './fundpnl.js?v=2.10.0';
+} from './fundpnl.js?v=2.10.1';
 
 export function activePortfolio() {
   const list = state.portfolios || [];
@@ -146,7 +146,8 @@ export function renderFundPnlCalendar() {
       <div class="pnl-calendar-head"></div>${WEEK_LABELS.map((w) => `<div class="pnl-calendar-head">${w}</div>`).join('')}
       ${(buckets.weeks || []).map((week, wi) => `<div class="pnl-calendar-week">${wi + 1}</div>${week.map((cell) => {
         if (!cell) return '<div class="pnl-calendar-cell is-empty"></div>';
-        if (!cell.hasData) return `<div class="pnl-calendar-cell is-rest"><div class="pnl-calendar-day">${cell.day}</div><div class="pnl-calendar-val muted">休</div></div>`;
+        // 没有当天数据（非交易日 / 净值未出 / 建仓前）一律显示 --，不要写「休」误导用户
+        if (!cell.hasData) return `<div class="pnl-calendar-cell is-rest"><div class="pnl-calendar-day">${cell.day}</div><div class="pnl-calendar-val muted">--</div></div>`;
         const tone = Number(cell.pnl) > 0 ? 'is-up' : Number(cell.pnl) < 0 ? 'is-down' : '';
         return `<div class="pnl-calendar-cell ${tone}" title="${esc(`${cell.d} · ${signedFmt(cell.pnl, 2)}`)}"><div class="pnl-calendar-day">${cell.day}</div><div class="pnl-calendar-val ${toneClass(cell.pnl)}">${fmtCalendarValue(cell.value, metric)}</div></div>`;
       }).join('')}`).join('')}
