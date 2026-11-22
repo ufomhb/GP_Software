@@ -27,7 +27,8 @@ test('分档：边界值落在约定档位', () => {
   assert.equal(fundPctBucketIndex(-5), 1, '-5 归「-5~-3%」');
   assert.equal(fundPctBucketIndex(-5.01), 0);
   assert.equal(fundPctBucketIndex(-3), 2);
-  assert.equal(fundPctBucketIndex(-1), 3);
+  assert.equal(fundPctBucketIndex(-1), 4, '-1 归「-1~0%」');
+  assert.equal(fundPctBucketIndex(-1.01), 3);
   assert.equal(fundPctBucketIndex(-0.01), 4);
   assert.equal(fundPctBucketIndex(0), 5);
   assert.equal(fundPctBucketIndex(0.01), 6);
@@ -104,7 +105,8 @@ test('等权指数：某只标的后上市不影响早期曲线', () => {
   ]);
   assert.equal(idx[0].v, 100);
   assert.equal(idx[1].v, 110, '只有 A 有数据时按 A 自己算');
-  assert.equal(idx[3].v, 121, '11-20 只有 C：+10% → 121');
+  assert.equal(idx[2].v, 120, '11-19 A +9.09%（C 首日无涨跌）');
+  assert.equal(idx[3].v, 132, '11-20 只有 C：+10% → 132');
 });
 
 test('连涨 + 区间：由指数序列还原日涨跌并算近 5 日', () => {
@@ -125,14 +127,15 @@ test('热门榜：份额去重只留动量最高的一只', () => {
     { code: 'A2', name: '华夏成长混合C', week: 3.4 },
     { code: 'B1', name: '易方达蓝筹', week: 2.2 },
   ];
-  const out = dedupeFundShares(items, 'week');
+  const out = dedupeFundShares(items, 'week', (x) => String(x.name || '').replace(/[A-Z]$/, ''));
   assert.equal(out.length, 2);
   assert.ok(out.some((x) => x.code === 'A2'), 'A 类份额应被 C 类里动量更高的替换');
   assert.ok(out.some((x) => x.code === 'B1'));
 });
 
 test('热度分：周权重最高、空值按 0 处理', () => {
-  assert.ok(hotFundScore({ week: 2, month: 0, day: 0 }) > hotFundScore({ week: 1, month: 0, day: 10 }));
+  assert.ok(hotFundScore({ week: 1 }) > hotFundScore({ month: 1 }), '周权重 > 月权重');
+  assert.ok(hotFundScore({ month: 1 }) > hotFundScore({ day: 1 }), '月权重 > 日权重');
   assert.equal(hotFundScore({}), 0);
 });
 

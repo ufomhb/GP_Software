@@ -157,7 +157,7 @@ function openFundThemeDrawer() {
       <div class="summary-card"><div class="sc-label">近5日 / 近1月</div><div class="sc-value"><span class="${toneClass(summary.day5)}">${pctFmt(summary.day5)}</span> <span class="muted">/</span> <span class="${toneClass(summary.avgMonth)}">${pctFmt(summary.avgMonth)}</span></div><div class="sc-sub">区间涨跌</div></div>
       <div class="summary-card"><div class="sc-label">覆盖基金</div><div class="sc-value">${nf(summary.fundCount, 0)}</div><div class="sc-sub">ETF ${nf(summary.etfCount, 0)} · 场外 ${nf(summary.stockCount, 0)}</div></div>
     </div>
-    <div class="panel-head"><div><h3>当日涨跌图</h3><span class="muted small">代表 ETF 分时 · ${esc(intra && intra.name ? intra.name : '')}</span></div><span class="badge ${intra ? toneClass(intra.pct) : ''}">${intra && isNum(intra.pct) ? pctFmt(intra.pct) : '--'}</span></div>
+    <div class="panel-head"><div><h3>当日涨跌图</h3><span class="muted small">代表 ETF 分时 · ${esc(intra && intra.name ? intra.name : '')}${intra && intra.date ? ` · ${esc(intra.date)}` : ''}${intra && intra.isLatestTradingDay ? '（最近交易日）' : ''}</span></div><span class="badge ${intra ? toneClass(intra.pct) : ''}">${intra && isNum(intra.pct) ? pctFmt(intra.pct) : '--'}</span></div>
     <div id="fundThemeIntraday" class="fund-theme-chart"></div>
     <div class="panel-head" style="margin-top:14px"><div><h3>历史走势</h3><span class="muted small">代表 ETF 等权归一（起点 100）</span></div><span class="badge">${esc(d.rangeLabel || '近半年')}</span></div>
     <div id="fundThemeHistory" class="fund-theme-chart"></div>

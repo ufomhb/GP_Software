@@ -64,8 +64,8 @@ try {
   const next = applyPortfolioImport(doc, current, { mode });
   const before = summarizePortfolio(current);
   const after = summarizePortfolio(next);
-  const summary = `账号 ${user.username}（${user.id}）· 导入前 基金 ${before.funds}/持仓 ${before.holdings}/自选股 ${before.watchlist}`
-    + ` → 导入后 基金 ${after.funds}/持仓 ${after.holdings}/自选股 ${after.watchlist}`;
+  const summary = `账号 ${user.username}（${user.id}）· 导入前 基金 ${before.funds}/持仓 ${before.holdings}/组合 ${before.groups}/自选股 ${before.watchlist}`
+    + ` → 导入后 基金 ${after.funds}/持仓 ${after.holdings}/组合 ${after.groups}/自选股 ${after.watchlist}`;
 
   if (dryRun) {
     console.log(`[预检] ${summary}（未写入，存储 ${store.mode}）`);
@@ -79,6 +79,7 @@ try {
       user: { id: user.id, username: user.username },
       funds: current.funds || [],
       holdings: current.holdings || {},
+      portfolios: current.portfolios || [],
       watchlist: current.watchlist || [],
     }, null, 2), 'utf8');
     store.savePortfolio(user, next);

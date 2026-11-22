@@ -121,6 +121,31 @@ test('迁移：每条迁移加的列都必须同时出现在 SCHEMA 里', () => 
   }
 });
 
+test('迁移：v5 会给老库补上 portfolio_holdings.added_at（建仓日）', () => {
+  withDb('v5', (db) => {
+    // 模拟 v4 时代的库：持仓表还没有 added_at，版本记为 4
+    db.exec('ALTER TABLE portfolio_holdings DROP COLUMN added_at');
+    db.exec('PRAGMA user_version = 4');
+  }, (db) => {
+    assert.equal(hasColumn(db, 'portfolio_holdings', 'added_at'), false, '构造的 v4 库不应有 added_at');
+    const report = store.runMigrations(db);
+    assert.equal(version(db), store.SCHEMA_VERSION);
+    assert.ok(report.applied.some((a) => a.version === 5), '应执行 v5 迁移');
+    assert.ok(hasColumn(db, 'portfolio_holdings', 'added_at'), 'v5 应补上 added_at');
+  });
+});
+
+test('迁移：v5 在已经有 added_at 的库上可重复执行（不报 duplicate column）', () => {
+  withDb('v5-twice', (db) => {
+    db.exec('PRAGMA user_version = 4');
+  }, (db) => {
+    assert.ok(hasColumn(db, 'portfolio_holdings', 'added_at'), '新库建表时就该有 added_at');
+    const report = store.runMigrations(db);
+    assert.equal(version(db), store.SCHEMA_VERSION, '重复执行不应失败');
+    assert.ok(report.applied.some((a) => a.version === 5));
+  });
+});
+
 test('迁移：中途失败整条回滚，版本号不动', () => {
   withDb('fail', null, (db) => {
     store.runMigrations(db);

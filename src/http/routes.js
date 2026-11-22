@@ -54,6 +54,9 @@ function createHttpRoutes(deps) {
     listPortfolioHistory,
     restorePortfolioSnapshot,
     transferPortfolio,
+    // v2.10.0：多份持仓组合（主持仓 + 额外组合）
+    mutatePortfolioGroup,
+    publicPortfolioList,
     fetchQuoteList,
     flushStats,
     fs,
@@ -885,11 +888,25 @@ async function handleApi(req, res, url) {
       funds: portfolio.funds,
       // v2.9.2：对外只给还持有的条目（删除墓碑与内部时间戳不外泄）
       holdings: dataStore.publicHoldings(portfolio.holdings),
+      // v2.10.0：多份持仓组合（主持仓排第一，holdings 带 addedAt 建仓日）
+      portfolios: publicPortfolioList(user, portfolio),
       watchlist: portfolio.watchlist,
       updatedAt,
       // 客户端拿 rev 做「基于哪一版提交」，用来发现两个标签页/两台设备同时改
       rev: updatedAt,
     };
+  }
+  if (p === '/api/portfolio/groups' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    const body = req.body || {};
+    return mutatePortfolioGroup({
+      user,
+      action: ['create', 'rename', 'delete'].includes(String(body.action)) ? String(body.action) : 'create',
+      id: body.id,
+      name: body.name,
+      ip: clientIp(req),
+    });
   }
   if (p === '/api/portfolio' && req.method === 'POST') {
     const user = currentUser(req);
@@ -922,16 +939,34 @@ async function handleApi(req, res, url) {
       }
     }
     // 持仓：条目级合并（按 updatedAt 取新、墓碑删旧），不再是「整份覆盖」
+    const stampMissing = Number.isFinite(baseRev) && baseRev > 0;
     const holdings = has('holdings')
-      ? dataStore.mergePortfolioHoldings(current.holdings || {}, cleaned.holdings, {
-        stampMissing: Number.isFinite(baseRev) && baseRev > 0,
-      })
+      ? dataStore.mergePortfolioHoldings(current.holdings || {}, cleaned.holdings, { stampMissing })
       : (current.holdings || {});
+    // v2.10.0：额外组合只做「按 id 的持仓合并」——新建/改名/删除走 /api/portfolio/groups，
+    // 这样「只保存某一组」的请求不会把其它组合误删。
+    let nextExtras = null;
+    if (has('portfolios')) {
+      const incoming = Array.isArray(cleaned.portfolios) ? cleaned.portfolios : [];
+      const incomingMap = new Map(incoming.map((g) => [g.id, g]));
+      nextExtras = (current.portfolios || [])
+        .filter((g) => !g.isDefault)
+        .map((g) => {
+          const patch = incomingMap.get(g.id);
+          if (!patch) return { ...g };
+          return {
+            ...g,
+            updatedAt: Date.now(),
+            holdings: dataStore.mergePortfolioHoldings(g.holdings || {}, patch.holdings || {}, { stampMissing }),
+          };
+        });
+    }
     const next = {
       funds: has('funds') ? cleaned.funds : (current.funds || []),
       holdings,
       watchlist: has('watchlist') ? cleaned.watchlist : (current.watchlist || []),
     };
+    if (nextExtras) next.portfolios = nextExtras;
     savePortfolio(user, next);
     const saved = loadPortfolio(user);
     const rev = portfolioRevOf(user) || 0;
@@ -950,6 +985,7 @@ async function handleApi(req, res, url) {
       rev,
       funds: (has('funds') ? cleaned.funds : (current.funds || [])).length,
       holdings: Object.keys(dataStore.publicHoldings(holdings)).length,
+      portfolios: publicPortfolioList(user, saved),
       watchlist: (has('watchlist') ? cleaned.watchlist : (current.watchlist || [])).length,
     };
   }

@@ -32,6 +32,7 @@ const FUND_PCT_BUCKETS = [
 
 /** 单个涨跌幅 → 分档下标（边界口径：-5 归「-5~-3%」，5 归「3~5%」，0 单独一档） */
 function fundPctBucketIndex(pct) {
+  if (pct === null || pct === undefined || pct === '') return -1;
   const v = Number(pct);
   if (!Number.isFinite(v)) return -1;
   if (v < -5) return 0;
@@ -54,6 +55,8 @@ function bucketFundPct(values) {
   let flat = 0;
   let total = 0;
   for (const raw of Array.isArray(values) ? values : []) {
+    // 注意：Number(null) === 0，必须先把「没有值」挡掉，否则缺失净值会被算成平盘
+    if (raw === null || raw === undefined || raw === '') continue;
     const v = Number(raw);
     if (!Number.isFinite(v)) continue;
     const idx = fundPctBucketIndex(v);
@@ -165,12 +168,12 @@ function compoundLastN(dailyPctByDate, n) {
 
 /* ---------------- 纯函数：场外基金榜 ---------------- */
 
-/** 同一个基金的不同份额（A/C/E/人民币…）只留一只 */
-function dedupeFundShares(items, scoreKey = 'week') {
+/** 同一个基金的不同份额（A/C/E/人民币…）只留一只；baseNameOf 负责把份额后缀归一 */
+function dedupeFundShares(items, scoreKey = 'week', baseNameOf = (x) => String((x && (x.baseName || x.name)) || (x && x.code) || '')) {
   const best = new Map();
   for (const item of Array.isArray(items) ? items : []) {
     if (!item || !item.code) continue;
-    const key = String(item.baseName || item.name || item.code);
+    const key = baseNameOf(item);
     const score = Number(item[scoreKey]);
     const prev = best.get(key);
     if (!prev) {
@@ -468,21 +471,30 @@ function createFundAnalytics(deps = {}) {
       let intraday = null;
       if (leader && fundSecid(leader.code)) {
         const secid = fundSecid(leader.code);
-        try {
-          const got = await getIntraday(secid, today());
-          if (got && Array.isArray(got.candles) && got.candles.length >= 2) {
-            intraday = {
-              secid,
-              name: got.name || leader.name || '',
-              preClose: num(got.preClose),
-              pct: num(got.pct),
-              source: got.source || '',
-              points: got.points || [],
-              candles: got.candles,
-            };
-          }
-        } catch {
-          intraday = null;
+        // 周末 / 节假日时「今天」没有分时，回退到最近一个交易日，别让抽屉只剩一句「暂时不可用」
+        const lastTradingDate = series.length
+          ? series.map((s) => String(s.candles[s.candles.length - 1].d).slice(0, 10)).sort().pop()
+          : '';
+        const datesToTry = [today(), lastTradingDate].filter((d, i, arr) => /^\d{4}-\d{2}-\d{2}$/.test(d) && arr.indexOf(d) === i);
+        for (const d of datesToTry) {
+          try {
+            const got = await getIntraday(secid, d);
+            if (got && Array.isArray(got.candles) && got.candles.length >= 2) {
+              intraday = {
+                secid,
+                date: d,
+                name: got.name || leader.name || '',
+                preClose: num(got.preClose),
+                pct: num(got.pct),
+                source: got.source || '',
+                points: got.points || [],
+                candles: got.candles,
+                isLatestTradingDay: d !== today(),
+              };
+              // 只有两三个点的是「日线摘要」，继续尝试下一个日期（通常能拿到真正的分时）
+              if (got.candles.length >= 5 || d === datesToTry[datesToTry.length - 1]) break;
+            }
+          } catch { /* 换下一个日期 */ }
         }
       }
       const etfs = group.etfs
@@ -592,7 +604,7 @@ function createFundAnalytics(deps = {}) {
         }));
       if (boardTab === 'hot') {
         // 热度代理：份额去重 + 同主题最多 2 只 + 短期动量加权
-        const deduped = dedupeFundShares(rows, 'week');
+        const deduped = dedupeFundShares(rows, 'week', (x) => x.baseName || fundBaseName(x.name) || x.code);
         const perSector = new Map();
         const picked = [];
         for (const item of deduped.slice().sort((a, b) => hotFundScore(b) - hotFundScore(a))) {

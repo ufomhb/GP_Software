@@ -55,7 +55,7 @@ try {
   if (out) {
     writeFileSync(out, text, 'utf8');
     const counts = summarizePortfolio(doc);
-    console.log(`已导出 ${user.username}（${user.id}）→ ${out} · 基金 ${counts.funds} / 持仓 ${counts.holdings} / 自选股 ${counts.watchlist} · 存储 ${store.mode}`);
+    console.log(`已导出 ${user.username}（${user.id}）→ ${out} · 基金 ${counts.funds} / 持仓 ${counts.holdings} / 组合 ${counts.groups} / 自选股 ${counts.watchlist} · 存储 ${store.mode}`);
   } else {
     process.stdout.write(text);
   }

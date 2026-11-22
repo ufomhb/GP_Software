@@ -7517,8 +7517,16 @@ const PORTFOLIO_AUDIT_MAX_LINES = 1000;
 function portfolioRevOf(user) {
   try {
     if (STORE_MODE === 'sqlite') return Math.trunc(fs.statSync(dataStore.DB_FILE).mtimeMs);
-    if (user && user.primary) return Math.trunc(fs.statSync(PUSH_FILE).mtimeMs);
-    return Math.trunc(fs.statSync(userDataFile(user.id)).mtimeMs);
+    // v2.10.0：额外组合写在 userdata/<id>.extras.json，JSON 模式下也要参与版本比较，
+    // 否则「只改组合」的写入不会 bump rev，另一台设备发现不了。
+    const stamps = [];
+    if (user && user.primary) stamps.push(fs.statSync(PUSH_FILE).mtimeMs);
+    else stamps.push(fs.statSync(userDataFile(user.id)).mtimeMs);
+    try {
+      const extras = path.join(USERDATA_DIR, `${String(user.id).replace(/[^a-zA-Z0-9_-]/g, '')}.extras.json`);
+      stamps.push(fs.statSync(extras).mtimeMs);
+    } catch { /* 还没有 extras 文件 */ }
+    return Math.trunc(Math.max(...stamps.filter((n) => Number.isFinite(n))));
   } catch {
     return 0;
   }
@@ -7526,10 +7534,13 @@ function portfolioRevOf(user) {
 
 function portfolioCounts(doc) {
   const holdings = (doc && doc.holdings) || {};
+  const extras = Array.isArray(doc && doc.portfolios) ? doc.portfolios.filter((g) => g && !g.isDefault) : [];
   return {
     funds: Array.isArray(doc && doc.funds) ? doc.funds.length : 0,
     holdings: Object.values(holdings).filter((h) => h && Number(h.shares) > 0).length,
     watchlist: Array.isArray(doc && doc.watchlist) ? doc.watchlist.length : 0,
+    // v2.10.0：额外组合数（不含主持仓）
+    groups: extras.length,
   };
 }
 
@@ -7573,12 +7584,23 @@ function savePortfolioSnapshot(user, doc, meta) {
   const dir = portfolioHistoryDir(user.id);
   try {
     fs.mkdirSync(dir, { recursive: true });
+    // v2.10.0：快照同时保存额外组合，后台「恢复」才能把多份持仓一起回滚
+    const extraGroups = (Array.isArray(doc.portfolios) ? doc.portfolios : [])
+      .filter((g) => g && !g.isDefault)
+      .map((g) => ({
+        id: g.id,
+        name: g.name,
+        createdAt: Number(g.createdAt) || 0,
+        updatedAt: Number(g.updatedAt) || 0,
+        holdings: dataStore.publicPortfolioHoldings(g.holdings || {}),
+      }));
     const pub = {
       funds: doc.funds || [],
       holdings: dataStore.publicHoldings(doc.holdings || {}),
+      portfolios: extraGroups,
       watchlist: doc.watchlist || [],
     };
-    const sig = JSON.stringify([pub.funds, pub.holdings, pub.watchlist]);
+    const sig = JSON.stringify([pub.funds, pub.holdings, pub.portfolios, pub.watchlist]);
     const exists = listPortfolioSnapshots(user.id);
     const lastRev = exists[exists.length - 1];
     if (lastRev) {
@@ -7587,12 +7609,20 @@ function savePortfolioSnapshot(user, doc, meta) {
         const prevSig = JSON.stringify([
           prev.funds || [],
           dataStore.publicHoldings(prev.holdings || {}),
+          prev.portfolios || [],
           prev.watchlist || [],
         ]);
         if (prevSig === sig) return; // 内容没变就不重复写
       } catch { /* 旧快照坏了就照写新的一份 */ }
     }
-    const rev = Number(meta && meta.rev) || Date.now();
+    // v2.10.0：同一毫秒内连续写两次（例如「建组合 + 存持仓」）时 rev 会相撞，
+    // 相撞就顺延到下一个空闲编号，否则后一份快照会把前一份覆盖掉，后台就没法回滚了。
+    let rev = Number(meta && meta.rev) || Date.now();
+    let guard = 0;
+    while (fs.existsSync(path.join(dir, `${rev}.json`)) && guard < 1000) {
+      rev += 1;
+      guard += 1;
+    }
     fs.writeFileSync(path.join(dir, `${rev}.json`), JSON.stringify({
       savedAt: Date.now(),
       rev,
@@ -7680,19 +7710,135 @@ function restorePortfolioSnapshot({ user, rev, ip } = {}) {
   for (const [code, v] of Object.entries(snap.holdings || {})) {
     const shares = Number(v && v.shares) || 0;
     if (shares <= 0) continue;
-    holdings[code] = { shares, cost: Number(v && v.cost) || 0, updatedAt: now };
+    const entry = { shares, cost: Number(v && v.cost) || 0, updatedAt: now };
+    if (Number(v && v.addedAt) > 0) entry.addedAt = Number(v.addedAt);
+    holdings[code] = entry;
   }
-  savePortfolio(user, {
+  // v2.10.0：恢复额外组合（旧快照没有 portfolios 字段时 = 不动现有组合，避免误删）
+  const extraGroups = Array.isArray(snap.portfolios)
+    ? snap.portfolios
+        .filter((g) => g && g.id && g.id !== 'default')
+        .map((g) => {
+          const groupHoldings = {};
+          for (const [code, v] of Object.entries(g.holdings || {})) {
+            const shares = Number(v && v.shares) || 0;
+            if (shares <= 0) continue;
+            const entry = { shares, cost: Number(v && v.cost) || 0, updatedAt: now };
+            if (Number(v && v.addedAt) > 0) entry.addedAt = Number(v.addedAt);
+            groupHoldings[code] = entry;
+          }
+          return {
+            id: g.id,
+            name: g.name,
+            createdAt: Number(g.createdAt) || now,
+            updatedAt: now,
+            holdings: groupHoldings,
+          };
+        })
+    : null;
+  const next = {
     funds: Array.isArray(snap.funds) ? snap.funds : [],
     holdings,
     watchlist: Array.isArray(snap.watchlist) ? snap.watchlist : [],
-  });
+  };
+  if (extraGroups) next.portfolios = extraGroups;
+  savePortfolio(user, next);
   const after = loadPortfolio(user);
   const nextRev = portfolioRevOf(user);
   recordPortfolioWrite({
     user, ip, action: 'restore', before, after, rev: nextRev, source: `snapshot:${Math.trunc(idx)}`,
   });
   return { ok: true, rev: nextRev, restoredFrom: Math.trunc(idx), counts: portfolioCounts(after) };
+}
+
+/* ---------------------------------------------------------
+   多份持仓组合（v2.10.0）
+   ---------------------------------------------------------
+   主持仓仍在 portfolio_holdings；额外组合在 user_extras['fund_portfolios']。
+   这里只做三件事：新建 / 改名 / 删除（每步都写审计与快照）。
+   返回统一的 portfolios 列表（holdings 已按对外形态脱敏）。
+   --------------------------------------------------------- */
+function publicPortfolioList(user, portfolio) {
+  const doc = portfolio || loadPortfolio(user);
+  const list = Array.isArray(doc.portfolios) ? doc.portfolios : [];
+  return list.map((g) => ({
+    id: g.id,
+    name: g.name,
+    isDefault: Boolean(g.isDefault),
+    createdAt: Number(g.createdAt) || 0,
+    updatedAt: Number(g.updatedAt) || 0,
+    holdings: dataStore.publicPortfolioHoldings(g.holdings || {}),
+  }));
+}
+
+function makeGroupId(existing = []) {
+  const used = new Set(existing.map((g) => g.id));
+  for (let i = 0; i < 200; i += 1) {
+    const id = `p${Date.now().toString(36).slice(-5)}${i.toString(36)}`.slice(0, 16);
+    if (!used.has(id)) return id;
+  }
+  return `p${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function mutatePortfolioGroup({ user, action = 'create', id = '', name = '', ip } = {}) {
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  const before = loadPortfolio(user);
+  const extras = (before.portfolios || []).filter((g) => !g.isDefault).map((g) => ({
+    id: g.id,
+    name: g.name,
+    createdAt: g.createdAt,
+    updatedAt: g.updatedAt,
+    holdings: g.holdings,
+  }));
+  const MAX = dataStore.PORTFOLIO_GROUPS_MAX || 12;
+  const NAME_MAX = dataStore.PORTFOLIO_GROUP_NAME_MAX || 20;
+  const cleanName = String(name || '').trim().slice(0, NAME_MAX);
+  const target = extras.find((g) => g.id === String(id || ''));
+  let next = extras;
+  if (action === 'create') {
+    if (!cleanName) throw Object.assign(new Error('请填写组合名称'), { status: 400 });
+    if (extras.length + 1 >= MAX) throw Object.assign(new Error(`最多保存 ${MAX} 份持仓组合`), { status: 400 });
+    if (extras.some((g) => g.name === cleanName) || cleanName === '主持仓') {
+      throw Object.assign(new Error('组合名称已存在'), { status: 409 });
+    }
+    next = [...extras, {
+      id: makeGroupId(extras),
+      name: cleanName,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      holdings: {},
+    }];
+  } else if (action === 'rename') {
+    if (!target) throw Object.assign(new Error('组合不存在'), { status: 404 });
+    if (!cleanName) throw Object.assign(new Error('请填写组合名称'), { status: 400 });
+    if (cleanName === '主持仓' || extras.some((g) => g.id !== target.id && g.name === cleanName)) {
+      throw Object.assign(new Error('组合名称已存在'), { status: 409 });
+    }
+    next = extras.map((g) => (g.id === target.id ? { ...g, name: cleanName, updatedAt: Date.now() } : g));
+  } else if (action === 'delete') {
+    if (!target) throw Object.assign(new Error('组合不存在'), { status: 404 });
+    next = extras.filter((g) => g.id !== target.id);
+  } else {
+    throw Object.assign(new Error('不支持的组合操作'), { status: 400 });
+  }
+  savePortfolio(user, {
+    funds: before.funds || [],
+    holdings: before.holdings || {},
+    watchlist: before.watchlist || [],
+    portfolios: next,
+  });
+  const after = loadPortfolio(user);
+  const rev = portfolioRevOf(user) || 0;
+  recordPortfolioWrite({
+    user,
+    ip,
+    action: `group-${action}`,
+    before,
+    after,
+    rev,
+    source: 'web',
+  });
+  return { ok: true, rev, portfolios: publicPortfolioList(user, after) };
 }
 
 /**
@@ -7733,7 +7879,7 @@ async function transferPortfolio({ direction = 'push', userId, mode = 'merge', d
         return {
           ...base,
           counts,
-          message: `预检：本机 基金 ${counts.funds} / 持仓 ${counts.holdings} / 自选股 ${counts.watchlist}`,
+          message: `预检：本机 基金 ${counts.funds} / 持仓 ${counts.holdings} / 组合 ${counts.groups} / 自选股 ${counts.watchlist}`,
         };
       }
       const res = await deployToNas.pushPortfolio({ file: localFile, remoteFile, userId: user.id, mode: base.mode });
@@ -7744,7 +7890,7 @@ async function transferPortfolio({ direction = 'push', userId, mode = 'merge', d
         ...base,
         counts,
         remote: res,
-        message: `已推送 持仓 ${counts.holdings} 只到 NAS（模式 ${base.mode}）`,
+        message: `已推送 持仓 ${counts.holdings} 只 / 组合 ${counts.groups} 份到 NAS（模式 ${base.mode}）`,
       };
     }
     const res = await deployToNas.pullPortfolio({ file: localFile, remoteFile, userId: user.id });
@@ -7759,7 +7905,7 @@ async function transferPortfolio({ direction = 'push', userId, mode = 'merge', d
         counts: countsIn,
         remote: res,
         remoteExportedAt: doc.exportedAt || null,
-        message: `预检：NAS 上 基金 ${countsIn.funds} / 持仓 ${countsIn.holdings} / 自选股 ${countsIn.watchlist}`,
+        message: `预检：NAS 上 基金 ${countsIn.funds} / 持仓 ${countsIn.holdings} / 组合 ${countsIn.groups} / 自选股 ${countsIn.watchlist}`,
       };
     }
     const next = portfolioTransfer.applyPortfolioImport(doc, before, { mode: base.mode });
@@ -7793,20 +7939,9 @@ function sanitizePortfolio(body) {
         }))
         .filter((f) => f.code)
     : [];
-  const holdings = {};
-  if (body && body.holdings && typeof body.holdings === 'object' && !Array.isArray(body.holdings)) {
-    for (const [code, v] of Object.entries(body.holdings)) {
-      const shares = Number(v && v.shares);
-      if (!String(code) || !Number.isFinite(shares) || shares < 0) continue;
-      // updatedAt 参与多端合并：只接受合理区间（30 天前 ~ 5 分钟后），防止客户端时钟乱跳
-      const rawTs = Number(v && v.updatedAt);
-      const ts = Number.isFinite(rawTs) ? Math.min(now + 5 * 60 * 1000, Math.max(now - 30 * 86400000, rawTs)) : now;
-      const entry = { shares, cost: Number(v && v.cost) || 0, updatedAt: ts };
-      // shares === 0 是「删除墓碑」：让另一台设备也能把这一只删掉
-      if (shares === 0) entry.removedAt = Number(v && v.removedAt) || ts;
-      holdings[String(code)] = entry;
-    }
-  }
+  const holdings = sanitizeHoldingMap(body && body.holdings, now);
+  // v2.10.0：多份持仓组合（不含主持仓；主持仓仍走 holdings 字段）
+  const portfolios = sanitizePortfolioGroups(body && body.portfolios, now);
   const watchlist = Array.isArray(body && body.watchlist)
     ? body.watchlist
         .slice(0, 200)
@@ -7817,7 +7952,51 @@ function sanitizePortfolio(body) {
         }))
         .filter((w) => w.secid)
     : [];
-  return { funds, holdings, watchlist };
+  return { funds, holdings, portfolios, watchlist };
+}
+
+/** 一组持仓条目的清洗（主持仓与额外组合共用；v2.10.0 带 addedAt 建仓日） */
+function sanitizeHoldingMap(raw, now = Date.now()) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  const MIN_ADDED_AT = Date.UTC(2000, 0, 1);
+  for (const [code, v] of Object.entries(raw)) {
+    const shares = Number(v && v.shares);
+    if (!String(code) || !Number.isFinite(shares) || shares < 0) continue;
+    // updatedAt 参与多端合并：只接受合理区间（30 天前 ~ 5 分钟后），防止客户端时钟乱跳
+    const rawTs = Number(v && v.updatedAt);
+    const ts = Number.isFinite(rawTs) ? Math.min(now + 5 * 60 * 1000, Math.max(now - 30 * 86400000, rawTs)) : now;
+    const entry = { shares, cost: Number(v && v.cost) || 0, updatedAt: ts };
+    // 建仓日：只接受 2000 年以后、且不超过「现在 + 5 分钟」的值
+    const rawAdded = Number(v && v.addedAt);
+    if (shares > 0 && Number.isFinite(rawAdded) && rawAdded >= MIN_ADDED_AT) {
+      entry.addedAt = Math.min(now + 5 * 60 * 1000, rawAdded);
+    }
+    // shares === 0 是「删除墓碑」：让另一台设备也能把这一只删掉
+    if (shares === 0) entry.removedAt = Number(v && v.removedAt) || ts;
+    out[String(code)] = entry;
+  }
+  return out;
+}
+
+/** 额外组合的清洗：id 白名单格式、名称长度、最多 12 个；不支持用 'default' 冒充主持仓 */
+function sanitizePortfolioGroups(raw, now = Date.now()) {
+  if (!Array.isArray(raw)) return null;
+  const out = [];
+  const seen = new Set();
+  for (const g of raw.slice(0, dataStore.PORTFOLIO_GROUPS_MAX || 12)) {
+    const id = String((g && g.id) || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]{0,19}$/.test(id) || id === 'default' || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      name: String((g && g.name) || '').trim().slice(0, dataStore.PORTFOLIO_GROUP_NAME_MAX || 20) || '未命名组合',
+      createdAt: Number(g && g.createdAt) || now,
+      updatedAt: now,
+      holdings: sanitizeHoldingMap(g && g.holdings, now),
+    });
+  }
+  return out;
 }
 
 // 客户端地址：只有显式配置可信代理时才采信转发头，避免伪造 X-Forwarded-For 绕过限流。
@@ -9120,6 +9299,9 @@ const httpRoutes = createHttpRoutes({
   lastDateKeys,
   listPortfolioHistory,
   loadPortfolio,
+  // v2.10.0：多份持仓组合
+  mutatePortfolioGroup,
+  publicPortfolioList,
   loadUsers,
   loginFails,
   loginKey,

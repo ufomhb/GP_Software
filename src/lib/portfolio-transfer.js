@@ -20,16 +20,35 @@ function toCount(v) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/** 导出：holdings 只保留还在持有的条目，去掉墓碑与内部时间戳 */
-function buildPortfolioDoc({ user, portfolio, source, storeMode } = {}) {
-  if (!user || !user.id) throw new Error('导出持仓需要账号');
-  const holdings = {};
-  for (const [code, h] of Object.entries((portfolio && portfolio.holdings) || {})) {
+/** 一组持仓 → 可传输形态（只留还持有的条目，带 addedAt 建仓日） */
+function exportHoldings(map) {
+  const out = {};
+  for (const [code, h] of Object.entries(map || {})) {
     if (!code || !h || typeof h !== 'object') continue;
     const shares = toCount(h.shares);
     if (!shares) continue;
-    holdings[String(code)] = { shares, cost: Number(h.cost) || 0 };
+    const entry = { shares, cost: Number(h.cost) || 0 };
+    if (Number(h.addedAt) > 0) entry.addedAt = Number(h.addedAt);
+    out[String(code)] = entry;
   }
+  return out;
+}
+
+function exportGroups(groups) {
+  return (Array.isArray(groups) ? groups : [])
+    .filter((g) => g && g.id && !g.isDefault && g.id !== 'default')
+    .slice(0, 12)
+    .map((g) => ({
+      id: String(g.id),
+      name: String(g.name || '').slice(0, 20),
+      createdAt: Number(g.createdAt) || 0,
+      holdings: exportHoldings(g.holdings),
+    }));
+}
+
+/** 导出：holdings 只保留还在持有的条目，去掉墓碑与内部时间戳 */
+function buildPortfolioDoc({ user, portfolio, source, storeMode } = {}) {
+  if (!user || !user.id) throw new Error('导出持仓需要账号');
   return {
     ok: true,
     docVersion: DOC_VERSION,
@@ -40,7 +59,9 @@ function buildPortfolioDoc({ user, portfolio, source, storeMode } = {}) {
     },
     user: { id: String(user.id), username: String(user.username || '') },
     funds: Array.isArray(portfolio && portfolio.funds) ? portfolio.funds : [],
-    holdings,
+    holdings: exportHoldings(portfolio && portfolio.holdings),
+    // v2.10.0：多份持仓组合（不含主持仓）
+    portfolios: exportGroups(portfolio && portfolio.portfolios),
     watchlist: Array.isArray(portfolio && portfolio.watchlist) ? portfolio.watchlist : [],
   };
 }
@@ -57,7 +78,32 @@ function validatePortfolioDoc(raw) {
     if (!code || !v || typeof v !== 'object') continue;
     const shares = toCount(v.shares);
     if (!shares) continue;
-    holdings[String(code)] = { shares, cost: Number(v.cost) || 0 };
+    const entry = { shares, cost: Number(v.cost) || 0 };
+    if (Number(v.addedAt) > 0) entry.addedAt = Number(v.addedAt);
+    holdings[String(code)] = entry;
+  }
+  // v2.10.0：额外组合（缺字段 = 旧文件，视为没有额外组合）
+  const portfolios = [];
+  const seenGroup = new Set();
+  for (const g of Array.isArray(raw.portfolios) ? raw.portfolios.slice(0, 12) : []) {
+    const id = String((g && g.id) || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]{0,19}$/.test(id) || id === 'default' || seenGroup.has(id)) continue;
+    seenGroup.add(id);
+    const groupHoldings = {};
+    for (const [code, v] of Object.entries((g && g.holdings) || {})) {
+      if (!code || !v || typeof v !== 'object') continue;
+      const shares = toCount(v.shares);
+      if (!shares) continue;
+      const entry = { shares, cost: Number(v.cost) || 0 };
+      if (Number(v.addedAt) > 0) entry.addedAt = Number(v.addedAt);
+      groupHoldings[String(code)] = entry;
+    }
+    portfolios.push({
+      id,
+      name: String((g && g.name) || '').slice(0, 20) || '未命名组合',
+      createdAt: Number(g && g.createdAt) || 0,
+      holdings: groupHoldings,
+    });
   }
   const funds = (Array.isArray(raw.funds) ? raw.funds : [])
     .map((f) => ({
@@ -82,6 +128,7 @@ function validatePortfolioDoc(raw) {
     user: { id: String(raw.user.id), username: String(raw.user.username || '') },
     funds,
     holdings,
+    portfolios,
     watchlist,
   };
 }
@@ -118,14 +165,47 @@ function applyPortfolioImport(doc, current, { mode = 'merge', now = Date.now() }
       if (!code || !h || typeof h !== 'object') continue;
       const shares = toCount(h.shares);
       if (!shares) continue;
-      holdings[String(code)] = { shares, cost: Number(h.cost) || 0, updatedAt: stamp };
+      const entry = { shares, cost: Number(h.cost) || 0, updatedAt: stamp };
+      if (Number(h.addedAt) > 0) entry.addedAt = Number(h.addedAt);
+      holdings[String(code)] = entry;
     }
   };
   addHoldings(doc && doc.holdings, now);
   if (!replace) addHoldings(current && current.holdings, now - 1); // 当前有、导入没有的保留（稍旧，防止反向覆盖）
+  // v2.10.0：额外组合按 id 合并（导入的优先；merge 时保留本地独有组合）
+  const groupMap = new Map();
+  const addGroups = (groups, stamp) => {
+    for (const g of Array.isArray(groups) ? groups : []) {
+      if (!g || !g.id || g.isDefault || g.id === 'default') continue;
+      const groupHoldings = {};
+      for (const [code, h] of Object.entries(g.holdings || {})) {
+        const shares = toCount(h && h.shares);
+        if (!code || !shares) continue;
+        const entry = { shares, cost: Number(h.cost) || 0, updatedAt: stamp };
+        if (Number(h.addedAt) > 0) entry.addedAt = Number(h.addedAt);
+        groupHoldings[String(code)] = entry;
+      }
+      groupMap.set(String(g.id), {
+        id: String(g.id),
+        name: String(g.name || '').slice(0, 20) || '未命名组合',
+        createdAt: Number(g.createdAt) || stamp,
+        updatedAt: stamp,
+        holdings: groupHoldings,
+      });
+    }
+  };
+  addGroups(doc && doc.portfolios, now);
+  if (!replace) {
+    for (const g of Array.isArray(current && current.portfolios) ? current.portfolios : []) {
+      if (!g || g.isDefault || g.id === 'default') continue;
+      if (groupMap.has(String(g.id))) continue;
+      groupMap.set(String(g.id), g);
+    }
+  }
   return {
     funds: replace ? (doc.funds || []) : unionByCode(doc.funds, current && current.funds),
     holdings,
+    portfolios: [...groupMap.values()],
     watchlist: replace ? (doc.watchlist || []) : unionByCode(doc.watchlist, current && current.watchlist),
   };
 }
@@ -136,6 +216,7 @@ function summarizePortfolio(doc) {
     funds: Array.isArray(doc && doc.funds) ? doc.funds.length : 0,
     holdings: Object.values(holdings).filter((h) => toCount(h.shares) > 0).length,
     watchlist: Array.isArray(doc && doc.watchlist) ? doc.watchlist.length : 0,
+    groups: Array.isArray(doc && doc.portfolios) ? doc.portfolios.length : 0,
   };
 }
 
