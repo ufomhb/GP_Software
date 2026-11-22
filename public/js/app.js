@@ -5959,7 +5959,7 @@ function openFundHoldEditor(code, name) {
         <button class="btn small" id="holdAddedToday">从今天起算</button>
         <span class="muted small" id="holdAddedHint">${addedAt ? `已记录：${esc(addedAt)}` : '未记录：盈亏统计会用全部可用净值历史'}</span>
       </div>
-      <p class="muted small mt8">填 0 或清空份额即可删除该基金的持仓；成本净值留空时只算市值与当日盈亏。每份组合的持仓互不影响。</p>
+      <p class="muted small mt8">填 0 或清空份额即可删除该基金的持仓（服务端会留档，可在后台「持仓数据 → 持仓回收站」恢复原份额 / 成本 / 建仓日）；成本净值留空时只算市值与当日盈亏。每份组合的持仓互不影响。</p>
     </div>
     <div class="modal-actions">
       <button class="btn primary" id="holdSave">保存</button>
@@ -5982,7 +5982,7 @@ function openFundHoldEditor(code, name) {
       : null;
     saveFundHolding(code, shares, cost, addedTs);
     closeOverlay();
-    toast(shares > 0 ? '持仓已保存' : '已清除该基金持仓', 'ok', 1600);
+    toast(shares > 0 ? '持仓已保存' : '已清除持仓，后台「持仓回收站」可恢复', 'ok', 2200);
   });
 }
 
