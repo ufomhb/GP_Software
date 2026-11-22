@@ -782,8 +782,10 @@ node server.js --port=8091
 | `GET /api/watchlist?secids=...` | 自选股批量评分 |
 | `GET /api/portfolio` | 当前账号的自选股 / 自选基金 / 持仓（含 `rev`，供多端冲突检测） |
 | `POST /api/portfolio` | 保存持仓：条目级合并 + 删除墓碑；可带 `baseRev`，过期提交返回 `conflict` 与服务器快照 |
-| `GET /api/admin/portfolio/history?userId=&limit=` | 某账号最近的持仓写入快照（后台「持仓保存历史」） |
+| `GET /api/admin/portfolio/history?userId=&limit=` | 某账号最近的持仓写入快照（后台已不再展示，保留给排查/兼容） |
 | `POST /api/admin/portfolio/restore` | 恢复到指定快照 `{userId, rev}`（先自动留一份当前快照） |
+| `GET /api/admin/portfolio/deletions?userId=&pending=1` | 持仓删除历史：按被删的 TAB 汇总（TAB 名称 + 基金 / 份额 / 成本 / 建仓日，留档 365 天） |
+| `POST /api/admin/portfolio/deletions/restore` | 按删除前的状态恢复该 TAB `{userId, id}`；保留建仓日、已有持仓跳过 |
 | `GET /api/admin/portfolio/trash?userId=&all=1` | 持仓回收站：用户删掉的持仓（原份额 / 成本 / 建仓日 / 组合 + 删除时该 TAB 的持仓快照，留档 365 天） |
 | `POST /api/admin/portfolio/trash/restore` | 按原值恢复 `{userId, ids: [...]}`；已重新持有的那只会跳过 |
 | `POST /api/admin/portfolio/trash/restore-tab` | 按删除时的 TAB 快照整组恢复 `{userId, id}`；组合已删除会按原名称重建 |
