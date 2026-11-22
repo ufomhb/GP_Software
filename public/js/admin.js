@@ -2249,13 +2249,14 @@ async function loadPortfolioHistory() {
       return;
     }
     box.innerHTML = `<table class="admin-table"><thead><tr>
-        <th>保存时间</th><th>动作</th><th>来源</th><th>自选基金</th><th>持仓</th><th>操作</th>
+        <th>保存时间</th><th>动作</th><th>来源</th><th>自选基金</th><th>持仓</th><th>组合</th><th>操作</th>
       </tr></thead><tbody>${data.items.map((it) => `<tr>
         <td class="nowrap">${esc(fmtClock(it.savedAt))}</td>
         <td>${esc(it.action || 'save')}</td>
         <td class="muted">${esc(it.source || '-')}</td>
         <td class="num">${n(it.funds)}</td>
         <td class="num">${n(it.holdings)}</td>
+        <td class="num">${n(it.counts && it.counts.groups)}</td>
         <td><button type="button" class="admin-btn" data-ph-restore="${esc(String(it.rev))}" data-name="${esc(data.user.username)}">恢复</button></td>
       </tr>`).join('')}</tbody></table>`;
     $$('[data-ph-restore]', box).forEach((btn) => btn.addEventListener('click', () => {

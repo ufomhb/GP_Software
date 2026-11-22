@@ -1,9 +1,9 @@
 /* 基金页渲染（P2 从 app.js 抽出，第一个按视图拆的模块）
    只负责把 state 里的数据渲染成 DOM；数据加载与交互仍留在 app.js。
    依赖：core.js（state）、util.js（格式化/转义）、dom.js（$）。 */
-import { state } from '../core.js?v=2.9.3';
-import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.9.3';
-import { $ } from '../dom.js?v=2.9.3';
+import { state } from '../core.js?v=2.10.0';
+import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.0';
+import { $ } from '../dom.js?v=2.10.0';
 
 
 function fundCategoryOf(name = '') {
@@ -363,8 +363,15 @@ function renderFundHoldTable() {
   }
   const withR = rows.map((x) => ({ x, r: fundHoldingRow(x) })).filter((o) => o.r.marketValue !== null);
   const total = withR.reduce((s, o) => s + o.r.marketValue, 0);
+  const addedText = (code) => {
+    const h = getFundHolding(code);
+    const ts = Number(h && h.addedAt);
+    if (!Number.isFinite(ts) || ts <= 0) return '<span class="muted" title="没记录建仓日：盈亏统计按可用净值最早一天">未记录</span>';
+    const d = new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+    return `<span title="盈亏从这天起算（点「仓」可修改）">${esc(d.slice(5))}</span>`;
+  };
   el.innerHTML = `<div class="table-scroll"><table class="table fund-hold-table">
-    <thead><tr><th>基金</th><th data-col="shares">份额</th><th data-col="cost">成本净值</th><th data-col="nav">最新</th><th>市值</th><th>持有收益</th><th data-col="ret">收益率</th><th title="口径随时间变：9:00 前按前日净值，9:00–15:00 按当日估值，15:00 后按估值终值，今日净值公布后按今日净值">今日盈亏</th><th data-col="weight">占比</th></tr></thead>
+    <thead><tr><th>基金</th><th data-col="shares">份额</th><th data-col="cost">成本净值</th><th data-col="nav">最新</th><th>市值</th><th>持有收益</th><th data-col="ret">收益率</th><th title="口径随时间变：9:00 前按前日净值，9:00–15:00 按当日估值，15:00 后按估值终值，今日净值公布后按今日净值">今日盈亏</th><th title="盈亏统计从建仓日起算，建仓前的净值不参与">建仓日</th><th data-col="weight">占比</th></tr></thead>
     <tbody>${withR.sort((a, b) => b.r.marketValue - a.r.marketValue).map(({ x, r }) => {
       const type = x.type || 'open';
       const share = total > 0 ? (r.marketValue / total) * 100 : null;
@@ -379,6 +386,7 @@ function renderFundHoldTable() {
         <td class="t-chg ${toneClass(r.dayProfit)}">${r.dayPending
           ? `<span class="muted" title="${esc(`当日涨跌未出，最新 ${String(r.pctDate || '').slice(5)}${r.navPct !== null ? ` 净值 ${r.navPct > 0 ? '+' : ''}${r.navPct.toFixed(2)}%` : ''}`)}">--</span><div class="t-sub">${esc(`当日未出${r.pctDate ? ` · ${String(r.pctDate).slice(5)}` : ''}`)}</div>`
           : signedFmt(r.dayProfit, 2)}</td>
+        <td class="t-dim">${addedText(x.code)}</td>
         <td data-col="weight" class="t-dim">${isNum(share) ? `${share.toFixed(1)}%` : '--'}</td>
       </tr>`;
     }).join('')}</tbody>

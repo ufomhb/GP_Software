@@ -2,7 +2,7 @@
    版本号、本地存储键、账号命名空间、按账号读写的 localStorage、全局 state。
    视图模块可以 import { state } 与这些读写函数，不再依赖 app.js。 */
 
-const APP_VERSION = '2.9.3';
+const APP_VERSION = '2.10.0';
 
 const WATCH_KEY = 'gp.watchlist.v1';
 const ALERTS_KEY = 'gp.alerts.v1';
@@ -11,6 +11,8 @@ const FUND_WATCH_KEY = 'gp.fundWatchlist.v1';
 const FUND_HOLD_KEY = 'gp.fundHoldings.v1';
 // v2.10.0：当前选中的持仓组合（多份持仓 TAB），按账号命名空间存放
 const ACTIVE_PORTFOLIO_KEY = 'gp.activePortfolio.v1';
+// v2.10.0：多份持仓组合的本机缓存（服务端 /api/portfolio 的 portfolios 是唯一真源，这里只做离线兜底）
+const PORTFOLIOS_KEY = 'gp.portfolios.v1';
 const MONITOR_SECTORS_KEY = 'gp.monitorSectors.v1';
 // v2.9.2：持仓同步元信息（服务端 rev / 本机最后保存时间 / 待同步标记），按账号命名空间存放
 const PORTFOLIO_META_KEY = 'gp.portfolioMeta.v1';
@@ -115,6 +117,7 @@ const state = {
   pnlUnit: 'day',
   pnlMetric: 'amount',
   pnlYearMonth: '',
+  pnlCalendarYear: '',
   topMoversTab: 'profit',
   fundRange: 'today',
   fundIntraday: null,
@@ -254,6 +257,10 @@ function loadScopedState() {
   if (!state.fundHoldings || typeof state.fundHoldings !== 'object' || Array.isArray(state.fundHoldings)) {
     state.fundHoldings = {};
   }
+  // v2.10.0：多份持仓组合；本机缓存只是兜底，启动后会用服务端 /api/portfolio 覆盖
+  const cachedPortfolios = loadJSON(PORTFOLIOS_KEY, null);
+  state.portfolios = Array.isArray(cachedPortfolios) ? cachedPortfolios : [];
+  state.activePortfolioId = String(loadJSON(ACTIVE_PORTFOLIO_KEY, 'default') || 'default');
   state.monitorSectors = loadJSON(MONITOR_SECTORS_KEY, []);
   if (!Array.isArray(state.monitorSectors)) state.monitorSectors = [];
   state.settings = {
@@ -347,6 +354,7 @@ export {
   APP_VERSION,
   WATCH_KEY, ALERTS_KEY, SETTINGS_KEY, FUND_WATCH_KEY, FUND_HOLD_KEY, MONITOR_SECTORS_KEY,
   ACTIVE_PORTFOLIO_KEY,
+  PORTFOLIOS_KEY,
   PORTFOLIO_META_KEY, PORTFOLIO_PENDING_KEY,
   DEFAULT_WATCH, DEFAULT_FUNDS,
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,

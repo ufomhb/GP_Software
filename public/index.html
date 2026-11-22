@@ -13,7 +13,7 @@
   <meta name="description" content="寰球智投：A股、全球指数、期货、黄金白银实时行情，板块资金流向与规则化策略终端。">
   <title>寰球智投 · 全球行情与智能策略终端</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.9.3">
+  <link rel="stylesheet" href="/css/app.css?v=2.10.0">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icon.svg">
 </head>
@@ -1377,6 +1377,71 @@
 
       <div class="fund-summary-grid" id="fundWatchSummary"></div>
 
+      <!-- v2.10.0：多份持仓组合（TAB 切换，互不影响；默认组合叫「主持仓」） -->
+      <div class="fund-portfolio-tabs" id="fundPortfolioTabs"></div>
+
+      <!-- 今日盈亏 TOP5 / 亏损 TOP5（没有盈利时默认落在亏损 TAB） -->
+      <article class="panel" id="fundTopMoversPanel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">TODAY P&amp;L TOP 5</div>
+            <h3>今日盈亏 TOP5</h3>
+            <span class="muted small" id="fundTopMoversMeta">--</span>
+          </div>
+          <div class="seg fund-mover-tabs" id="fundTopMoversSeg">
+            <button class="is-active" data-top-movers="profit">盈利 TOP5</button>
+            <button data-top-movers="loss">亏损 TOP5</button>
+          </div>
+        </div>
+        <div id="fundTopMovers" class="fund-mover-list"></div>
+      </article>
+
+      <!-- 盈亏日历：日（周一到周五 × 1~31 日）/ 月 / 年，金额或收益率 -->
+      <article class="panel" id="fundPnlCalendarPanel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">P&amp;L CALENDAR</div>
+            <h3>盈亏日历 · 日 / 月 / 年</h3>
+            <span class="muted small" id="fundPnlCalendarMeta">--</span>
+          </div>
+          <div class="pnl-calendar-toolbar">
+            <div class="seg" id="fundCalendarUnitSeg">
+              <button class="is-active" data-calendar-unit="day">日</button>
+              <button data-calendar-unit="month">月</button>
+              <button data-calendar-unit="year">年</button>
+            </div>
+            <div class="seg" id="fundCalendarMetricSeg">
+              <button class="is-active" data-calendar-metric="amount">金额</button>
+              <button data-calendar-metric="rate">收益率</button>
+            </div>
+            <div class="pnl-calendar-nav" id="fundCalendarNav"></div>
+          </div>
+        </div>
+        <div id="fundPnlCalendar"></div>
+        <p class="muted small mt12" id="fundPnlCalendarNote">--</p>
+      </article>
+
+      <!-- 组合 vs 上证：当日 / 本周 / 本月 / 今年 / 全部 -->
+      <article class="panel" id="fundVsIndexPanel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">MY PORTFOLIO VS SSE</div>
+            <h3>我的组合 vs 上证指数</h3>
+            <span class="muted small" id="fundVsIndexMeta">--</span>
+          </div>
+          <div class="seg" id="fundRangeSeg">
+            <button class="is-active" data-fund-range="today">当日</button>
+            <button data-fund-range="week">本周</button>
+            <button data-fund-range="month">本月</button>
+            <button data-fund-range="year">今年</button>
+            <button data-fund-range="all">全部</button>
+          </div>
+        </div>
+        <div class="vs-index-kpis" id="fundVsIndexKpis"></div>
+        <div id="fundVsIndexChart" class="vs-index-chart"></div>
+        <p class="muted small mt12" id="fundVsIndexNote">--</p>
+      </article>
+
       <article class="panel pnl-panel" id="fundPnlPanel">
         <div class="panel-head">
           <div>
@@ -1475,7 +1540,7 @@
   <div id="toastRoot" class="toasts" aria-live="polite"></div>
 
   <script src="/vendor/echarts.min.js"></script>
-  <script type="module" src="/js/app.js?v=2.9.3"></script>
+  <script type="module" src="/js/app.js?v=2.10.0"></script>
   <script>
     // PWA：注册「网络优先」的 Service Worker（发版后刷新即拿到新版本，离线时回退缓存壳）
     // file:// 打开时跳过，避免在本地直接双击 HTML 时报错。

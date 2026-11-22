@@ -26,7 +26,7 @@ import {
   intradayCompareChart,
   compareTrendChart,
   COLORS,
-} from './charts.js?v=2.9.3';
+} from './charts.js?v=2.10.0';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -44,22 +44,23 @@ import {
   esc,
   safeUrl,
   timeText,
-} from './util.js?v=2.9.3';
+} from './util.js?v=2.10.0';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.9.3';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.9.3';
+import { $, $$, toast, debounce } from './dom.js?v=2.10.0';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.10.0';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
   APP_VERSION, WATCH_KEY, ALERTS_KEY, SETTINGS_KEY, FUND_WATCH_KEY, FUND_HOLD_KEY, MONITOR_SECTORS_KEY,
   ACTIVE_PORTFOLIO_KEY,
+  PORTFOLIOS_KEY,
   PORTFOLIO_META_KEY, PORTFOLIO_PENDING_KEY,
   DEFAULT_WATCH, DEFAULT_FUNDS,
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.9.3';
+} from './core.js?v=2.10.0';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -76,7 +77,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.9.3';
+} from './views/funds.js?v=2.10.0';
 
 // 基金页新增子页渲染（v2.10.0：涨跌分布 / 板块总览 / 场外基金四榜，见 views/fundpanes.js）
 import {
@@ -85,7 +86,27 @@ import {
   openFundThemeDrawer,
   renderFundBoard,
   renderFundBoardCompareBar,
-} from './views/fundpanes.js?v=2.9.3';
+} from './views/fundpanes.js?v=2.10.0';
+
+// 自选基金：多组合 / 今日 TOP5 / 盈亏日历 / 组合 vs 上证（v2.10.0）
+import {
+  renderPortfolioTabs,
+  renderFundTopMovers,
+  renderFundPnlCalendar,
+  renderFundVsIndex,
+  activePortfolio,
+  activeHoldings,
+} from './views/fundwatch.js?v=2.10.0';
+import {
+  computeFundPnl,
+  computeFundDailyPnl,
+  shanghaiDateShift,
+  liveFundPoint,
+  fundCalendarBuckets,
+  portfolioVsIndex,
+  intradayVsIndex,
+  fundTopMovers,
+} from './views/fundpnl.js?v=2.10.0';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -95,7 +116,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.9.3';
+} from './views/market.js?v=2.10.0';
 
 
 /* =========================================================
@@ -4803,6 +4824,8 @@ async function loadFundFlow(force = false) {
 async function loadFundWatch(force = false) {
   if (!state.fundWatchlist.length) {
     state.fundWatchData = { items: [] };
+    renderPortfolioTabs();
+    renderFundTopMovers();
     renderFundWatchSummary();
     renderFundWatchTable();
     renderFundHoldSummary();
@@ -4817,6 +4840,8 @@ async function loadFundWatch(force = false) {
     const codes = state.fundWatchlist.map((f) => f.code).slice(0, 20);
     const data = await api(`/api/funds/watch?codes=${encodeURIComponent(codes.join(','))}&risk=${state.settings.risk}`);
     state.fundWatchData = data;
+    renderPortfolioTabs();
+    renderFundTopMovers();
     renderFundWatchSummary();
     renderFundWatchTable();
     renderFundHoldSummary();
@@ -4831,164 +4856,97 @@ async function loadFundWatch(force = false) {
 }
 
 /* =========================================================
-   自选基金盈亏统计（v2.8.0：日 / 月 / 年，持仓口径）
+   自选基金盈亏统计（v2.10.0：计算逻辑已移到 views/fundpnl.js）
    ---------------------------------------------------------
-   持仓（份额/成本）只在本机 localStorage；曲线用服务端返回的
-   净值（场外）或收盘价（ETF）序列按份额加权。日期取并集后前向
-   填充，起点取「所有持仓基金都有数据」的那天，避免早期只统计到
-   一两只基金导致市值被低估。
+   - 逐日盈亏：份额 × 当日净值变动，只统计「建仓日之后」；
+   - 区间盈亏用逐日盈亏累加，避免加仓/申赎把本金算成收益；
+   - 今日盈亏仍与「我的持仓」同口径（实时价 / 当日估值）。
    ========================================================= */
 const FUND_PNL_MAX_HOLDINGS = 12;
 
-function fundHeldList() {
+function fundHeldList(holdings) {
+  const map = holdings || state.fundHoldings || {};
   return state.fundWatchlist
-    .map((f) => ({ code: String(f.code), name: f.name || f.code, type: f.type, h: getFundHolding(f.code) }))
-    .filter((f) => f.h && f.h.shares > 0)
+    .map((f) => ({ code: String(f.code), name: f.name || f.code, type: f.type, h: map[String(f.code)] }))
+    .filter((f) => f.h && Number(f.h.shares) > 0)
     .slice(0, FUND_PNL_MAX_HOLDINGS);
 }
 
-/** 上海时区下把 YYYY-MM-DD 平移 N 天（toISOString 会按 UTC 差一天，不能用） */
-function shanghaiDateShift(dstr, days) {
-  const base = new Date(`${String(dstr).slice(0, 10)}T12:00:00+08:00`).getTime();
-  if (!Number.isFinite(base)) return String(dstr).slice(0, 10);
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(new Date(base + days * 86400000));
-  const get = (k) => (parts.find((p) => p.type === k) || {}).value;
-  return `${get('year')}-${get('month')}-${get('day')}`;
-}
-
-/**
- * 「今天」这一点的组合市值：用 /api/funds/watch 的实时价（与「我的持仓」同一份数据）。
- * 场外基金今日净值未出时 watch 给的是估算净值，所以这等于把今天接上曲线。
- */
-function liveFundPoint(series) {
-  const items = (state.fundWatchData && state.fundWatchData.items) || [];
-  const byCode = new Map(items.map((x) => [String(x.code), x]));
-  let total = 0;
-  let covered = 0;
-  for (const s of series) {
-    const x = byCode.get(String(s.code));
-    if (!x) continue;
-    const price = Number(x.price);
-    if (!Number.isFinite(price) || price <= 0) continue;
-    total += price * Number((s.h && s.h.shares) || 0);
-    covered += 1;
-  }
-  if (!covered || !(total > 0)) return null;
-  return { d: shanghaiTodayKey(), v: Math.round(total * 100) / 100, covered };
-}
-
-/** 多只基金的净值序列 → 组合市值曲线 + 日/月/年盈亏 */
-function computeFundPnl(data) {
-  const held = fundHeldList();
-  if (!held.length) return null;
-  const byCode = new Map(((data && data.items) || []).map((x) => [String(x.code), x]));
-  const series = held.map((f) => {
-    const row = byCode.get(f.code);
-    const points = ((row && row.points) || [])
-      .map((p) => ({ d: String(p.d).slice(0, 10), c: Number(p.c) }))
-      .filter((p) => /^\d{4}-\d{2}-\d{2}$/.test(p.d) && Number.isFinite(p.c) && p.c > 0)
-      .sort((a, b) => a.d.localeCompare(b.d));
-    return { ...f, points };
-  }).filter((s) => s.points.length >= 2);
-  if (!series.length) return null;
-  const startAt = series.map((s) => s.points[0].d).sort().pop();
-  const dates = [...new Set(series.flatMap((s) => s.points.map((p) => p.d)))].filter((d) => d >= startAt).sort();
-  const maps = series.map((s) => new Map(s.points.map((p) => [p.d, p.c])));
-  const lastKnown = series.map(() => null);
-  const rows = [];
-  for (const d of dates) {
-    let total = 0;
-    let complete = true;
-    series.forEach((s, i) => {
-      const v = maps[i].get(d);
-      if (Number.isFinite(v) && v > 0) lastKnown[i] = v;
-      if (lastKnown[i] === null) complete = false;
-      else total += lastKnown[i] * s.h.shares;
-    });
-    if (complete && total > 0) rows.push({ d, v: Math.round(total * 100) / 100 });
-  }
-  if (rows.length < 2) return null;
-  // v2.9.0 口径统一：把「今天」的实时市值接到序列末尾（或替换今天那一根），
-  // 这样「盈亏统计」的今日 / 累计 / 区间与上方「我的持仓」用同一时点，不再差一天。
-  const live = liveFundPoint(series);
-  if (live) {
-    const tail = rows[rows.length - 1];
-    if (tail && tail.d === live.d) rows[rows.length - 1] = { d: live.d, v: live.v };
-    else if (live.d > tail.d) rows.push({ d: live.d, v: live.v });
-  }
-  const costValue = series.reduce((sum, s) => sum + (Number(s.h.cost) > 0 ? Number(s.h.cost) * s.h.shares : 0), 0);
-  const last = rows[rows.length - 1];
-  const prev = rows[rows.length - 2];
-  const atOrBefore = (target) => {
-    let pick = rows[0];
-    for (const r of rows) {
-      if (r.d <= target) pick = r;
-      else break;
-    }
-    return pick;
-  };
-  const diffOf = (base) => (base ? Math.round((last.v - base.v) * 100) / 100 : null);
-  const pctOf = (base) => (base && base.v > 0 ? Math.round(((last.v - base.v) / base.v) * 10000) / 100 : null);
-  const m1Base = atOrBefore(shanghaiDateShift(last.d, -30));
-  const ytdBase = atOrBefore(`${last.d.slice(0, 4)}-01-01`);
-  const y1Base = atOrBefore(shanghaiDateShift(last.d, -365));
-  // 月度盈亏：当月最后一个交易日市值 − 上月末市值
-  const monthEnd = new Map();
-  for (const r of rows) monthEnd.set(r.d.slice(0, 7), r);
-  const monthly = [];
-  let prevMonth = null;
-  for (const [key, row] of [...monthEnd.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-    if (prevMonth !== null) monthly.push({ label: key.slice(5), pnl: Math.round((row.v - prevMonth) * 100) / 100 });
-    prevMonth = row.v;
-  }
-  const firstDate = new Date(`${rows[0].d}T12:00:00+08:00`).getTime();
-  const lastDate = new Date(`${last.d}T12:00:00+08:00`).getTime();
-  return {
-    rows,
-    series,
-    costValue,
-    todayPnl: diffOf(prev),
-    todayPct: pctOf(prev),
-    m1Pnl: diffOf(m1Base),
-    m1Pct: pctOf(m1Base),
-    ytdPnl: diffOf(ytdBase),
-    ytdPct: pctOf(ytdBase),
-    y1Pnl: diffOf(y1Base),
-    y1Pct: pctOf(y1Base),
-    cumulative: costValue > 0 ? Math.round((last.v - costValue) * 100) / 100 : null,
-    cumulativePct: costValue > 0 ? Math.round(((last.v - costValue) / costValue) * 10000) / 100 : null,
-    monthly: monthly.slice(-12),
-    asOf: last.d,
-    marketValue: last.v,
-    holdings: series.length,
-    missingCount: ((data && data.missing) || []).length,
-    rangeDays: Math.max(0, Math.round((lastDate - firstDate) / 86400000)),
-  };
+function renderFundwatchPanels() {
+  renderFundWatchSummary();
+  renderFundWatchTable();
+  renderFundHoldSummary();
+  renderFundHoldTable();
+  renderPortfolioTabs();
+  renderFundTopMovers();
+  renderFundPnlCalendar();
+  renderFundVsIndex();
+  renderFundPnl();
 }
 
 async function loadFundPnl(force = false) {
-  const held = fundHeldList();
+  const held = fundHeldList(activeHoldings());
   if (!held.length) {
-    state.fundPnl = { items: [], missing: [], codes: '' };
+    state.fundPnl = { items: [], missing: [], index: null, codes: '' };
     renderFundPnl();
+    renderFundPnlCalendar();
+    renderFundVsIndex();
+    renderFundTopMovers();
     return;
   }
   const codes = held.map((f) => f.code).join(',');
-  if (!force && state.fundPnl && state.fundPnl.codes === codes) { renderFundPnl(); return; }
+  if (!force && state.fundPnl && state.fundPnl.codes === codes) {
+    renderFundPnl();
+    renderFundPnlCalendar();
+    renderFundVsIndex();
+    return;
+  }
   if (state.loading.has('fundpnl') && !force) return;
   state.loading.add('fundpnl');
   const note = $('#fundPnlNote');
-  if (note) note.textContent = '正在计算盈亏曲线：首次需要拉取净值历史，可能要 5~20 秒…';
+  if (note) note.textContent = '正在计算盈亏曲线：首次需要拉取净值历史（最多约 2 年），可能要 10~40 秒…';
   try {
-    const data = await api(`/api/funds/pnl-series?codes=${encodeURIComponent(codes)}&days=400`, 120000);
+    const data = await api(`/api/funds/pnl-series?codes=${encodeURIComponent(codes)}&days=${Number(state.fundPnlDays) || 800}&index=1.000001`, 180000);
     state.fundPnl = { ...(data || {}), codes, at: Date.now() };
     renderFundPnl();
+    renderFundPnlCalendar();
+    renderFundVsIndex();
+    if (state.fundRange === 'today') loadFundIntradayCompare();
   } catch (err) {
     if (note) note.textContent = `盈亏曲线加载失败：${err.message}`;
+    renderFundPnlCalendar();
+    renderFundVsIndex();
   } finally {
     state.loading.delete('fundpnl');
+  }
+}
+
+/** 当日「我的组合 vs 上证」盘中估算序列（只在选中「当日」时按需加载，缓存 60 秒） */
+async function loadFundIntradayCompare(force = false) {
+  const held = fundHeldList(activeHoldings());
+  if (!held.length) {
+    state.fundIntraday = null;
+    renderFundVsIndex();
+    return;
+  }
+  const codes = held.map((f) => f.code).slice(0, 8).join(',');
+  if (!force && state.fundIntraday && state.fundIntraday.codes === codes) {
+    renderFundVsIndex();
+    return;
+  }
+  if (state.loading.has('fundintraday')) return;
+  state.loading.add('fundintraday');
+  state.fundIntradayLoading = true;
+  renderFundVsIndex();
+  try {
+    const data = await api(`/api/funds/intraday-series?codes=${encodeURIComponent(codes)}&index=1.000001`, 90000);
+    state.fundIntraday = { ...(data || {}), codes, at: Date.now() };
+  } catch (err) {
+    state.fundIntraday = { codes, funds: [], index: null, note: `当日估算加载失败：${err.message}`, at: Date.now() };
+  } finally {
+    state.loading.delete('fundintraday');
+    state.fundIntradayLoading = false;
+    renderFundVsIndex();
   }
 }
 
@@ -5005,7 +4963,7 @@ function renderFundPnl() {
   const kpis = $('#fundPnlKpis');
   if (!kpis) return;
   const note = $('#fundPnlNote');
-  const held = fundHeldList();
+  const held = fundHeldList(activeHoldings());
   if (!held.length) {
     kpis.innerHTML = ['今日盈亏', '近1月盈亏', '今年至今', '近1年盈亏']
       .map((label) => `<div class="summary-card"><div class="sc-label">${label}</div><div class="sc-value">--</div><div class="sc-sub">未录持仓</div></div>`)
@@ -5051,11 +5009,14 @@ function renderFundPnl() {
   if ($('#fundPnlChartMeta')) $('#fundPnlChartMeta').textContent = `${chartRows[0].d} → ${calc.asOf}`;
   if (note) {
     const parts = ['今日盈亏 / 累计收益 / 组合市值 与上方「我的持仓」同一口径（含今日估算净值）'];
+    if (calc.startDate) parts.push(`统计起点 ${calc.startDate}（从建仓日起算，不统计建仓前）`);
     if (calc.missingCount) parts.push(`${calc.missingCount} 只未取到净值历史，未计入区间曲线`);
     if (calc.rangeDays < 300) parts.push(`历史仅 ${calc.rangeDays} 天，年区间不完整`);
-    parts.push('区间收益按净值序列 + 今日估算点；场外净值 T+1、QDII 滞后；不含申赎费');
+    parts.push('区间收益按逐日盈亏累加；场外净值 T+1、QDII 滞后；不含申赎费');
     note.textContent = parts.join(' · ');
   }
+  renderFundPnlCalendar();
+  renderFundVsIndex();
 }
 
 /* 场外基金资金流：基金季报申购 / 赎回（前 50 名） */
@@ -5882,18 +5843,29 @@ function renderStockFundModal(data, fallbackName) {
    我的基金持仓（份额 + 成本净值，保存在本机 localStorage；
    参考养基宝 / 同花顺「我的基金」：按份额与成本算持有收益、当日盈亏。   --------------------------------------------------------- */
 
-function saveFundHolding(code, shares, cost) {
+function saveFundHolding(code, shares, cost, addedAt) {
+  if (!state.portfolios || !state.portfolios.length) settleActivePortfolio('default');
+  const group = currentPortfolio();
   const key = String(code);
-  if (!state.fundHoldings || typeof state.fundHoldings !== 'object') state.fundHoldings = {};
   const now = Date.now();
+  const prev = group && group.holdings ? group.holdings[key] : null;
+  let entry;
   if (!shares || shares <= 0) {
     // v2.9.2：删除写成「墓碑」（shares=0 + 时间戳）而不是直接消失，
     // 否则另一台设备合并时会把删掉的条目又带回来。渲染层会忽略 shares<=0 的条目。
-    state.fundHoldings[key] = { shares: 0, cost: 0, updatedAt: now };
+    entry = { shares: 0, cost: 0, updatedAt: now };
   } else {
-    state.fundHoldings[key] = { shares: Number(shares), cost: Number(cost) || 0, updatedAt: now };
+    entry = { shares: Number(shares), cost: Number(cost) || 0, updatedAt: now };
+    // v2.10.0：建仓日只在第一次录入时写，后续改份额不重置；没记录时默认今天
+    const wanted = Number(addedAt);
+    const kept = Number(prev && prev.addedAt);
+    entry.addedAt = Number.isFinite(wanted) && wanted > 0 ? wanted : (Number.isFinite(kept) && kept > 0 ? kept : now);
   }
-  saveJSON(FUND_HOLD_KEY, state.fundHoldings);
+  if (group) group.holdings = { ...(group.holdings || {}), [key]: entry };
+  state.fundHoldings = (group && group.holdings) || { [key]: entry };
+  saveJSON(PORTFOLIOS_KEY, state.portfolios);
+  const main = findPortfolio('default');
+  if (main) saveJSON(FUND_HOLD_KEY, main.holdings);
   const meta = portfolioMeta();
   meta.savedAt = now;
   meta.pending = true; // 服务端确认前先标成「未同步」
@@ -5903,6 +5875,7 @@ function saveFundHolding(code, shares, cost) {
   renderFundHoldSummary();
   renderFundWatchTable();
   renderFundHoldTable();
+  renderFundTopMovers();
   // v2.8.0：持仓变化后盈亏曲线要跟着变（份额变了但净值序列可以复用）
   loadFundPnl(true);
 }
@@ -5913,25 +5886,44 @@ function saveFundHolding(code, shares, cost) {
 
 function openFundHoldEditor(code, name) {
   const cur = state.fundHoldings && state.fundHoldings[code] ? state.fundHoldings[code] : {};
+  const addedAt = Number(cur.addedAt) > 0 ? new Date(Number(cur.addedAt)).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' }) : '';
+  const group = currentPortfolio();
   mountOverlay(`<div class="modal modal-sm">
     <div class="modal-head"><div class="modal-title"><h2>${esc(cleanName(name) || code)}</h2><span class="code">${esc(code)} · 持仓录入</span></div><button class="modal-close" data-close>×</button></div>
     <div class="hold-form">
+      <div class="muted small" style="margin-bottom:8px">录入到组合：<b>${esc(group ? group.name : '主持仓')}</b></div>
       <label class="field-label" for="holdShares">持有份额</label>
       <div class="input-wrap"><input id="holdShares" type="number" step="0.01" min="0" value="${cur.shares ? Number(cur.shares) : ''}" placeholder="例如 10000"><span>份</span></div>
       <label class="field-label" for="holdCost">成本净值（元）</label>
       <div class="input-wrap"><input id="holdCost" type="number" step="0.0001" min="0" value="${cur.cost ? Number(cur.cost) : ''}" placeholder="例如 1.2345"><span>元</span></div>
-      <p class="muted small mt8">填 0 或清空份额即可删除该基金的持仓；成本净值留空时只算市值与当日盈亏。</p>
+      <label class="field-label" for="holdAddedAt">建仓日期（盈亏从这天起算）</label>
+      <div class="input-wrap"><input id="holdAddedAt" type="date" value="${addedAt}"><span>日</span></div>
+      <div class="modal-actions" style="justify-content:flex-start;margin-top:6px">
+        <button class="btn small" id="holdAddedToday">从今天起算</button>
+        <span class="muted small" id="holdAddedHint">${addedAt ? `已记录：${esc(addedAt)}` : '未记录：盈亏统计会用全部可用净值历史'}</span>
+      </div>
+      <p class="muted small mt8">填 0 或清空份额即可删除该基金的持仓；成本净值留空时只算市值与当日盈亏。每份组合的持仓互不影响。</p>
     </div>
     <div class="modal-actions">
       <button class="btn primary" id="holdSave">保存</button>
       <button class="btn" data-close>取消</button>
     </div>
   </div>`);
+  $('#holdAddedToday') && $('#holdAddedToday').addEventListener('click', () => {
+    const input = $('#holdAddedAt');
+    if (input) input.value = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+    const hint = $('#holdAddedHint');
+    if (hint) hint.textContent = '已改为从今天起算';
+  });
   const save = $('#holdSave');
   if (save) save.addEventListener('click', () => {
     const shares = Number($('#holdShares') && $('#holdShares').value);
     const cost = Number($('#holdCost') && $('#holdCost').value);
-    saveFundHolding(code, shares, cost);
+    const dateText = String(($('#holdAddedAt') && $('#holdAddedAt').value) || '').trim();
+    const addedTs = /^\d{4}-\d{2}-\d{2}$/.test(dateText)
+      ? new Date(`${dateText}T12:00:00+08:00`).getTime()
+      : null;
+    saveFundHolding(code, shares, cost, addedTs);
     closeOverlay();
     toast(shares > 0 ? '持仓已保存' : '已清除该基金持仓', 'ok', 1600);
   });
@@ -5977,6 +5969,182 @@ function normalizePortfolioWatchlist(list) {
       name: String((w && w.name) || ''),
     }))
     .filter((w) => w.secid);
+}
+
+/* ---------------------------------------------------------
+   多份持仓组合（v2.10.0）
+   ---------------------------------------------------------
+   服务端 /api/portfolio 返回 portfolios（主持仓 + 额外组合）是唯一真源；
+   本机 state.portfolios 是内存副本，localStorage 只做离线兜底。
+   state.fundHoldings 始终是「当前选中组合」的持仓视图——views/funds.js 的
+   渲染函数与「我的持仓」面板都读它，切组合就是换这份映射。
+   --------------------------------------------------------- */
+const PORTFOLIO_NAME_MAX = 20;
+const PORTFOLIO_GROUPS_MAX = 12;
+
+function publicGroupHoldings(map, { keepTombstones = false } = {}) {
+  const out = {};
+  for (const [code, v] of Object.entries(map || {})) {
+    const shares = Number(v && v.shares);
+    if (!code || !Number.isFinite(shares)) continue;
+    if (shares <= 0 && !keepTombstones) continue;
+    const entry = { shares: shares > 0 ? shares : 0, cost: Number(v && v.cost) || 0 };
+    const stamp = Number(v && v.updatedAt);
+    if (Number.isFinite(stamp) && stamp > 0) entry.updatedAt = stamp;
+    const added = Number(v && v.addedAt);
+    if (Number.isFinite(added) && added > 0) entry.addedAt = added;
+    if (shares <= 0) entry.removedAt = Number(v && v.removedAt) || entry.updatedAt || Date.now();
+    out[String(code)] = entry;
+  }
+  return out;
+}
+
+function normalizePortfolioGroups(list) {
+  const out = [];
+  const seen = new Set();
+  for (const g of Array.isArray(list) ? list : []) {
+    if (!g || !g.id) continue;
+    const id = String(g.id).toLowerCase();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      name: String(g.name || '').slice(0, PORTFOLIO_NAME_MAX) || (id === 'default' ? '主持仓' : '未命名组合'),
+      isDefault: Boolean(g.isDefault || id === 'default'),
+      createdAt: Number(g.createdAt) || 0,
+      updatedAt: Number(g.updatedAt) || 0,
+      holdings: publicGroupHoldings(g.holdings, { keepTombstones: true }),
+    });
+  }
+  if (!out.some((g) => g.isDefault)) {
+    out.unshift({ id: 'default', name: '主持仓', isDefault: true, createdAt: 0, updatedAt: 0, holdings: {} });
+  }
+  // 主持仓永远排第一
+  out.sort((a, b) => (a.isDefault === b.isDefault ? Number(a.createdAt || 0) - Number(b.createdAt || 0) : a.isDefault ? -1 : 1));
+  return out.slice(0, PORTFOLIO_GROUPS_MAX);
+}
+
+function findPortfolio(id) {
+  const list = state.portfolios || [];
+  return list.find((g) => g.id === id) || list.find((g) => g.isDefault) || list[0] || null;
+}
+
+/** 切到某个组合：state.fundHoldings 换成该组合的持仓视图，并记住选择 */
+function settleActivePortfolio(preferredId) {
+  const list = normalizePortfolioGroups(state.portfolios && state.portfolios.length
+    ? state.portfolios
+    : [{ id: 'default', name: '主持仓', isDefault: true, holdings: state.fundHoldings || {} }]);
+  state.portfolios = list;
+  const wanted = String(preferredId || state.activePortfolioId || 'default');
+  const picked = findPortfolio(wanted) || list[0];
+  state.activePortfolioId = picked ? picked.id : 'default';
+  state.fundHoldings = (picked && picked.holdings) || {};
+  saveJSON(PORTFOLIOS_KEY, state.portfolios);
+  saveJSON(ACTIVE_PORTFOLIO_KEY, state.activePortfolioId);
+  // 旧代码（本地缓存 / 推送兜底）仍读 gp.fundHoldings.v1，让它保持「主持仓」这一份
+  const main = findPortfolio('default');
+  if (main) saveJSON(FUND_HOLD_KEY, main.holdings);
+  return picked;
+}
+
+function currentPortfolio() {
+  return findPortfolio(state.activePortfolioId);
+}
+
+function switchPortfolio(id) {
+  const picked = settleActivePortfolio(id);
+  if (!picked) return;
+  refreshFundPanelsAfterPortfolioChange();
+  toast(`已切换到「${picked.name}」`, 'ok', 1400);
+}
+
+async function portfolioGroupAction(action, { id = '', name = '' } = {}) {
+  try {
+    const res = await apiPost('/api/portfolio/groups', { action, id, name }, 20000);
+    const list = normalizePortfolioGroups(res && res.portfolios);
+    state.portfolios = list;
+    if (action === 'create') {
+      const created = list.find((g) => g.name === name) || list[list.length - 1];
+      settleActivePortfolio(created ? created.id : state.activePortfolioId);
+    } else if (action === 'delete' && !list.some((g) => g.id === state.activePortfolioId)) {
+      settleActivePortfolio('default');
+    } else {
+      settleActivePortfolio(state.activePortfolioId);
+    }
+    const m = portfolioMeta();
+    m.rev = Number(res && res.rev) || Date.now();
+    m.savedAt = Date.now();
+    m.pending = false;
+    m.serverLabel = portfolioServerLabel();
+    savePortfolioMeta();
+    renderFundSyncState();
+    refreshFundPanelsAfterPortfolioChange();
+    return res;
+  } catch (err) {
+    toast(`${action === 'create' ? '新建' : action === 'rename' ? '重命名' : '删除'}组合失败：${err.message}`, 'err', 4200);
+    throw err;
+  }
+}
+
+function openPortfolioCreate() {
+  mountOverlay(`<div class="modal modal-sm">
+    <div class="modal-head"><div class="modal-title"><h2>新建持仓组合</h2><span class="code">与主持仓互不影响</span></div><button class="modal-close" data-close>×</button></div>
+    <div class="hold-form">
+      <label class="field-label" for="portfolioName">组合名称</label>
+      <div class="input-wrap"><input id="portfolioName" type="text" maxlength="${PORTFOLIO_NAME_MAX}" placeholder="例如 结婚基金 / 父母养老"><span>名</span></div>
+      <p class="muted small mt8">最多保存 ${PORTFOLIO_GROUPS_MAX} 份组合（含主持仓）；建仓日、盈亏统计都按组合分别记录。</p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn primary" id="portfolioCreateSave">创建</button>
+      <button class="btn" data-close>取消</button>
+    </div>
+  </div>`);
+  $('#portfolioCreateSave') && $('#portfolioCreateSave').addEventListener('click', async () => {
+    const name = String(($('#portfolioName') && $('#portfolioName').value) || '').trim();
+    if (!name) { toast('请填写组合名称', 'warn'); return; }
+    try {
+      await portfolioGroupAction('create', { name });
+      closeOverlay();
+      toast(`已创建组合「${name}」`, 'ok');
+    } catch { /* 失败提示已在 portfolioGroupAction 里 */ }
+  });
+}
+
+function openPortfolioRename() {
+  const cur = currentPortfolio();
+  if (!cur || cur.isDefault) { toast('主持仓不能改名', 'warn'); return; }
+  mountOverlay(`<div class="modal modal-sm">
+    <div class="modal-head"><div class="modal-title"><h2>重命名组合</h2><span class="code">${esc(cur.name)}</span></div><button class="modal-close" data-close>×</button></div>
+    <div class="hold-form">
+      <label class="field-label" for="portfolioRename">新名称</label>
+      <div class="input-wrap"><input id="portfolioRename" type="text" maxlength="${PORTFOLIO_NAME_MAX}" value="${esc(cur.name)}"><span>名</span></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn primary" id="portfolioRenameSave">保存</button>
+      <button class="btn" data-close>取消</button>
+    </div>
+  </div>`);
+  $('#portfolioRenameSave') && $('#portfolioRenameSave').addEventListener('click', async () => {
+    const name = String(($('#portfolioRename') && $('#portfolioRename').value) || '').trim();
+    if (!name) { toast('请填写组合名称', 'warn'); return; }
+    try {
+      await portfolioGroupAction('rename', { id: cur.id, name });
+      closeOverlay();
+      toast('组合已改名', 'ok');
+    } catch { /* 已提示 */ }
+  });
+}
+
+async function deleteActivePortfolio() {
+  const cur = currentPortfolio();
+  if (!cur || cur.isDefault) { toast('主持仓不能删除', 'warn'); return; }
+  const held = Object.values(cur.holdings || {}).filter((h) => h && Number(h.shares) > 0).length;
+  const ok = window.confirm(`确定删除组合「${cur.name}」？\n该组合的 ${held} 条持仓会一起删除，且不可撤销（自选基金本身不受影响）。`);
+  if (!ok) return;
+  try {
+    await portfolioGroupAction('delete', { id: cur.id });
+    toast(`已删除组合「${cur.name}」`, 'ok');
+  } catch { /* 已提示 */ }
 }
 
 /* ---------------------------------------------------------
@@ -6049,10 +6217,7 @@ function refreshFundPanelsAfterPortfolioChange() {
   state.fundWatchData = null;
   renderWatchTable();
   renderDashWatch();
-  renderFundWatchSummary();
-  renderFundWatchTable();
-  renderFundHoldSummary();
-  renderFundHoldTable();
+  renderFundwatchPanels();
   loadFundWatch();
   loadFundPnl(true);
   loadWatchData(true).catch(() => {});
@@ -6065,28 +6230,44 @@ function refreshFundPanelsAfterPortfolioChange() {
  */
 function adoptPortfolioFromServer(data, { mode = 'server' } = {}) {
   const serverFunds = normalizePortfolioFunds(data && data.funds);
-  const serverHoldings = normalizePortfolioHoldings(data && data.holdings);
   const serverWatch = normalizePortfolioWatchlist(data && data.watchlist);
   const rev = Number((data && (data.rev || data.updatedAt)) || 0) || Date.now();
+  // v2.10.0：优先用服务端的 portfolios；老服务端只给 holdings 时，把它当成「主持仓」一份
+  const serverGroups = Array.isArray(data && data.portfolios) && data.portfolios.length
+    ? normalizePortfolioGroups(data.portfolios)
+    : normalizePortfolioGroups([{
+      id: 'default',
+      name: '主持仓',
+      isDefault: true,
+      holdings: normalizePortfolioHoldings(data && data.holdings, { keepTombstones: true }),
+    }]);
+  let groups = serverGroups;
   if (mode === 'merge') {
-    // 持仓：服务端条目按 rev 当时间戳，与本机条目比 updatedAt，取更新的那份
-    const merged = {};
-    for (const [code, h] of Object.entries(serverHoldings)) merged[code] = { ...h, updatedAt: rev };
-    for (const [code, h] of Object.entries(state.fundHoldings || {})) {
-      const cur = merged[code];
-      if (!cur || (Number(h && h.updatedAt) || 0) >= (Number(cur.updatedAt) || 0)) merged[code] = h;
+    const localById = new Map((state.portfolios || []).map((g) => [g.id, g]));
+    groups = serverGroups.map((sg) => {
+      const lg = localById.get(sg.id);
+      if (!lg) return sg;
+      const merged = {};
+      for (const [code, h] of Object.entries(sg.holdings || {})) merged[code] = { ...h, updatedAt: rev };
+      for (const [code, h] of Object.entries(lg.holdings || {})) {
+        const cur = merged[code];
+        if (!cur || (Number(h && h.updatedAt) || 0) >= (Number(cur.updatedAt) || 0)) merged[code] = h;
+      }
+      // 墓碑要保留到上推完成之后（渲染层会自动忽略 shares<=0）
+      return { ...sg, holdings: normalizePortfolioHoldings(merged, { keepTombstones: true }) };
+    });
+    for (const lg of state.portfolios || []) {
+      if (!lg.isDefault && !groups.some((g) => g.id === lg.id)) groups.push(lg);
     }
-    // 墓碑要保留到上推完成之后，所以这里 keepTombstones（渲染层会自动忽略 shares<=0）
-    state.fundHoldings = normalizePortfolioHoldings(merged, { keepTombstones: true });
     state.fundWatchlist = unionPortfolioList(serverFunds, state.fundWatchlist, 'code');
     state.watchlist = unionPortfolioList(serverWatch, state.watchlist, 'secid');
   } else {
     state.fundWatchlist = serverFunds;
-    state.fundHoldings = serverHoldings;
     state.watchlist = serverWatch;
   }
+  state.portfolios = groups;
+  settleActivePortfolio(state.activePortfolioId);
   saveJSON(FUND_WATCH_KEY, state.fundWatchlist);
-  saveJSON(FUND_HOLD_KEY, state.fundHoldings);
   saveJSON(WATCH_KEY, state.watchlist);
   const meta = portfolioMeta();
   meta.rev = rev;
@@ -6125,6 +6306,7 @@ async function adoptServerPortfolio({ silent = false } = {}) {
   const data = await api('/api/portfolio', 20000);
   const hasData = (data && data.funds && data.funds.length)
     || (data && data.holdings && Object.keys(data.holdings).length)
+    || (data && Array.isArray(data.portfolios) && data.portfolios.some((g) => Object.keys((g && g.holdings) || {}).length))
     || (data && data.watchlist && data.watchlist.length);
   if (!hasData) {
     if (!silent) toast('服务端还没有这个账号的数据：先在本机操作一次，数据会自动同步上去', 'warn', 4200);
@@ -6169,7 +6351,12 @@ async function reconcilePortfolioOnBoot() {
     if (pending) {
       if (Array.isArray(pending.funds)) state.fundWatchlist = normalizePortfolioFunds(pending.funds);
       if (Array.isArray(pending.watchlist)) state.watchlist = normalizePortfolioWatchlist(pending.watchlist);
-      if (pending.holdings) state.fundHoldings = normalizePortfolioHoldings(pending.holdings, { keepTombstones: true });
+      if (Array.isArray(pending.portfolios)) state.portfolios = normalizePortfolioGroups(pending.portfolios);
+      if (pending.holdings) {
+        const main = findPortfolio('default');
+        if (main) main.holdings = publicGroupHoldings(pending.holdings, { keepTombstones: true });
+      }
+      settleActivePortfolio(state.activePortfolioId);
     }
     adoptPortfolioFromServer(data, { mode: 'merge' });
     const ok = await syncPushWatchlist();
@@ -7094,10 +7281,17 @@ let pushSyncRetry = 0;
 // 自选股票 + 自选基金 + 持仓统一同步到服务端（按账号隔离存储，换设备可恢复）。
 async function syncPushWatchlist() {
   const meta = portfolioMeta();
+  if (!state.portfolios || !state.portfolios.length) settleActivePortfolio('default');
+  const groups = normalizePortfolioGroups(state.portfolios);
+  const main = groups.find((g) => g.isDefault) || groups[0];
   const payload = {
     watchlist: state.watchlist.map((w) => ({ secid: w.secid, code: w.code, name: w.name })),
     funds: state.fundWatchlist.map((f) => ({ code: f.code, name: f.name, type: f.type })),
-    holdings: state.fundHoldings || {},
+    // v2.10.0：holdings = 主持仓（服务端 push/审计仍按主持仓），portfolios = 额外组合
+    holdings: publicGroupHoldings(main && main.holdings, { keepTombstones: true }),
+    portfolios: groups
+      .filter((g) => !g.isDefault)
+      .map((g) => ({ id: g.id, name: g.name, holdings: publicGroupHoldings(g.holdings, { keepTombstones: true }) })),
     source: 'web',
     ...(meta.rev ? { baseRev: meta.rev } : {}),
   };
@@ -7126,6 +7320,12 @@ async function syncPushWatchlist() {
     savePortfolioMeta();
     writePortfolioPending(null);
     pushSyncRetry = 0;
+    // 服务端返回合并后的组合列表：用它回填，确保「另一台设备刚建的组合」也能马上看到
+    if (res && Array.isArray(res.portfolios) && res.portfolios.length) {
+      state.portfolios = normalizePortfolioGroups(res.portfolios);
+      settleActivePortfolio(state.activePortfolioId);
+      renderPortfolioTabs();
+    }
     renderFundSyncState();
     return true;
   } catch (err) {
@@ -7136,7 +7336,8 @@ async function syncPushWatchlist() {
     writePortfolioPending({
       at: Date.now(),
       funds: state.fundWatchlist,
-      holdings: state.fundHoldings || {},
+      holdings: publicGroupHoldings(main && main.holdings, { keepTombstones: true }),
+      portfolios: groups.filter((g) => !g.isDefault),
       watchlist: state.watchlist,
     });
     renderFundSyncState(err && err.message);
@@ -8091,13 +8292,11 @@ function loadView(view) {
     else if (state.battle) renderBattleOverview();
   }
   if (view === 'fundwatch') {
-    renderFundWatchSummary();
-    renderFundWatchTable();
-    renderFundHoldSummary();
-    renderFundHoldTable();
-    renderFundPnl();
+    if (!state.portfolios || !state.portfolios.length) settleActivePortfolio('default');
+    renderFundwatchPanels();
     loadFundWatch();
     loadFundPnl();
+    if (state.fundRange === 'today') loadFundIntradayCompare();
   }
   if (view === 'stockwatch') {
     renderWatchTable();
@@ -8205,7 +8404,7 @@ async function refreshAll(manual = false) {
   if (state.view === 'china') { await loadChinaRanks(true); await loadChinaStock(true); await loadChinaChart(); await loadChinaDistribution(true); await loadCsi300Ratio(true); await loadIndexCompare(true); await loadChinaPeriods(true); }
   if (state.view === 'global') await loadGlobalChart(true);
   if (state.view === 'us') { await loadUS(true); await loadUSChart(true); await loadUSMinutes(true); }
-  if (state.view === 'fundwatch') { await loadFundWatch(true); await loadFundPnl(true); }
+  if (state.view === 'fundwatch') { await loadFundWatch(true); await loadFundPnl(true); if (state.fundRange === 'today') loadFundIntradayCompare(true); }
   if (state.view === 'stockwatch') {
     await loadPaper(true);
     if (state.paperRankOpen) await loadPaperRanking(true);
@@ -8735,6 +8934,67 @@ function bindEvents() {
     renderFundPnl();
   });
 
+  /* ---------- v2.10.0：多份持仓组合 / 今日 TOP5 / 盈亏日历 / 组合 vs 上证 ---------- */
+  $('#fundPortfolioTabs') && $('#fundPortfolioTabs').addEventListener('click', (e) => {
+    const add = e.target.closest('[data-portfolio-add]');
+    if (add) { openPortfolioCreate(); return; }
+    const rename = e.target.closest('[data-portfolio-rename]');
+    if (rename) { openPortfolioRename(); return; }
+    const del = e.target.closest('[data-portfolio-delete]');
+    if (del) { deleteActivePortfolio(); return; }
+    const tab = e.target.closest('[data-portfolio-tab]');
+    if (!tab) return;
+    if (tab.dataset.portfolioTab === state.activePortfolioId) return;
+    switchPortfolio(tab.dataset.portfolioTab);
+  });
+
+  $('#fundTopMoversSeg') && $('#fundTopMoversSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-top-movers]');
+    if (!btn) return;
+    state.topMoversTab = btn.dataset.topMovers === 'loss' ? 'loss' : 'profit';
+    renderFundTopMovers();
+  });
+
+  $('#fundCalendarUnitSeg') && $('#fundCalendarUnitSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-calendar-unit]');
+    if (!btn) return;
+    state.pnlUnit = ['day', 'month', 'year'].includes(btn.dataset.calendarUnit) ? btn.dataset.calendarUnit : 'day';
+    renderFundPnlCalendar();
+  });
+  $('#fundCalendarMetricSeg') && $('#fundCalendarMetricSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-calendar-metric]');
+    if (!btn) return;
+    state.pnlMetric = btn.dataset.calendarMetric === 'rate' ? 'rate' : 'amount';
+    renderFundPnlCalendar();
+  });
+  $('#fundCalendarNav') && $('#fundCalendarNav').addEventListener('click', (e) => {
+    const shift = e.target.closest('[data-calendar-shift]');
+    if (shift) {
+      const dir = Number(shift.dataset.calendarShift) >= 0 ? 1 : -1;
+      const base = state.pnlYearMonth || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' }).slice(0, 7);
+      const [y, m] = base.split('-').map((x) => Number(x));
+      const next = new Date(Date.UTC(y, m - 1 + dir, 1));
+      state.pnlYearMonth = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}`;
+      renderFundPnlCalendar();
+      return;
+    }
+    const yShift = e.target.closest('[data-calendar-year-shift]');
+    if (yShift) {
+      const dir = Number(yShift.dataset.calendarYearShift) >= 0 ? 1 : -1;
+      const cur = Number(state.pnlCalendarYear) || Number((state.pnlYearMonth || '').slice(0, 4)) || new Date().getFullYear();
+      state.pnlCalendarYear = String(cur + dir);
+      renderFundPnlCalendar();
+    }
+  });
+
+  $('#fundRangeSeg') && $('#fundRangeSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-fund-range]');
+    if (!btn) return;
+    state.fundRange = ['today', 'week', 'month', 'year', 'all'].includes(btn.dataset.fundRange) ? btn.dataset.fundRange : 'today';
+    renderFundVsIndex();
+    if (state.fundRange === 'today') loadFundIntradayCompare();
+  });
+
   $('#cnIndexSeg') && $('#cnIndexSeg').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-secid]');
     if (!btn) return;
@@ -9136,6 +9396,8 @@ async function init() {
   applyAccountScope(authUser);
   migrateLegacyStore(authUser);
   loadScopedState();
+  // v2.10.0：先把本机缓存的组合坐实（选中组合决定 state.fundHoldings 是哪一份）
+  settleActivePortfolio(state.activePortfolioId);
   // v2.10.0：先读「界面管理」配置，再决定基金页哪些子页可见（失败按内置默认）
   await loadUiConfig();
   $('#buildVersion') && ($('#buildVersion').textContent = `v${APP_VERSION}`);
@@ -9226,5 +9488,11 @@ export {
   fundPortfolio,
   // v2.7.0：叠层（个股详情之上再开 F10 / 资讯）与席位明细区块
   mountOverlay, pushOverlay, topLayer, closeOverlay, renderSeatsBlock, openStrategyInNewTab,
+  // v2.10.0：基金页新增子页 + 自选基金多组合 / 盈亏日历 / 组合对比（供 dom-smoke 直接渲染与断言）
+  renderFundDistribution, renderFundThemeOverview, renderFundBoard,
+  renderPortfolioTabs, renderFundTopMovers, renderFundPnlCalendar, renderFundVsIndex,
+  activePortfolio, activeHoldings, switchPortfolio, settleActivePortfolio,
+  applyFundModuleVisibility, fundModuleVisible, visibleFundViews, loadUiConfig,
+  computeFundDailyPnl, fundCalendarBuckets, portfolioVsIndex, intradayVsIndex, fundTopMovers,
 };
 

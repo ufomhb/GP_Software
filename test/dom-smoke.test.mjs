@@ -1465,3 +1465,256 @@ test('DOM：模拟盘 KPI 显示更新时刻、持仓浮盈与已实现，昨收
   assert.match(panel.querySelector('.paper-pos-table').textContent, /昨收/, '持仓现价旁要标昨收');
   app.state.paper = prevPaper;
 });
+﻿
+/* ---------------------------------------------------------
+   v2.10.0：基金页新增子页 / 自选基金多组合 / 盈亏日历 / 组合对比
+   --------------------------------------------------------- */
+
+test('DOM：界面配置能隐藏基金子页，并把当前子页回退到可见项', () => {
+  const prevCfg = app.state.uiConfig;
+  const prevView = app.state.fundView;
+  app.state.uiConfig = {
+    fundModules: { sector: true, theme: false, dist: true, openfund: false, openflow: false, proxy: false, flow: false, stock: false, bond: false },
+  };
+  app.state.fundView = 'openflow';
+  app.applyFundModuleVisibility();
+  assert.equal(app.state.fundView, 'sector', '被隐藏的子页要回退到第一个可见子页');
+  assert.equal(document.querySelector('#fundSubnav [data-fund-view="openflow"]').hidden, true);
+  assert.equal(document.querySelector('#fundSubnav [data-fund-view="proxy"]').hidden, true);
+  assert.equal(document.querySelector('#fundSubnav [data-fund-view="dist"]').hidden, false);
+  assert.equal(app.fundModuleVisible('sector'), true);
+  assert.equal(app.fundModuleVisible('bond'), false);
+  app.state.uiConfig = prevCfg;
+  app.state.fundView = prevView;
+  app.applyFundModuleVisibility();
+});
+
+test('DOM：逐日盈亏只统计建仓日之后，建仓前不生成数据', () => {
+  const series = [{
+    code: 'A1',
+    points: [
+      { d: '2026-01-02', c: 1 },
+      { d: '2026-06-01', c: 1.2 },
+      { d: '2026-11-19', c: 1.6 },
+    ],
+  }];
+  const holdings = { A1: { shares: 100, cost: 1, addedAt: Date.UTC(2026, 5, 1) } };
+  const daily = app.computeFundDailyPnl(series, holdings);
+  assert.ok(daily, '有持仓就应算出来');
+  assert.equal(daily.rows[0].d, '2026-06-01', '第一条必须从建仓日开始');
+  assert.equal(daily.rows.length, 2);
+  assert.equal(daily.rows[1].pnl, 40, '100 份 ×（1.6 − 1.2）');
+  assert.equal(daily.rows[1].pct, 33.33, '40 ÷ 120 ≈ 33.33%');
+  // 没有建仓日记录时不做裁剪（旧持仓按可用历史）
+  const noStart = app.computeFundDailyPnl(series, { A1: { shares: 100, cost: 1 } });
+  assert.equal(noStart.rows[0].d, '2026-01-02');
+  assert.equal(app.computeFundDailyPnl(series, {}), null, '没有持仓返回 null');
+});
+
+test('DOM：盈亏日历「日」视图是周一到周五网格，周末不占列', () => {
+  const prevPortfolios = app.state.portfolios;
+  const prevActive = app.state.activePortfolioId;
+  const prevHold = app.state.fundHoldings;
+  const prevPnl = app.state.fundPnl;
+  const prevUnit = app.state.pnlUnit;
+  const prevMetric = app.state.pnlMetric;
+  const prevYm = app.state.pnlYearMonth;
+  app.state.portfolios = [{ id: 'default', name: '主持仓', isDefault: true, holdings: { A1: { shares: 100, cost: 1, addedAt: Date.UTC(2026, 10, 1) } } }];
+  app.state.activePortfolioId = 'default';
+  app.state.fundHoldings = { A1: { shares: 100, cost: 1, addedAt: Date.UTC(2026, 10, 1) } };
+  app.state.fundPnl = {
+    items: [{
+      code: 'A1',
+      points: [
+        { d: '2026-11-02', c: 1 },
+        { d: '2026-11-03', c: 1.02 },
+        { d: '2026-11-04', c: 1.01 },
+      ],
+    }],
+    index: null,
+    missing: [],
+  };
+  app.state.pnlUnit = 'day';
+  app.state.pnlMetric = 'amount';
+  app.state.pnlYearMonth = '2026-11';
+  app.renderFundPnlCalendar();
+  const box = document.querySelector('#fundPnlCalendar');
+  assert.ok(box.querySelector('.pnl-calendar'), '缺少日历网格');
+  const heads = [...box.querySelectorAll('.pnl-calendar-head')].map((el) => el.textContent.trim());
+  assert.deepEqual(heads, ['', '周一', '周二', '周三', '周四', '周五'], '表头必须是周一~周五');
+  // 2026-11-07 / 08 是周末：不应出现 7、8 号格子
+  const dayTexts = [...box.querySelectorAll('.pnl-calendar-day')].map((el) => el.textContent.trim());
+  assert.ok(!dayTexts.includes('7') && !dayTexts.includes('8'), '周末不占列');
+  assert.ok(dayTexts.includes('3'), '周二 3 号要有格子');
+  const cells = [...box.querySelectorAll('.pnl-calendar-cell')];
+  assert.ok(cells.some((c) => c.classList.contains('is-up')), '11-03 上涨应有红色格');
+  assert.ok(cells.some((c) => c.classList.contains('is-down')), '11-04 下跌应有绿色格');
+  assert.match(document.querySelector('#fundPnlCalendarNote').textContent, /建仓日/, '要写明统计起点');
+
+  // 月视图：12 个格子
+  app.state.pnlUnit = 'month';
+  app.renderFundPnlCalendar();
+  assert.equal(box.querySelectorAll('.pnl-calendar-tile').length, 12, '月视图应有 12 个格子');
+  // 年视图：至少 1 个格子
+  app.state.pnlUnit = 'year';
+  app.renderFundPnlCalendar();
+  assert.ok(box.querySelectorAll('.pnl-calendar-tile').length >= 1, '年视图应有年份格子');
+
+  app.state.portfolios = prevPortfolios;
+  app.state.activePortfolioId = prevActive;
+  app.state.fundHoldings = prevHold;
+  app.state.fundPnl = prevPnl;
+  app.state.pnlUnit = prevUnit;
+  app.state.pnlMetric = prevMetric;
+  app.state.pnlYearMonth = prevYm;
+});
+
+test('DOM：今日盈亏 TOP5 分开盈利与亏损，没有盈利时默认落到亏损 TAB', () => {
+  const prevHold = app.state.fundHoldings;
+  const prevData = app.state.fundWatchData;
+  const prevTab = app.state.topMoversTab;
+  const prevPortfolios = app.state.portfolios;
+  const prevActive = app.state.activePortfolioId;
+  app.state.portfolios = [{ id: 'default', name: '主持仓', isDefault: true, holdings: { A1: { shares: 100, cost: 1 }, B1: { shares: 100, cost: 1 } } }];
+  app.state.activePortfolioId = 'default';
+  app.state.fundHoldings = { A1: { shares: 100, cost: 1 }, B1: { shares: 100, cost: 1 } };
+  app.state.fundWatchData = {
+    items: [
+      { code: 'A1', name: '基金A', type: 'open', price: 1.2, pct: 2, pctKind: 'navbar' },
+      { code: 'B1', name: '基金B', type: 'open', price: 1, pct: -3, pctKind: 'navbar' },
+    ],
+  };
+  app.state.topMoversTab = 'profit';
+  app.renderFundTopMovers();
+  const box = document.querySelector('#fundTopMovers');
+  assert.match(box.textContent, /基金A/, '盈利 TAB 应列出上涨的基金');
+  const winners = app.fundTopMovers(app.state.fundWatchData.items, app.state.fundHoldings, 5);
+  assert.equal(winners.winners.length, 1);
+  assert.equal(winners.losers.length, 1);
+  assert.ok(winners.winners[0].dayProfit > 0);
+  assert.ok(winners.losers[0].dayProfit < 0);
+
+  // 只有亏损时：默认落在亏损 TAB
+  app.state.fundHoldings = { B1: { shares: 100, cost: 1 } };
+  app.state.topMoversTab = 'profit';
+  app.renderFundTopMovers();
+  assert.equal(app.state.topMoversTab, 'loss', '没有盈利时必须默认显示亏损 TOP5');
+  assert.match(document.querySelector('#fundTopMovers').textContent, /基金B/);
+
+  app.state.fundHoldings = prevHold;
+  app.state.fundWatchData = prevData;
+  app.state.topMoversTab = prevTab;
+  app.state.portfolios = prevPortfolios;
+  app.state.activePortfolioId = prevActive;
+});
+
+test('DOM：组合 vs 上证的基准日与超额计算', () => {
+  const prevHold = app.state.fundHoldings;
+  app.state.fundHoldings = { A1: { shares: 100, cost: 1, addedAt: Date.UTC(2026, 0, 1) } };
+  const data = {
+    items: [{
+      code: 'A1',
+      points: [
+        { d: '2026-01-02', c: 1 },
+        { d: '2026-11-18', c: 1.1 },
+        { d: '2026-11-19', c: 1.2 },
+      ],
+    }],
+    index: {
+      name: '上证指数',
+      points: [
+        { d: '2026-01-02', c: 3000 },
+        { d: '2026-11-18', c: 3150 },
+        { d: '2026-11-19', c: 3300 },
+      ],
+    },
+  };
+  const calc = app.portfolioVsIndex(data, 'all');
+  assert.ok(calc, '应能算出组合 vs 上证');
+  assert.equal(calc.baseDate, '2026-01-02');
+  assert.equal(calc.myPct, 20, '组合从 100 涨到 120');
+  assert.equal(calc.indexPct, 10, '上证从 3000 涨到 3300');
+  assert.equal(calc.excess, 10, '跑赢 10 个百分点');
+  const year = app.portfolioVsIndex(data, 'year');
+  assert.ok(year, '今年区间能算出来');
+  assert.equal(year.baseDate, '2026-01-02', '没有更早的交易日时以区间首日为基准');
+  assert.equal(year.myPct, 20);
+  app.state.fundHoldings = prevHold;
+});
+
+test('DOM：多份持仓 TAB 渲染与切换后持仓视图跟着换', () => {
+  const prevPortfolios = app.state.portfolios;
+  const prevActive = app.state.activePortfolioId;
+  const prevHold = app.state.fundHoldings;
+  app.state.portfolios = [
+    { id: 'default', name: '主持仓', isDefault: true, holdings: { A1: { shares: 100, cost: 1 } } },
+    { id: 'p2', name: '父母养老', isDefault: false, holdings: { B1: { shares: 50, cost: 2 } } },
+  ];
+  app.state.activePortfolioId = 'default';
+  app.state.fundHoldings = { A1: { shares: 100, cost: 1 } };
+  app.renderPortfolioTabs();
+  const tabs = [...document.querySelectorAll('#fundPortfolioTabs [data-portfolio-tab]')];
+  assert.equal(tabs.length, 2, '两份组合应有两个 TAB');
+  assert.ok(tabs[0].classList.contains('is-active'), '默认组合排第一且选中');
+  assert.match(document.querySelector('#fundPortfolioTabs').textContent, /父母养老/);
+  app.switchPortfolio('p2');
+  assert.equal(app.state.activePortfolioId, 'p2');
+  assert.deepEqual(Object.keys(app.state.fundHoldings), ['B1'], '切组合后持仓视图要换成该组合的');
+  app.state.portfolios = prevPortfolios;
+  app.state.activePortfolioId = prevActive;
+  app.state.fundHoldings = prevHold;
+});
+
+test('DOM：基金涨跌分布 / 板块总览 / 场外基金榜能渲染，恶意名称被转义', () => {
+  const evil = '<img src=x onerror="window.__x=1">';
+  const prevDist = app.state.fundDist;
+  app.state.fundDist = {
+    scope: 'equity',
+    up: 12,
+    down: 30,
+    flat: 3,
+    total: 45,
+    upRatio: 26.7,
+    date: '2026-11-20',
+    buckets: [
+      { label: '≤-5%', tone: 'down', count: 4 },
+      { label: '0%（平盘）', tone: 'flat', count: 3 },
+      { label: '≥5%', tone: 'up', count: 2 },
+    ],
+  };
+  app.renderFundDistribution();
+  assert.match(document.querySelector('#fundDistSummary').textContent, /上涨家数/);
+  assert.match(document.querySelector('#fundDistMeta').textContent, /2026-11-20/);
+
+  const prevThemes = app.state.fundThemes;
+  app.state.fundThemes = {
+    themes: [{
+      sector: evil, etfCount: 2, fundCount: 10, upCount: 8, downCount: 4, avgDay: 1.2, avgMonth: 3.3,
+      streak: 3, day5: 2.1, leaderEtf: { code: '510300', name: evil }, leaderStock: null,
+    }],
+    fundCount: 10,
+    etfCount: 2,
+    stockCount: 10,
+    date: '2026-11-20',
+  };
+  app.renderFundThemeOverview();
+  const themeBox = document.querySelector('#fundThemeTable');
+  assert.equal(themeBox.querySelectorAll('img').length, 0, '主题名里的 HTML 必须被转义');
+  assert.match(themeBox.textContent, /3 天/, '应显示连涨天数');
+
+  const prevBoard = app.state.fundBoard;
+  app.state.fundBoard = {
+    tab: 'gain',
+    items: [{ code: '000001', name: evil, type: 'open', typeLabel: '混合型', nav: 1.2, day: 3.4, week: 5, month: 6, year: 7, sector: '混合均衡' }],
+    count: 1,
+    date: '2026-11-20',
+  };
+  app.renderFundBoard();
+  const boardBox = document.querySelector('#fundBoardTable');
+  assert.equal(boardBox.querySelectorAll('img').length, 0, '基金名里的 HTML 必须被转义');
+  assert.match(boardBox.textContent, /混合均衡/, '要显示关联板块');
+
+  app.state.fundDist = prevDist;
+  app.state.fundThemes = prevThemes;
+  app.state.fundBoard = prevBoard;
+});
