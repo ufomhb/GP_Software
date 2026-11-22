@@ -41,6 +41,8 @@ function createHttpRoutes(deps) {
     getPaper,
     getPaperAdminOverview,
     getPaperConfig,
+    getUiConfig,
+    saveUiConfig,
     getPaperRanking,
     getFundPnlSeries,
     paperTrade,
@@ -422,6 +424,27 @@ async function handleAdmin(req, res, url) {
       user: actor, ok: true, action: 'paper', reason: `重置 ${target.username} 的模拟盘（初始 ${res.initial}）`,
     });
     return { ok: true, id: target.id, username: target.username, initial: res.initial };
+  }
+
+  /* ---------------------------------------------------------
+     界面管理（v2.10.0）
+     - POST /api/admin/ui/config   基金页子页显隐（板块资金/板块总览/涨跌分布/场外基金/
+       场外资金流/每日代理/ETF资金流/股票型基金/债基）
+     --------------------------------------------------------- */
+  if (p === '/api/admin/ui/config' && req.method === 'POST') {
+    const body = req.body || {};
+    const before = getUiConfig().fundModules;
+    const config = saveUiConfig({ fundModules: body.fundModules });
+    const changed = Object.keys(config.fundModules)
+      .filter((key) => config.fundModules[key] !== before[key])
+      .map((key) => `${key}:${config.fundModules[key] ? '显示' : '隐藏'}`);
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'ui',
+      reason: changed.length ? `界面模块调整（${changed.join('，')}）` : '界面模块调整（无变化）',
+    });
+    return { ok: true, config };
   }
 
   /* ---------------------------------------------------------
@@ -824,6 +847,8 @@ async function handleApi(req, res, url) {
   if (p.startsWith('/api/auth/')) return handleAuth(req, res, url);
   if (p.startsWith('/api/admin/')) return handleAdmin(req, res, url);
   if (p === '/api/changelog') return getChangelog();
+  // v2.10.0：界面模块显隐（公开只读，前端启动时据此隐藏基金页子页）
+  if (p === '/api/ui/config') return { ok: true, ...getUiConfig() };
   if (p === '/api/health') {
     return { ok: true, version: VERSION, time: new Date().toISOString() };
   }

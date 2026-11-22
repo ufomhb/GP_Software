@@ -21,6 +21,10 @@ import {
   usSectorFlowBar,
   fundPnlAreaChart,
   fundPnlMonthlyBars,
+  themeHistoryChart,
+  dualSeriesChart,
+  intradayCompareChart,
+  compareTrendChart,
   COLORS,
 } from './charts.js?v=2.9.3';
 
@@ -49,6 +53,7 @@ import { redirectToLogin, api, apiPost } from './api.js?v=2.9.3';
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
   APP_VERSION, WATCH_KEY, ALERTS_KEY, SETTINGS_KEY, FUND_WATCH_KEY, FUND_HOLD_KEY, MONITOR_SECTORS_KEY,
+  ACTIVE_PORTFOLIO_KEY,
   PORTFOLIO_META_KEY, PORTFOLIO_PENDING_KEY,
   DEFAULT_WATCH, DEFAULT_FUNDS,
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
@@ -72,6 +77,15 @@ import {
   renderFundHoldSummary,
   renderFundHoldTable,
 } from './views/funds.js?v=2.9.3';
+
+// 基金页新增子页渲染（v2.10.0：涨跌分布 / 板块总览 / 场外基金四榜，见 views/fundpanes.js）
+import {
+  renderFundDistribution,
+  renderFundThemeOverview,
+  openFundThemeDrawer,
+  renderFundBoard,
+  renderFundBoardCompareBar,
+} from './views/fundpanes.js?v=2.9.3';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -4619,6 +4633,157 @@ function fundTypeOf(code, name = '') {
   return /^(51|56|58|15|16|18)/.test(String(code)) ? 'etf' : 'open';
 }
 
+/* =========================================================
+   界面模块显隐（v2.10.0）
+   ---------------------------------------------------------
+   后台「界面管理」把配置写进 data/ui-config.json，前端启动时读一次：
+   隐藏的子页按钮与面板一起隐藏，当前子页若被隐藏则回退到第一个可见项。
+   接口失败时按内置默认（只留 板块资金/板块总览/涨跌分布/场外基金）处理，
+   绝不因为一个配置读不到就把整页隐藏。
+   ========================================================= */
+const FUND_MODULE_DEFAULT = {
+  sector: true,
+  theme: true,
+  dist: true,
+  openfund: true,
+  openflow: false,
+  proxy: false,
+  flow: false,
+  stock: false,
+  bond: false,
+};
+const FUND_VIEWS_ALL = ['sector', 'theme', 'dist', 'openfund', 'openflow', 'proxy', 'flow', 'stock', 'bond'];
+
+function fundModuleVisible(key) {
+  const cfg = (state.uiConfig && state.uiConfig.fundModules) || FUND_MODULE_DEFAULT;
+  return cfg[key] !== false;
+}
+
+function visibleFundViews() {
+  const list = FUND_VIEWS_ALL.filter(fundModuleVisible);
+  return list.length ? list : ['sector'];
+}
+
+async function loadUiConfig() {
+  try {
+    const data = await api('/api/ui/config', 8000);
+    state.uiConfig = {
+      fundModules: { ...FUND_MODULE_DEFAULT, ...((data && data.fundModules) || {}) },
+    };
+  } catch {
+    state.uiConfig = { fundModules: { ...FUND_MODULE_DEFAULT } };
+  }
+  applyFundModuleVisibility();
+  return state.uiConfig;
+}
+
+function applyFundModuleVisibility() {
+  $$('#fundSubnav [data-fund-view]').forEach((btn) => {
+    const show = fundModuleVisible(btn.dataset.fundView);
+    btn.hidden = !show;
+    btn.setAttribute('aria-hidden', show ? 'false' : 'true');
+  });
+  if (!visibleFundViews().includes(state.fundView)) state.fundView = visibleFundViews()[0];
+  if (state.view === 'funds') renderFunds();
+}
+
+async function loadFundDistribution(force = false) {
+  const scope = state.fundDistScope === 'etf' ? 'etf' : 'equity';
+  if (!force && state.fundDist && state.fundDist.scope === scope && !state.fundDist.unavailable) {
+    renderFundDistribution();
+    return;
+  }
+  if (state.loading.has('funddist') && !force) return;
+  state.loading.add('funddist');
+  try {
+    const data = await api(`/api/funds/distribution?scope=${scope}`, 45000);
+    if (scope !== (state.fundDistScope === 'etf' ? 'etf' : 'equity')) return;
+    state.fundDist = data;
+    renderFundDistribution();
+  } catch (err) {
+    state.fundDist = {
+      unavailable: true,
+      scope,
+      note: `基金涨跌分布加载失败：${err.message}（稍后刷新重试）`,
+      updatedAt: Date.now(),
+    };
+    renderFundDistribution();
+  } finally {
+    state.loading.delete('funddist');
+  }
+}
+
+async function loadFundThemes(force = false) {
+  if (!force && state.fundThemes && !state.fundThemes.unavailable) {
+    renderFundThemeOverview();
+    return;
+  }
+  if (state.loading.has('fundthemes') && !force) return;
+  state.loading.add('fundthemes');
+  try {
+    const data = await api('/api/funds/themes?type=equity', 60000);
+    state.fundThemes = data;
+    renderFundThemeOverview();
+  } catch (err) {
+    state.fundThemes = {
+      unavailable: true,
+      themes: [],
+      note: `板块总览加载失败：${err.message}（稍后刷新重试）`,
+      updatedAt: Date.now(),
+    };
+    renderFundThemeOverview();
+  } finally {
+    state.loading.delete('fundthemes');
+  }
+}
+
+async function openFundTheme(sector) {
+  if (!sector) return;
+  state.fundThemeSector = sector;
+  state.fundThemeDetail = null;
+  state.fundThemeDetailDate = '';
+  toast(`正在加载「${sector}」板块…`, 'info', 1600);
+  try {
+    const data = await api(`/api/funds/theme?sector=${encodeURIComponent(sector)}&days=120`, 60000);
+    if (state.fundThemeSector !== sector) return;
+    state.fundThemeDetail = data;
+    state.fundThemeDetailDate = data.date || '';
+    openFundThemeDrawer();
+  } catch (err) {
+    toast(`板块详情加载失败：${err.message}`, 'err');
+  }
+}
+
+async function loadFundBoard(force = false) {
+  const tab = ['gain', 'loss', 'hot', 'etf'].includes(state.fundBoardTab) ? state.fundBoardTab : 'gain';
+  const type = state.fundBoardTab === 'etf' ? 'all' : (['gp', 'zs', 'hh'].includes(state.fundBoardType) ? state.fundBoardType : 'all');
+  const key = `${tab}:${type}`;
+  if (!force && state.fundBoard && state.fundBoard.key === key && !state.fundBoard.unavailable) {
+    renderFundBoard();
+    return;
+  }
+  if (state.loading.has('fundboard') && !force) return;
+  state.loading.add('fundboard');
+  try {
+    const data = await api(`/api/funds/board?tab=${tab}&type=${type}&limit=50`, 60000);
+    if (`${state.fundBoardTab}:${state.fundBoardTab === 'etf' ? 'all' : state.fundBoardType}` !== key) return;
+    state.fundBoard = { ...data, key };
+    renderFundBoard();
+    renderFundBoardCompareBar();
+  } catch (err) {
+    state.fundBoard = {
+      unavailable: true,
+      key,
+      items: [],
+      note: `基金排行加载失败：${err.message}（稍后刷新重试）`,
+      updatedAt: Date.now(),
+    };
+    renderFundBoard();
+  } finally {
+    state.loading.delete('fundboard');
+  }
+}
+
 async function loadFundFlow(force = false) {
   if (state.loading.has('fundflow') && !force) return;
   state.loading.add('fundflow');
@@ -5144,14 +5309,20 @@ function renderFunds() {
   const view = state.fundView;
   const panes = {
     sector: $('#fundSectorView'),
+    theme: $('#fundThemeView'),
+    dist: $('#fundDistView'),
+    openfund: $('#fundOpenFundView'),
     openflow: $('#fundOpenFlowView'),
     proxy: $('#fundProxyView'),
     flow: $('#fundFlowView'),
     stock: $('#fundStockView'),
     bond: $('#fundBondView'),
   };
-  // v2.8.0：自选基金已独立成板块（fundwatch），基金页不再有 watch 子页
-  if (view === 'watch' || !panes[view]) state.fundView = view = 'sector';
+  // v2.10.0：后台可以把某些子页隐藏；当前子页不可用时回退到第一个可见项
+  const visible = visibleFundViews();
+  if (!panes[view] || !visible.includes(view)) {
+    state.fundView = view = visible[0] || 'sector';
+  }
   for (const [key, el] of Object.entries(panes)) if (el) el.hidden = key !== view;
   $$('#fundSubnav button').forEach((b) => b.classList.toggle('is-active', b.dataset.fundView === view));
   $$('#fundFlowDirSeg button').forEach((b) => b.classList.toggle('is-active', b.dataset.fundDir === state.fundFlowDir));
@@ -5162,7 +5333,21 @@ function renderFunds() {
   $$('#bondFundSortSeg button').forEach((b) => b.classList.toggle('is-active', b.dataset.bondFundSort === state.bondFundSort));
   if ($('#openFlowCat')) $('#openFlowCat').value = state.openFlowCategory;
   $$('#proxyDirSeg button').forEach((b) => b.classList.toggle('is-active', b.dataset.proxyDir === state.proxyDir));
+  $$('#fundDistScopeSeg button').forEach((b) => b.classList.toggle('is-active', b.dataset.fundDistScope === (state.fundDistScope === 'etf' ? 'etf' : 'equity')));
   if (view === 'sector') renderFundSectorView();
+  if (view === 'theme') {
+    renderFundThemeOverview();
+    $$('#fundThemeSortSeg button').forEach((b) => b.classList.toggle('is-active', b.dataset.fundThemeSort === state.fundThemeSort));
+  }
+  if (view === 'dist') {
+    renderFundDistribution();
+    if (state.fundDist && state.fundDist.scope !== (state.fundDistScope === 'etf' ? 'etf' : 'equity')) loadFundDistribution();
+  }
+  if (view === 'openfund') {
+    renderFundBoard();
+    $$('#fundBoardTabs button').forEach((b) => b.classList.toggle('is-active', b.dataset.fundBoardTab === state.fundBoardTab));
+    $$('#fundBoardTypeSeg button').forEach((b) => b.classList.toggle('is-active', b.dataset.fundBoardType === state.fundBoardType && state.fundBoardTab !== 'etf'));
+  }
   if (view === 'openflow') renderOpenFlow();
   if (view === 'proxy') renderProxy();
   if (view === 'flow') {
@@ -7753,6 +7938,8 @@ function loadView(view) {
     loadChinaRanks();
     loadChinaDistribution();
     loadChinaPeriods();
+    // v2.10.0：「头部沪深300基金 / 流通市值」按用户要求移回 A 股页
+    loadCsi300Ratio();
   }
   if (view === 'global') {
     renderGlobalTable();
@@ -7785,8 +7972,18 @@ function loadView(view) {
     renderFunds();
     if (state.fundView === 'sector') {
       if (!state.fundSectorData) loadFundSectorFlow();
-      // 「头部沪深300基金 / 流通市值」已从 A 股页迁入基金板块资金子页
-      loadCsi300Ratio();
+    }
+    if (state.fundView === 'theme') {
+      if (!state.fundThemes) loadFundThemes();
+      renderFundThemeOverview();
+    }
+    if (state.fundView === 'dist') {
+      if (!state.fundDist) loadFundDistribution();
+      else renderFundDistribution();
+    }
+    if (state.fundView === 'openfund') {
+      if (!state.fundBoard) loadFundBoard();
+      else renderFundBoard();
     }
     if (state.fundView === 'openflow' && !state.openFlowData) loadOpenFlow();
     if (state.fundView === 'proxy' && !state.proxyData) loadProxy();
@@ -7894,6 +8091,9 @@ async function refreshFast() {
     }
     if (state.view === 'funds') {
       if (state.fundView === 'sector') loadFundSectorFlow(true);
+      if (state.fundView === 'dist') loadFundDistribution(true);
+      if (state.fundView === 'theme') loadFundThemes(true);
+      if (state.fundView === 'openfund') loadFundBoard(true);
       if (state.fundView === 'flow') loadFundFlow(true);
       if (state.fundView === 'bond') loadBondFund(true);
       if (state.fundView === 'stock') {
@@ -7927,6 +8127,9 @@ async function refreshAll(manual = false) {
   if (state.view === 'commodities') await loadMetalsIntraday(true);
   if (state.view === 'funds') {
     if (state.fundView === 'sector') await loadFundSectorFlow(true);
+    if (state.fundView === 'dist') await loadFundDistribution(true);
+    if (state.fundView === 'theme') await loadFundThemes(true);
+    if (state.fundView === 'openfund') await loadFundBoard(true);
     if (state.fundView === 'openflow') await loadOpenFlow(true);
     if (state.fundView === 'proxy') await loadProxy(true);
     if (state.fundView === 'flow') await loadFundFlow(true);
@@ -8170,14 +8373,16 @@ function bindEvents() {
     if (s) s.value = 'pct';
   });
 
-  $('#fundSubnav') && $('#fundSubnav').addEventListener('click', (e) => {    const btn = e.target.closest('[data-fund-view]');
+  $('#fundSubnav') && $('#fundSubnav').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-fund-view]');
     if (!btn) return;
+    if (!fundModuleVisible(btn.dataset.fundView)) return;
     state.fundView = btn.dataset.fundView;
     renderFunds();
-    if (state.fundView === 'sector') {
-      if (!state.fundSectorData) loadFundSectorFlow();
-      loadCsi300Ratio();
-    }
+    if (state.fundView === 'sector' && !state.fundSectorData) loadFundSectorFlow();
+    if (state.fundView === 'theme' && !state.fundThemes) loadFundThemes();
+    if (state.fundView === 'dist' && !state.fundDist) loadFundDistribution();
+    if (state.fundView === 'openfund' && !state.fundBoard) loadFundBoard();
     if (state.fundView === 'openflow' && !state.openFlowData) loadOpenFlow();
     if (state.fundView === 'proxy' && !state.proxyData) loadProxy();
     if (state.fundView === 'flow' && !state.fundFlow) loadFundFlow();
@@ -8223,6 +8428,72 @@ function bindEvents() {
     if (!btn) return;
     state.fundSectorSort = btn.dataset.sectorSort;
     renderFunds();
+  });
+
+  /* ---------- v2.10.0：基金涨跌分布 / 板块总览 / 场外基金 ---------- */
+  $('#fundDistScopeSeg') && $('#fundDistScopeSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-fund-dist-scope]');
+    if (!btn) return;
+    const scope = btn.dataset.fundDistScope === 'etf' ? 'etf' : 'equity';
+    if (scope === state.fundDistScope) return;
+    state.fundDistScope = scope;
+    state.fundDist = null;
+    renderFunds();
+    loadFundDistribution(true);
+  });
+
+  $('#fundThemeSortSeg') && $('#fundThemeSortSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-fund-theme-sort]');
+    if (!btn) return;
+    state.fundThemeSort = ['day', 'streak', 'month'].includes(btn.dataset.fundThemeSort)
+      ? btn.dataset.fundThemeSort
+      : 'day';
+    renderFundThemeOverview();
+    $$('#fundThemeSortSeg button').forEach((b) => b.classList.toggle('is-active', b === btn));
+  });
+
+  $('#fundThemeTable') && $('#fundThemeTable').addEventListener('click', (e) => {
+    const row = e.target.closest('[data-fund-theme]');
+    if (!row) return;
+    openFundTheme(row.dataset.fundTheme);
+  });
+
+  $('#fundBoardTabs') && $('#fundBoardTabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-fund-board-tab]');
+    if (!btn) return;
+    state.fundBoardTab = ['gain', 'loss', 'hot', 'etf'].includes(btn.dataset.fundBoardTab)
+      ? btn.dataset.fundBoardTab
+      : 'gain';
+    state.fundBoard = null;
+    renderFunds();
+    loadFundBoard(true);
+  });
+
+  $('#fundBoardTypeSeg') && $('#fundBoardTypeSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-fund-board-type]');
+    if (!btn || state.fundBoardTab === 'etf') return;
+    state.fundBoardType = ['all', 'gp', 'zs', 'hh'].includes(btn.dataset.fundBoardType)
+      ? btn.dataset.fundBoardType
+      : 'all';
+    state.fundBoard = null;
+    renderFunds();
+    loadFundBoard(true);
+  });
+
+  $('#fundBoardTable') && $('#fundBoardTable').addEventListener('change', (e) => {
+    const cb = e.target.closest('[data-compare-code]');
+    if (!cb) return;
+    toggleCompareFund(cb.dataset.compareCode, cb.dataset.compareName, cb.checked);
+  });
+  $('#fundBoardTable') && $('#fundBoardTable').addEventListener('click', (e) => {
+    if (e.target.closest('[data-compare-code]')) return;
+    const etfRow = e.target.closest('[data-fund-code]');
+    if (etfRow) {
+      openFund(etfRow.dataset.fundCode, etfRow.dataset.fundName, 'etf');
+      return;
+    }
+    const openRow = e.target.closest('[data-stock-fund-code]');
+    if (openRow) openStockFund(openRow.dataset.stockFundCode, openRow.dataset.stockFundName);
   });
 
   $('#fundFlowDirSeg') && $('#fundFlowDirSeg').addEventListener('click', (e) => {
@@ -8763,6 +9034,8 @@ async function init() {
   applyAccountScope(authUser);
   migrateLegacyStore(authUser);
   loadScopedState();
+  // v2.10.0：先读「界面管理」配置，再决定基金页哪些子页可见（失败按内置默认）
+  await loadUiConfig();
   $('#buildVersion') && ($('#buildVersion').textContent = `v${APP_VERSION}`);
   $('#autoRefresh').checked = state.settings.autoRefresh;
   syncRiskSeg();
@@ -8798,7 +9071,10 @@ async function init() {
   loadHeroSeries().then(() => renderHero());
   setTimeout(loadMiniSeries, 1600);
   // v2.8.0：?fundview=watch 已迁移成「自选基金」板块，其余 fundview 取值仍留在基金页
-  if (['flow', 'stock', 'sector', 'bond', 'openflow', 'proxy'].includes(params.get('fundview'))) state.fundView = params.get('fundview');
+  if (['flow', 'stock', 'sector', 'bond', 'openflow', 'proxy', 'theme', 'dist', 'openfund'].includes(params.get('fundview'))
+    && fundModuleVisible(params.get('fundview'))) {
+    state.fundView = params.get('fundview');
+  }
   // v2.9.2：每次启动都和服务端对齐一次（不再只在「新设备」才拉），
   // 这样在另一台设备/线上改过的持仓会被拉回来，本机未同步的改动也会被推上去。
   await reconcilePortfolioOnBoot();

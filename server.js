@@ -8396,6 +8396,67 @@ function savePaperConfig(patch = {}) {
   return next;
 }
 
+/* ---------------------------------------------------------
+   界面模块显隐（v2.10.0，data/ui-config.json）
+   ---------------------------------------------------------
+   用户反馈「场外资金流 / 每日代理 / ETF 资金流 / 股票型基金 / 债基」
+   这些数据参考性不强，希望默认隐藏，并且能由后台控制。
+   - 文件不存在 / 字段缺失都回退 DEFAULT_FUND_MODULES（5 个默认隐藏）；
+   - 只认白名单键，非法值一律回退，避免把半个页面关掉；
+   - 前端只做「显示/隐藏」，不删代码，后台随时可以打开。
+   --------------------------------------------------------- */
+const UI_CONFIG_FILE = path.join(__dirname, 'data', 'ui-config.json');
+const FUND_MODULE_KEYS = ['sector', 'theme', 'dist', 'openfund', 'openflow', 'proxy', 'flow', 'stock', 'bond'];
+const DEFAULT_FUND_MODULES = {
+  sector: true,
+  theme: true,
+  dist: true,
+  openfund: true,
+  openflow: false,
+  proxy: false,
+  flow: false,
+  stock: false,
+  bond: false,
+};
+let uiConfigCache = { at: 0, val: null };
+
+function normalizeFundModules(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const out = { ...DEFAULT_FUND_MODULES };
+  for (const key of FUND_MODULE_KEYS) {
+    if (typeof src[key] === 'boolean') out[key] = src[key];
+  }
+  return out;
+}
+
+function normalizeUiConfig(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return {
+    fundModules: normalizeFundModules(src.fundModules),
+    updatedAt: Number(src.updatedAt) || 0,
+  };
+}
+
+/** 读界面配置（5 秒进程内缓存；管理员保存后立刻刷新） */
+function loadUiConfig(force = false) {
+  const now = Date.now();
+  if (!force && uiConfigCache.val && now - uiConfigCache.at < 5000) return uiConfigCache.val;
+  const val = normalizeUiConfig(readJsonSafe(UI_CONFIG_FILE, {}));
+  uiConfigCache = { at: now, val };
+  return val;
+}
+
+function saveUiConfig(patch = {}) {
+  const cur = loadUiConfig(true);
+  const next = normalizeUiConfig({
+    fundModules: patch.fundModules === undefined ? cur.fundModules : patch.fundModules,
+  });
+  next.updatedAt = Date.now();
+  writeJsonSafe(UI_CONFIG_FILE, next);
+  uiConfigCache = { at: Date.now(), val: next };
+  return next;
+}
+
 function getPaperAccount(user) {
   const baseInitial = loadPaperConfig().initial;
   const empty = {
@@ -8933,6 +8994,9 @@ const httpRoutes = createHttpRoutes({
   getPaperRanking,
   getPaperConfig: loadPaperConfig,
   savePaperConfig,
+  // v2.10.0：界面模块显隐（基金页哪些子页可见）
+  getUiConfig: loadUiConfig,
+  saveUiConfig,
   getFundPnlSeries,
   paperTrade,
   resetPaper,

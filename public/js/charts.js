@@ -1807,4 +1807,307 @@ export function fundPnlMonthlyBars(el, months) {
   });
 }
 
+/* =========================================================
+   v2.10.0：基金主题 / 组合对比 / 基金比较
+   ---------------------------------------------------------
+   所有入参都已在调用方归一化：
+   - 主题历史：points = [{ d:'YYYY-MM-DD', v:number }]（等权归一，起点 100）
+   - 组合对比：{ d, v }，v 为「相对区间起点的百分比」
+   - 当日对比：{ t:'HH:MM', v:number }（百分比）
+   ========================================================= */
+
+/** 按日期并集对齐多条序列，缺失点前向填充（首点之前保持 null） */
+function alignByKeySeries(seriesList, key = 'd') {
+  const keys = [...new Set(seriesList.flatMap((s) => (s.points || []).map((p) => String(p[key]))))].sort();
+  const filled = seriesList.map((s) => {
+    const map = new Map((s.points || []).map((p) => [String(p[key]), Number(p.v)]));
+    let last = null;
+    return keys.map((k) => {
+      const v = map.get(k);
+      if (Number.isFinite(v)) last = v;
+      return last;
+    });
+  });
+  return { keys, filled };
+}
+
+export function themeHistoryChart(el, points) {
+  const rows = (Array.isArray(points) ? points : []).filter((p) => Number.isFinite(Number(p.v)));
+  if (!el) return null;
+  if (rows.length < 2) {
+    el.innerHTML = '<div class="empty">历史走势暂不可用</div>';
+    return null;
+  }
+  const dates = rows.map((p) => String(p.d).slice(0, 10));
+  const values = rows.map((p) => Number(p.v));
+  const up = values[values.length - 1] >= values[0];
+  const color = up ? C.up : C.down;
+  return setOption(el, {
+    animation: false,
+    tooltip: {
+      ...TOOLTIP,
+      trigger: 'axis',
+      formatter: (ps) => {
+        const p = ps && ps[0];
+        if (!p) return '';
+        return `<div style="color:#7f8fa8;font-size:10px">${esc(dates[p.dataIndex])}</div>
+          <div style="font-size:11px;color:#dbe7f6;margin-top:3px">等权指数 <b style="font-family:Bahnschrift">${Number(values[p.dataIndex]).toFixed(2)}</b></div>`;
+      },
+    },
+    grid: { left: 48, right: 16, top: 14, bottom: 26 },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: C.line } },
+      axisTick: { show: false },
+      axisLabel: { color: C.muted, fontSize: 8, hideOverlap: true, formatter: (v) => String(v).slice(5) },
+    },
+    yAxis: {
+      type: 'value',
+      scale: true,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: C.muted, fontSize: 8 },
+      splitLine: { lineStyle: { color: C.split } },
+    },
+    series: [{
+      type: 'line',
+      data: values,
+      smooth: 0.2,
+      showSymbol: false,
+      lineStyle: { width: 1.8, color },
+      itemStyle: { color },
+      areaStyle: { color: up ? 'rgba(255,77,94,.12)' : 'rgba(22,199,132,.12)' },
+      markLine: {
+        silent: true,
+        symbol: 'none',
+        label: { show: false },
+        lineStyle: { color: 'rgba(148,163,184,.35)', width: 1, type: 'dashed' },
+        data: [{ yAxis: 100 }],
+      },
+    }],
+  });
+}
+
+export function dualSeriesChart(el, options = {}) {
+  const primary = (options.primary || []).filter((p) => Number.isFinite(Number(p.v)));
+  const secondary = (options.secondary || []).filter((p) => Number.isFinite(Number(p.v)));
+  if (!el) return null;
+  if (primary.length < 2 && secondary.length < 2) {
+    el.innerHTML = '<div class="empty">区间数据不足，暂时画不出对比曲线</div>';
+    return null;
+  }
+  const { keys, filled } = alignByKeySeries([
+    { points: primary.map((p) => ({ d: p.d, v: p.v })) },
+    { points: secondary.map((p) => ({ d: p.d, v: p.v })) },
+  ]);
+  const dates = keys;
+  const meName = options.primaryName || '我的组合';
+  const idxName = options.secondaryName || '上证指数';
+  return setOption(el, {
+    animation: false,
+    legend: {
+      top: 0,
+      right: 6,
+      itemWidth: 10,
+      itemHeight: 6,
+      textStyle: { color: C.muted, fontSize: 9 },
+      data: [meName, idxName],
+    },
+    tooltip: {
+      ...TOOLTIP,
+      trigger: 'axis',
+      formatter: (ps) => {
+        if (!ps || !ps.length) return '';
+        const idx = ps[0].dataIndex;
+        const lines = ps.map((p) => `<div style="font-size:10px;color:${p.color};margin-top:2px">${esc(p.seriesName)} <b style="font-family:Bahnschrift">${Number(p.value).toFixed(2)}%</b></div>`);
+        return `<div style="color:#7f8fa8;font-size:10px">${esc(dates[idx])}</div>${lines.join('')}`;
+      },
+    },
+    grid: { left: 48, right: 16, top: 24, bottom: 26 },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: C.line } },
+      axisTick: { show: false },
+      axisLabel: { color: C.muted, fontSize: 8, hideOverlap: true, formatter: (v) => String(v).slice(5) },
+    },
+    yAxis: {
+      type: 'value',
+      scale: true,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: C.muted, fontSize: 8, formatter: (v) => `${v > 0 ? '+' : ''}${Number(v).toFixed(1)}%` },
+      splitLine: { lineStyle: { color: C.split } },
+    },
+    series: [{
+      name: meName,
+      type: 'line',
+      data: filled[0],
+      smooth: 0.2,
+      showSymbol: false,
+      lineStyle: { width: 2, color: C.accent },
+      itemStyle: { color: C.accent },
+      markLine: {
+        silent: true,
+        symbol: 'none',
+        label: { show: false },
+        lineStyle: { color: 'rgba(148,163,184,.3)', width: 1, type: 'dashed' },
+        data: [{ yAxis: 0 }],
+      },
+    }, {
+      name: idxName,
+      type: 'line',
+      data: filled[1],
+      smooth: 0.2,
+      showSymbol: false,
+      lineStyle: { width: 1.4, color: 'rgba(245,196,81,.85)' },
+      itemStyle: { color: 'rgba(245,196,81,.85)' },
+    }],
+  });
+}
+
+export function intradayCompareChart(el, options = {}) {
+  const idx = (options.indexPoints || []).filter((p) => p && p.t && Number.isFinite(Number(p.v)));
+  const mine = (options.portfolioPoints || []).filter((p) => p && p.t && Number.isFinite(Number(p.v)));
+  if (!el) return null;
+  if (!idx.length && !mine.length) {
+    el.innerHTML = '<div class="empty">盘中对比曲线暂不可用</div>';
+    return null;
+  }
+  const { keys, filled } = (() => {
+    const all = [...new Set([...idx, ...mine].map((p) => String(p.t)))].sort();
+    const build = (points) => {
+      const map = new Map(points.map((p) => [String(p.t), Number(p.v)]));
+      let last = null;
+      return all.map((t) => {
+        const v = map.get(t);
+        if (Number.isFinite(v)) last = v;
+        return last;
+      });
+    };
+    return { keys: all, filled: [build(mine), build(idx)] };
+  })();
+  const meName = options.primaryName || '我的组合';
+  const idxName = options.secondaryName || '上证指数';
+  return setOption(el, {
+    animation: false,
+    legend: {
+      top: 0,
+      right: 6,
+      itemWidth: 10,
+      itemHeight: 6,
+      textStyle: { color: C.muted, fontSize: 9 },
+      data: [meName, idxName],
+    },
+    tooltip: {
+      ...TOOLTIP,
+      trigger: 'axis',
+      formatter: (ps) => {
+        if (!ps || !ps.length) return '';
+        const t = keys[ps[0].dataIndex];
+        const lines = ps.map((p) => `<div style="font-size:10px;color:${p.color};margin-top:2px">${esc(p.seriesName)} <b style="font-family:Bahnschrift">${Number(p.value).toFixed(2)}%</b></div>`);
+        return `<div style="color:#7f8fa8;font-size:10px">${esc(t)}</div>${lines.join('')}`;
+      },
+    },
+    grid: { left: 48, right: 16, top: 24, bottom: 26 },
+    xAxis: {
+      type: 'category',
+      data: keys,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: C.line } },
+      axisTick: { show: false },
+      axisLabel: { color: C.muted, fontSize: 8, interval: Math.max(0, Math.floor(keys.length / 8)), formatter: (v) => String(v).slice(0, 5) },
+    },
+    yAxis: {
+      type: 'value',
+      scale: true,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: C.muted, fontSize: 8, formatter: (v) => `${v > 0 ? '+' : ''}${Number(v).toFixed(1)}%` },
+      splitLine: { lineStyle: { color: C.split } },
+    },
+    series: [{
+      name: meName,
+      type: 'line',
+      data: filled[0],
+      smooth: 0.1,
+      showSymbol: false,
+      connectNulls: true,
+      lineStyle: { width: 2, color: C.accent },
+      itemStyle: { color: C.accent },
+    }, {
+      name: idxName,
+      type: 'line',
+      data: filled[1],
+      smooth: 0.1,
+      showSymbol: false,
+      connectNulls: true,
+      lineStyle: { width: 1.4, color: 'rgba(245,196,81,.85)' },
+      itemStyle: { color: 'rgba(245,196,81,.85)' },
+    }],
+  });
+}
+
+export function compareTrendChart(el, seriesList) {
+  const list = (Array.isArray(seriesList) ? seriesList : [])
+    .map((s) => ({ name: s.name || s.code || '', points: (s.points || []).filter((p) => Number.isFinite(Number(p.v))) }))
+    .filter((s) => s.points.length >= 2);
+  if (!el) return null;
+  if (list.length < 2) {
+    el.innerHTML = '<div class="empty">对比走势需要至少两只基金的历史净值</div>';
+    return null;
+  }
+  const { keys, filled } = alignByKeySeries(list);
+  const palette = ['#38bdf8', '#f5c451', '#a78bfa', '#34d399'];
+  return setOption(el, {
+    animation: false,
+    legend: {
+      top: 0,
+      left: 0,
+      itemWidth: 10,
+      itemHeight: 6,
+      textStyle: { color: C.muted, fontSize: 9 },
+      data: list.map((s) => s.name),
+    },
+    tooltip: {
+      ...TOOLTIP,
+      trigger: 'axis',
+      formatter: (ps) => {
+        if (!ps || !ps.length) return '';
+        const lines = ps.map((p) => `<div style="font-size:10px;color:${p.color};margin-top:2px">${esc(p.seriesName)} <b style="font-family:Bahnschrift">${Number(p.value).toFixed(2)}</b></div>`);
+        return `<div style="color:#7f8fa8;font-size:10px">${esc(keys[ps[0].dataIndex])}</div>${lines.join('')}`;
+      },
+    },
+    grid: { left: 46, right: 14, top: 26, bottom: 24 },
+    xAxis: {
+      type: 'category',
+      data: keys,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: C.line } },
+      axisTick: { show: false },
+      axisLabel: { color: C.muted, fontSize: 8, hideOverlap: true, formatter: (v) => String(v).slice(5) },
+    },
+    yAxis: {
+      type: 'value',
+      scale: true,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: C.muted, fontSize: 8 },
+      splitLine: { lineStyle: { color: C.split } },
+    },
+    series: list.map((s, i) => ({
+      name: s.name,
+      type: 'line',
+      data: filled[i],
+      smooth: 0.2,
+      showSymbol: false,
+      lineStyle: { width: 1.6, color: palette[i % palette.length] },
+      itemStyle: { color: palette[i % palette.length] },
+    })),
+  });
+}
+
 export { C as COLORS };

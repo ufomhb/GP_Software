@@ -317,6 +317,19 @@
         <aside class="panel breadth-panel" id="breadthPanel"></aside>
       </div>
 
+      <!-- v2.10.0：从基金页移回 A 股页（用户要求「头部沪深300基金 / 流通市值」归 A 股） -->
+      <article class="panel csi300-ratio-panel" id="csi300RatioPanel">
+        <div class="panel-head">
+          <div><div class="eyebrow">CSI 300 FUNDS · 6 MONTHS</div><h3>头部沪深300基金 / 流通市值</h3><span class="muted small" id="csi300RatioMeta">--</span></div>
+          <span class="badge">近半年</span>
+        </div>
+        <div class="csi300-ratio-body">
+          <div id="csi300RatioLine" class="csi300-ratio-line"></div>
+          <div id="csi300RatioFunds" class="csi300-fund-list"></div>
+        </div>
+        <p class="muted small mt12">统计名称匹配的纯沪深300 ETF 规模合计占沪深300流通市值的比例；基金规模为最新披露的资产净值，不是盘中实时规模。</p>
+      </article>
+
       <div class="rank-grid">
         <article class="panel rank-panel">
           <div class="panel-head"><h3>涨幅榜 / 跌幅榜</h3><span class="muted small">各 TOP 8 · 左右对照</span></div>
@@ -682,6 +695,7 @@
 
       <div class="fund-subnav" id="fundSubnav">
         <button class="is-active" data-fund-view="sector">板块资金</button>
+        <button data-fund-view="dist">基金涨跌分布</button>
         <button data-fund-view="openflow">场外资金流</button>
         <button data-fund-view="proxy">每日代理</button>
         <button data-fund-view="flow">ETF 资金流</button>
@@ -727,16 +741,29 @@
             <table class="table" id="fundSectorTable"></table>
           </div>
         </article>
-        <article class="panel csi300-ratio-panel" id="csi300RatioPanel">
+      </div>
+
+      <!-- 基金涨跌分布（v2.10.0） -->
+      <div class="fund-pane" id="fundDistView" hidden>
+        <div class="fund-toolbar">
+          <div class="seg" id="fundDistScopeSeg">
+            <button class="is-active" data-fund-dist-scope="equity">权益类基金</button>
+            <button data-fund-dist-scope="etf">ETF</button>
+          </div>
+          <span class="muted small" id="fundDistMeta">--</span>
+        </div>
+        <div class="fund-summary-grid" id="fundDistSummary"></div>
+        <article class="panel">
           <div class="panel-head">
-            <div><div class="eyebrow">CSI 300 FUNDS · 6 MONTHS</div><h3>头部沪深300基金 / 流通市值</h3><span class="muted small" id="csi300RatioMeta">--</span></div>
-            <span class="badge">近半年</span>
+            <div>
+              <div class="eyebrow">FUND BREADTH</div>
+              <h3>基金当日涨跌分布</h3>
+              <span class="muted small" id="fundDistDateNote">--</span>
+            </div>
+            <span class="badge" id="fundDistBadge">净值日</span>
           </div>
-          <div class="csi300-ratio-body">
-            <div id="csi300RatioLine" class="csi300-ratio-line"></div>
-            <div id="csi300RatioFunds" class="csi300-fund-list"></div>
-          </div>
-          <p class="muted small mt12">统计名称匹配的纯沪深300 ETF 规模合计占沪深300流通市值的比例；基金规模为最新披露的资产净值，不是盘中实时规模。</p>
+          <div id="fundDistChart" class="distribution-chart compact"></div>
+          <p class="muted small mt12" id="fundDistNote">--</p>
         </article>
       </div>
 

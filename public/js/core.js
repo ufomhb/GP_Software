@@ -9,6 +9,8 @@ const ALERTS_KEY = 'gp.alerts.v1';
 const SETTINGS_KEY = 'gp.settings.v1';
 const FUND_WATCH_KEY = 'gp.fundWatchlist.v1';
 const FUND_HOLD_KEY = 'gp.fundHoldings.v1';
+// v2.10.0：当前选中的持仓组合（多份持仓 TAB），按账号命名空间存放
+const ACTIVE_PORTFOLIO_KEY = 'gp.activePortfolio.v1';
 const MONITOR_SECTORS_KEY = 'gp.monitorSectors.v1';
 // v2.9.2：持仓同步元信息（服务端 rev / 本机最后保存时间 / 待同步标记），按账号命名空间存放
 const PORTFOLIO_META_KEY = 'gp.portfolioMeta.v1';
@@ -94,6 +96,29 @@ const state = {
   watchFundSort: 'manual',
   fundFlow: null,
   fundView: 'sector',
+  // v2.10.0：界面模块显隐（后台「界面管理」控制）与基金页新增子页的数据
+  uiConfig: null,
+  fundDist: null,
+  fundDistScope: 'equity',
+  fundThemes: null,
+  fundThemeSort: 'day',
+  fundThemeDetail: null,
+  fundThemeSector: '',
+  fundThemeDetailDate: '',
+  fundBoard: null,
+  fundBoardTab: 'gain',
+  fundBoardType: 'all',
+  // v2.10.0：自选基金多份持仓 / 盈亏日历 / 组合对比
+  portfolios: [],
+  activePortfolioId: 'default',
+  fundPnlDays: 800,
+  pnlUnit: 'day',
+  pnlMetric: 'amount',
+  pnlYearMonth: '',
+  topMoversTab: 'profit',
+  fundRange: 'today',
+  fundIntraday: null,
+  fundIntradayLoading: false,
   fundFlowDir: 'inflow',
   fundCategory: 'all',
   openFlowCategory: 'all',
@@ -321,6 +346,7 @@ function normalizeAlerts(list, seq = 0) {
 export {
   APP_VERSION,
   WATCH_KEY, ALERTS_KEY, SETTINGS_KEY, FUND_WATCH_KEY, FUND_HOLD_KEY, MONITOR_SECTORS_KEY,
+  ACTIVE_PORTFOLIO_KEY,
   PORTFOLIO_META_KEY, PORTFOLIO_PENDING_KEY,
   DEFAULT_WATCH, DEFAULT_FUNDS,
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
