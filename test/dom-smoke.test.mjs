@@ -1850,3 +1850,15 @@ test('DOM：v2.10.3 持仓调整批量保存与删除都会改当前组合（删
   app.state.activePortfolioId = prevActive;
   app.state.fundHoldings = prevHold;
 });
+
+test('DOM：后台「持仓数据」页有持仓回收站卡片，前端调用对应接口', () => {
+  const adminHtml = readFileSync(join(ROOT, 'public', 'admin.html'), 'utf8');
+  for (const id of ['trashUser', 'trashReload', 'trashAll', 'trashList']) {
+    assert.ok(adminHtml.includes(`id="${id}"`), `后台缺少 #${id}`);
+  }
+  assert.match(adminHtml, /持仓回收站/);
+  const adminJs = readFileSync(join(ROOT, 'public', 'js', 'admin.js'), 'utf8');
+  assert.match(adminJs, /loadHoldingTrash/);
+  assert.match(adminJs, /\/api\/admin\/portfolio\/trash/);
+  assert.match(adminJs, /\/api\/admin\/portfolio\/trash\/restore/);
+});
