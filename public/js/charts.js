@@ -1347,12 +1347,12 @@ export function intradayChart(el, options = {}) {
       : [{ type: 'category', data: axisLabels, boundaryGap: false, axisLine: { lineStyle: { color: C.line } }, axisTick: { show: false }, axisLabel: fullSession ? { color: C.muted, fontSize: 9, interval: 0, formatter: (v) => (markSet.has(v) ? v : '') } : { color: C.muted, fontSize: 9, interval: Math.max(1, Math.floor(times.length / 7)), hideOverlap: true }, splitLine: { show: false } }],
     yAxis: hasVolume
       ? [
-          { min: yMin, max: yMax, scale: false, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 9, formatter: (v) => Number(v).toFixed(2) }, splitLine: { lineStyle: { color: C.split } } },
+          { min: yMin, max: yMax, scale: false, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 9, showMinLabel: false, formatter: (v) => Number(v).toFixed(2) }, splitLine: { lineStyle: { color: C.split } } },
           { min: yMin, max: yMax, position: 'right', axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 8, formatter: pctLabel }, splitLine: { show: false } },
           { gridIndex: 1, scale: true, splitNumber: 1, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 8, formatter: (v) => (v >= 1e4 ? `${(v / 1e4).toFixed(0)}万` : `${Math.round(v)}`) }, splitLine: { show: false } },
         ]
       : [
-          { min: yMin, max: yMax, scale: false, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 9, formatter: (v) => Number(v).toFixed(2) }, splitLine: { lineStyle: { color: C.split } } },
+          { min: yMin, max: yMax, scale: false, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 9, showMinLabel: false, formatter: (v) => Number(v).toFixed(2) }, splitLine: { lineStyle: { color: C.split } } },
           { min: yMin, max: yMax, position: 'right', axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 8, formatter: pctLabel }, splitLine: { show: false } },
         ],
     series: [

@@ -859,13 +859,16 @@ function periodStats({ account, totalNow, todayKey } = {}) {
   let mdd = 0;
   let peakDate = '';
   let troughDate = '';
+  // v2.13.1：peakDate 会被后面的新高覆盖，直接拿它当回撤起点会出现「起点晚于终点」；
+  // 这里单独记住「产生当前最大回撤的那一次峰顶」。
+  let mddPeakDate = '';
   for (const row of series) {
     const adj = round2(num(row.v) - injectedUpTo(account, row.d));
     if (adj <= 0) continue;
     if (adj > peak) { peak = adj; peakDate = row.d; }
     else if (peak > 0) {
       const dd = ((peak - adj) / peak) * 100;
-      if (dd > mdd) { mdd = dd; troughDate = row.d; }
+      if (dd > mdd) { mdd = dd; troughDate = row.d; mddPeakDate = peakDate; }
     }
   }
   const totalPct = principal > 0 && total > 0 ? roundPct(((total - principal) / principal) * 100) : null;
@@ -876,8 +879,8 @@ function periodStats({ account, totalNow, todayKey } = {}) {
     yearPct: pctOf('year'),
     totalPct,
     mdd: series.length > 1 ? roundPct(mdd) : null,
-    mddFrom: peakDate,
-    mddTo: troughDate,
+    mddFrom: mdd > 0 ? mddPeakDate : '',
+    mddTo: mdd > 0 ? troughDate : '',
     equityDays: series.length,
     firstDate: series.length ? series[0].d : '',
   };

@@ -306,6 +306,37 @@ test('最大回撤：按剔除入金后的净值曲线算峰谷与日期', () =>
   assert.equal(s.equityDays, 4);
 });
 
+test('最大回撤：谷底之后又创新高时，起点仍是产生回撤的那次峰顶（不能出现起点晚于终点）', () => {
+  const acc = {
+    initial: 100000, cash: 100000, positions: {}, trades: [], realized: {},
+    capital: { injected: 0, events: [] },
+    equity: {
+      '2026-11-02': 100000,
+      '2026-11-03': 110000,
+      '2026-11-04': 99000,
+      '2026-11-05': 120000,
+      '2026-11-06': 118000,
+    },
+  };
+  const s = A.periodStats({ account: acc, totalNow: 118000, todayKey: '2026-11-06' });
+  assert.equal(s.mdd, 10);
+  assert.equal(s.mddFrom, '2026-11-03', '起点必须是 11-03 的峰顶，而不是之后的 11-05 新高');
+  assert.equal(s.mddTo, '2026-11-04');
+  assert.ok(s.mddFrom < s.mddTo, '起点日期必须早于终点');
+});
+
+test('最大回撤：一路新高（无回撤）时不返回峰谷日期', () => {
+  const acc = {
+    initial: 100000, cash: 100000, positions: {}, trades: [], realized: {},
+    capital: { injected: 0, events: [] },
+    equity: { '2026-11-02': 100000, '2026-11-03': 102000, '2026-11-04': 105000 },
+  };
+  const s = A.periodStats({ account: acc, totalNow: 105000, todayKey: '2026-11-04' });
+  assert.equal(s.mdd, 0);
+  assert.equal(s.mddFrom, '');
+  assert.equal(s.mddTo, '');
+});
+
 test('权益快照：同一天覆盖、最多保留 1500 天、非法值不入库', () => {
   let acc = emptyAcc();
   acc = A.recordEquity(acc, '2026-11-24', 100000);

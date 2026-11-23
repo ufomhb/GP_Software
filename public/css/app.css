@@ -3461,8 +3461,17 @@ tr.is-dim td { opacity: .62; }
 
   /* 个股累计收益：成本列可省，保留股数 / 金额 / 已实现 / 收益率 */
   .paper-realized-table th:nth-child(4), .paper-realized-table td:nth-child(4) { display: none; }
+  /* 表头「累计卖出股数」这类 6 字标题换行，否则单列 76px，整表 434px 还是滑 */
+  .paper-realized-table th { white-space: normal; }
 
-  /* 委托：状态已并入委托时间，成交均价省掉，撤单留在首屏 */
+  /* 排行榜：「持仓（前 3）」列内容最长（约 200px），手机上让位给周期收益列 */
+  .paper-rank-table th:nth-child(11), .paper-rank-table td:nth-child(11),
+  .paper-rank-table th:nth-child(12), .paper-rank-table td:nth-child(12) { display: none; }
+  /* 排行榜：累计盈亏与累计收益率同源（盈亏 = 收益率 × 本金），手机只留收益率 */
+  .paper-rank-table th:nth-child(4), .paper-rank-table td:nth-child(4) { display: none; }
+
+  /* 委托：状态已并入委托时间（含买/卖方向），成交均价省掉，撤单留在首屏 */
+  .paper-order-table th:nth-child(3), .paper-order-table td:nth-child(3),
   .paper-order-table th:nth-child(6), .paper-order-table td:nth-child(6),
   .paper-order-table th:nth-child(7), .paper-order-table td:nth-child(7) { display: none; }
 
@@ -3484,4 +3493,18 @@ tr.is-dim td { opacity: .62; }
   .paper-pos-table th, .paper-pos-table td,
   .paper-trade-table th, .paper-trade-table td,
   .paper-realized-table th, .paper-realized-table td { padding-left: 5px; padding-right: 5px; }
+  .paper-realized-table th, .paper-realized-table td { padding-left: 4px; padding-right: 4px; }
+  .paper-order-table th, .paper-order-table td { padding-left: 4px; padding-right: 4px; }
+
+  /* 名称与操作按钮始终单行：被压窄时宁可让中间的参数列换行 */
+  .paper-pos-table .t-name, .paper-trade-table .t-name, .paper-order-table .t-name,
+  .paper-cond-table .t-name, .paper-plan-table .t-name, .paper-realized-table .t-name,
+  .paper-pos-table td:last-child, .paper-order-table td:last-child,
+  .paper-cond-table td:last-child, .paper-plan-table td:last-child { white-space: nowrap; }
+
+  /* 触控：分段控件与日历翻页按钮抬到 30px 以上（原来 27 / 24） */
+  #paperPnlCalendarPanel .seg button,
+  #paperAutoSeg button,
+  .paper-rank-sort button { padding: 8px 10px; }
+  .pnl-calendar-nav button { min-width: 30px; min-height: 30px; }
 }

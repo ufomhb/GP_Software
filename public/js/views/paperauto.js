@@ -76,10 +76,10 @@ export function renderPaperOrders() {
     const shares = Number(o.shares) || 0;
     const progress = shares > 0 ? Math.round((filled / shares) * 100) : 0;
     return `<tr class="${isActive ? 'paper-order-active' : ''}">
-      <td class="t-dim">${o.createdAt ? esc(timeText(o.createdAt)) : '--'}<div class="t-sub">${esc((o.expiresDate || '') ? `${o.expiresDate} 15:00 前有效` : '')}</div><div class="t-sub only-mobile"><span class="badge ${isActive ? '' : 'muted'}">${esc(status)}</span></div></td>
+      <td class="t-dim">${o.createdAt ? esc(timeText(o.createdAt)) : '--'}<div class="t-sub">${esc((o.expiresDate || '') ? `${o.expiresDate} 15:00 前` : '')}</div><div class="t-sub only-mobile"><span class="badge ${isActive ? '' : 'muted'}">${esc(status)}</span></div></td>
       <td><span class="t-name">${esc(cleanName(o.name) || o.code || '')}</span><span class="t-sub">${esc(o.code || '')}</span></td>
       <td>${sideTag(o.side)}</td>
-      <td>${o.type === 'limit' ? `限价 ${nf(o.limitPrice, 3)}` : '市价'}<div class="t-sub">${esc(o.source === 'condition' ? '条件单' : o.source === 'grid' ? '网格' : o.source === 'dca' ? '定投' : o.source === 'follow' ? '跟单' : '手动')}</div></td>
+      <td>${o.type === 'limit' ? `限价 ${nf(o.limitPrice, 3)}` : '市价'}<div class="t-sub"><span class="only-mobile">${o.side === 'buy' ? '买入' : '卖出'} · </span>${esc(o.source === 'condition' ? '条件单' : o.source === 'grid' ? '网格' : o.source === 'dca' ? '定投' : o.source === 'follow' ? '跟单' : '手动')}</div></td>
       <td>${nf(filled, 0)} / ${nf(shares, 0)}<div class="t-sub">${progress}%</div></td>
       <td>${o.avgPrice === null || o.avgPrice === undefined ? '--' : nf(o.avgPrice, 3)}</td>
       <td><span class="badge ${isActive ? '' : 'muted'}">${esc(status)}</span>${o.lastCheck && o.lastCheck.reason && isActive ? `<div class="t-sub">${esc(o.lastCheck.reason)}</div>` : ''}${o.rejectReason ? `<div class="t-sub">${esc(o.rejectReason)}</div>` : ''}${o.cancelReason ? `<div class="t-sub">${esc(o.cancelReason)}</div>` : ''}</td>
