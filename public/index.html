@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -1555,6 +1555,51 @@
         </div>
         <div id="paperRealizedTable"></div>
         <p class="muted small mt12" id="paperRealizedNote">--</p>
+      </article>
+
+      <!-- v2.12.0：委托与挂单（限价 / 撤单 / 部分成交） -->
+      <article class="panel" id="paperOrderPanel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">ORDERS</div>
+            <h3>委托与挂单 · 限价 / 撤单 / 部分成交</h3>
+            <span class="muted small" id="paperOrderMeta">--</span>
+          </div>
+          <span class="muted small">限价单挂上后每 60 秒撮合一次；当日有效单 15:00 未成交自动失效</span>
+        </div>
+        <div id="paperOrderBody"><div class="empty small">加载委托…</div></div>
+      </article>
+
+      <!-- v2.12.0：自动交易（条件单 / 网格 / 定投 / 跟单 / 持仓预警） -->
+      <article class="panel" id="paperAutoPanel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">AUTO TRADING</div>
+            <h3>自动交易 · 条件单 / 网格 / 定投 / 跟单 / 持仓预警</h3>
+            <span class="muted small">服务端每分钟执行一次，关掉页面也生效</span>
+          </div>
+          <div class="seg" id="paperAutoSeg">
+            <button class="is-active" data-paper-auto-tab="condition">条件单</button>
+            <button data-paper-auto-tab="plan">网格 / 定投</button>
+            <button data-paper-auto-tab="follow">跟单</button>
+            <button data-paper-auto-tab="alert">持仓预警</button>
+          </div>
+        </div>
+        <div id="paperAutoBody"><div class="empty small">加载…</div></div>
+      </article>
+
+      <!-- v2.12.0：交易复盘报告 -->
+      <article class="panel" id="paperReviewPanel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">REVIEW</div>
+            <h3>交易复盘 · 胜率 / 盈亏比 / 回撤 / 集中度</h3>
+            <span class="muted small" id="paperReviewMeta">--</span>
+          </div>
+        </div>
+        <div id="paperReviewBody"><div class="empty small">加载…</div></div>
+        <div class="paper-pnl-chart" id="paperReviewChart"></div>
+        <p class="muted small mt12" id="paperReviewNote">口径：胜率 = 盈利的卖出笔数 / 全部卖出笔数。</p>
       </article>
 
       <article class="panel">

@@ -122,6 +122,15 @@ import {
   paperMonthlyBars,
 } from './views/paperpnl.js?v=2.11.0';
 
+// 模拟盘自动化：委托 / 条件单 / 网格定投 / 跟单 / 持仓预警 / 复盘（v2.12.0，见 views/paperauto.js）
+import {
+  renderPaperOrders,
+  renderPaperAuto,
+  renderPaperReview,
+  paperOrderStatusLabel,
+  conditionText,
+} from './views/paperauto.js?v=2.12.0';
+
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
   getQuote, getBySecid,
@@ -3728,9 +3737,16 @@ async function saveCloudAlerts(enabled, items) {
 
 async function loadPaper(force = false) {
   if (!force && state.paper) { renderPaper(); return; }
+  // v2.12.0：打开页面先让服务端撮合一次挂单 / 条件单 / 网格 / 定投（同一账户 15 秒最多一次，
+  // 失败不影响后面的账户读取）
+  try {
+    await apiPost('/api/paper/sweep', {}, 20000);
+  } catch { /* 撮合失败就用当前快照展示 */ }
   try {
     state.paper = await api('/api/paper', 20000);
     state.paperAt = Date.now();
+    // 视图模块里的撤单等小操作要能把账户刷新回来
+    state.paperReload = () => loadPaper(true);
   } catch (err) {
     if ($('#paperPanel')) {
       $('#paperPanel').innerHTML = `<div class="panel-head"><h3>模拟交易</h3></div><div class="empty">加载失败：${esc(err.message)}</div>`;
@@ -3738,6 +3754,31 @@ async function loadPaper(force = false) {
     return;
   }
   renderPaper();
+}
+
+/** 交易复盘（v2.12.0）：胜率 / 盈亏比 / 最大回撤 / 集中度 + 权益曲线。
+ *  按「账户更新时间 + 成交笔数」缓存 5 分钟，交易后立刻失效。 */
+async function loadPaperReview(force = false) {
+  const paper = state.paper;
+  if (!paper) return;
+  const key = `${paper.trades ? paper.trades.length : 0}:${paper.updatedAt || 0}`;
+  if (!force && state.paperReview && state.paperReviewKey === key && Date.now() - (state.paperReviewAt || 0) < 5 * 60 * 1000) {
+    renderPaperReview();
+    return;
+  }
+  if (state.loading.has('paperreview') && !force) return;
+  state.loading.add('paperreview');
+  try {
+    const data = await api('/api/paper/review', 30000);
+    state.paperReview = data;
+    state.paperReviewKey = key;
+    state.paperReviewAt = Date.now();
+  } catch (err) {
+    state.paperReview = { error: err.message, trades: 0 };
+  } finally {
+    state.loading.delete('paperreview');
+    renderPaperReview();
+  }
 }
 
 /** 模拟账户逐日盈亏（v2.11.0）：按「成交笔数 + 入金笔数 + 账户更新时间」缓存 10 分钟。
@@ -3831,7 +3872,7 @@ function renderPaper() {
   const priceUpdated = d.pricesAsOf ? timeText(d.pricesAsOf) : (d.updatedAt ? timeText(d.updatedAt) : '--:--:--');
   const posRows = (d.positions || []).map((p) => `<tr data-paper-secid="${esc(p.secid)}">
     <td><span class="t-name">${esc(cleanName(p.name))}</span><span class="t-sub">${esc(p.code)}</span></td>
-    <td>${nf(p.shares, 0)}</td>
+    <td>${nf(p.shares, 0)}${p.locked ? `<div class="t-sub">可卖 ${nf(p.available, 0)}（T+1）</div>` : ''}</td>
     <td>${nf(p.cost, 3)}</td>
     <td>${nf(p.price, 3)}${p.priceMode === 'prevClose' ? '<div class="t-sub">昨收</div>' : p.priceMode === 'cost' ? '<div class="t-sub">按成本估</div>' : ''}</td>
     <td class="${toneClass(p.pct)}"${p.priceMode === 'prevClose' ? ' title="开盘前没有成交价，按昨收估"' : ''}>${p.pct === null ? '--' : pctFmt(p.pct)}${p.dayPnl === null || p.dayPnl === undefined ? '' : `<div class="t-sub">${signedFmt(p.dayPnl, 0)}</div>`}</td>
@@ -3839,7 +3880,7 @@ function renderPaper() {
     <td class="${toneClass(p.profit)}">${nf(p.profit, 0)}</td>
     <td class="${toneClass(p.profitPct)}">${p.profitPct === null ? '--' : `${nf(p.profitPct, 2)}%`}</td>
     <td class="${toneClass(p.realizedAmount)}">${p.realizedAmount === null || p.realizedAmount === undefined ? '--' : `${signedFmt(p.realizedAmount, 2)}${p.realizedPct === null || p.realizedPct === undefined ? '' : `<div class="t-sub">${nf(p.realizedPct, 2)}%</div>`}`}</td>
-    <td><button class="text-link" data-paper-sell="${esc(p.secid)}" data-paper-name="${esc(p.name)}" data-paper-shares="${p.shares}">卖出</button></td>
+    <td><button class="text-link" data-paper-sell="${esc(p.secid)}" data-paper-name="${esc(p.name)}" data-paper-shares="${p.available !== undefined ? p.available : p.shares}">卖出</button></td>
   </tr>`).join('') || '<tr><td colspan="10"><div class="empty">还没有模拟持仓。点「模拟买入」按最新价建仓。</div></td></tr>';
 
   const tradeRows = (d.trades || []).slice(0, 20).map((t) => `<tr>
@@ -3854,12 +3895,18 @@ function renderPaper() {
     <td class="t-sub">${t.signal && t.signal.score !== undefined ? `评分 ${t.signal.score}${t.signal.rating ? ` · ${esc(t.signal.rating)}` : ''}` : '--'}</td>
   </tr>`).join('') || '<tr><td colspan="9"><div class="empty">还没有成交记录</div></td></tr>';
 
+  const rules = d.rules || {};
+  const fees = rules.fees || { rate: 0.00025, min: 5, taxRate: 0.0005, slippageBps: 0 };
+  const trading = rules.trading || { t1: true, limitCheck: true, suspend: true };
+  const ruleText = `佣金 ${nf(Number(fees.rate) * 10000, 2)} 万（最低 ${nf(fees.min, 0)} 元）、卖出印花税 ${nf(Number(fees.taxRate) * 10000, 2)} 万${Number(fees.slippageBps) > 0 ? `、滑点 ${nf(fees.slippageBps, 0)} bp` : ''}`
+    + `；${trading.t1 ? 'T+1' : 'T+0'}${trading.limitCheck ? ' · 涨跌停校验' : ''}${trading.suspend ? ' · 停牌不成交' : ''}（后台可调）`;
+
   el.innerHTML = `
     <div class="panel-head">
       <div>
         <div class="eyebrow">PAPER TRADING</div>
         <h3>模拟交易 · 账户与信号留痕</h3>
-        <span class="muted small">按最新价成交，佣金万 2.5（最低 5 元）、卖出印花税万 5；仅用于复盘，不是实盘</span>
+        <span class="muted small">${esc(ruleText)}；仅用于复盘，不是实盘</span>
       </div>
       <div class="head-actions">
         <button class="btn primary small" id="paperBuyBtn">模拟买入</button>
@@ -3915,7 +3962,21 @@ function renderPaper() {
   // v2.11.0：盈亏日历 / 个股累计收益随账户面板一起重绘（日历首次按需拉一次日线历史）
   renderPaperPnlCalendar();
   renderPaperRealized();
+  // v2.12.0：委托 / 自动交易 / 复盘
+  renderPaperOrders();
+  renderPaperAuto({ reload: () => loadPaper(true) });
+  renderPaperReview();
   if (d.trades && d.trades.length && !state.paperPnl && !state.loading.has('paperpnl')) loadPaperPnl();
+  if (d.trades && d.trades.length && !state.paperReview && !state.loading.has('paperreview')) loadPaperReview();
+  const autoSeg = $('#paperAutoSeg');
+  if (autoSeg) {
+    autoSeg.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-paper-auto-tab]');
+      if (!btn) return;
+      state.paperAutoTab = btn.dataset.paperAutoTab;
+      renderPaperAuto({ reload: () => loadPaper(true) });
+    });
+  }
   // v2.9.0：排行榜默认收起，点按钮才请求并显示（用户要求）
   const rankBtn = $('#paperRankToggle');
   if (rankBtn) {
@@ -4244,19 +4305,27 @@ function renderPaperPreview() {
       : '<span class="muted small">选择标的并填写股数后，这里显示预计成交金额与费用</span>';
     return;
   }
-  const amount = shares * Number(q.price);
-  const fee = paperFeeOf(amount);
-  const tax = t.side === 'sell' ? amount * PAPER_TAX_RATE : 0;
+  const isLimit = t.orderType === 'limit';
+  // 限价单按限价估算（买入的实际成交价 ≤ 限价，卖出 ≥ 限价）
+  const px = isLimit && Number(t.limitPrice) > 0 ? Number(t.limitPrice) : Number(q.price);
+  const amount = shares * px;
+  const fees = (state.paper && state.paper.rules && state.paper.rules.fees) || {};
+  const feeRate = isNum(fees.rate) ? Number(fees.rate) : PAPER_FEE_RATE;
+  const feeMin = isNum(fees.min) ? Number(fees.min) : PAPER_FEE_MIN;
+  const taxRate = isNum(fees.taxRate) ? Number(fees.taxRate) : PAPER_TAX_RATE;
+  const fee = Math.max(feeMin, amount * feeRate);
+  const tax = t.side === 'sell' ? amount * taxRate : 0;
   const d = state.paper || {};
   const cashAfter = t.side === 'buy' ? Number(d.cash) - amount - fee : Number(d.cash) + amount - fee - tax;
   const heldAfter = t.side === 'sell' ? paperHeldShares(target.secid) - shares : paperHeldShares(target.secid) + shares;
   const short = t.side === 'buy' ? Number(d.cash) + 0.005 < amount + fee : paperHeldShares(target.secid) < shares;
-  const maxBuy = t.side === 'buy' ? paperMaxBuyShares({ price: q.price, cash: d.cash, secid: target.secid }) : null;
-  box.innerHTML = `<div class="paper-preview-row"><span>预计金额</span><b>${nf(amount, 2)} 元</b></div>
-    <div class="paper-preview-row"><span>佣金（万 2.5，最低 5 元）${tax ? ' + 印花税（万 5）' : ''}</span><b>${nf(fee + tax, 2)} 元</b></div>
+  const maxBuy = t.side === 'buy' ? paperMaxBuyShares({ price: px, cash: d.cash, secid: target.secid }) : null;
+  box.innerHTML = `<div class="paper-preview-row"><span>${isLimit ? '按限价估算' : '预计金额'}</span><b>${nf(amount, 2)} 元</b></div>
+    <div class="paper-preview-row"><span>佣金（${nf(feeRate * 10000, 2)} 万，最低 ${nf(feeMin, 0)} 元）${tax ? ` + 印花税（${nf(taxRate * 10000, 2)} 万）` : ''}</span><b>${nf(fee + tax, 2)} 元</b></div>
     ${t.side === 'buy' ? `<div class="paper-preview-row"><span>最多可买（含佣金）</span><b>${nf(maxBuy, 0)} 股</b></div>` : ''}
     <div class="paper-preview-row"><span>成交后${t.side === 'buy' ? '可用资金' : '剩余份额'}</span><b>${t.side === 'buy' ? `${nf(cashAfter, 2)} 元` : `${nf(Math.max(0, heldAfter), 0)} 股`}</b></div>
-    ${short ? `<div class="paper-preview-warn">${t.side === 'buy' ? `可用资金不足（最多可买 ${nf(maxBuy, 0)} 股），请减少股数或改按比例买入` : '持仓不足，无法卖出这么多'}</div>` : ''}`;
+    ${isLimit ? `<div class="paper-preview-line muted small">限价单挂上后不冻结资金，每 60 秒按现价撮合一次；到价才成交，未成交部分到期自动失效。</div>` : ''}
+    ${short ? `<div class="paper-preview-warn">${t.side === 'buy' ? `可用资金不足（最多可买 ${nf(maxBuy, 0)} 股），请减少股数或改按比例买入` : '持仓不足（T+1 锁定的部分今天不能卖）'}</div>` : ''}`;
 }
 
 async function loadPaperQuote(secid) {
@@ -4314,6 +4383,11 @@ function pickPaperSymbol(item, { presetShares = 0 } = {}) {
 function openPaperTrade(side = 'buy', preset = {}) {
   const isSell = side === 'sell';
   const d = state.paper || {};
+  const trading = (d.rules && d.rules.trading) || { t1: true, limitCheck: true, suspend: true };
+  const fees = (d.rules && d.rules.fees) || { rate: 0.00025, min: 5, taxRate: 0.0005, slippageBps: 0 };
+  // 下单弹窗里的规则提示与后台开关保持一致（T+1 打开时卖出只能卖「可卖」部分）
+  const sellRuleHint = `卖出扣佣金 ${nf(Number(fees.rate) * 10000, 2)} 万（最低 ${nf(fees.min, 0)} 元）+ 印花税 ${nf(Number(fees.taxRate) * 10000, 2)} 万${trading.t1 ? '；T+1：当日买入的股数今天不能卖' : ''}${trading.limitCheck ? '；跌停价不能卖出' : ''}`;
+  const buyRuleHint = `买入按 ${nf(Number(fees.rate) * 10000, 2)} 万佣金（最低 ${nf(fees.min, 0)} 元）${Number(fees.slippageBps) > 0 ? `、滑点 ${nf(fees.slippageBps, 0)} bp` : ''}${trading.limitCheck ? '；涨停价不能买入' : ''}${trading.suspend ? '；停牌不成交' : ''}`;
   state.paperTrade = {
     side,
     target: null,
@@ -4323,6 +4397,10 @@ function openPaperTrade(side = 'buy', preset = {}) {
     presetShares: Number(preset.shares) || 0,
     searchTimer: null,
     clientOrderId: paperNewClientOrderId(),
+    // v2.12.0：市价 / 限价 + 有效期
+    orderType: 'market',
+    limitPrice: null,
+    validDays: Number((d.rules && d.rules.order && d.rules.order.validDays) || 1),
   };
   const picks = (isSell
     ? ((d.positions || []).map((p) => ({ secid: p.secid, code: p.code, name: p.name, extra: `${nf(p.shares, 0)} 股` })))
@@ -4361,6 +4439,19 @@ function openPaperTrade(side = 'buy', preset = {}) {
           </div>
         </div>
         <div class="paper-qty-hint">A 股 / 场内 ETF 买入需 100 股整数倍；卖出可全仓（含零股）</div>
+        <div class="paper-order-type">
+          <div class="seg" id="paperOrderTypeSeg">
+            <button type="button" class="is-active" data-paper-order-type="market">市价（立即成交）</button>
+            <button type="button" data-paper-order-type="limit">限价（挂单等价格）</button>
+          </div>
+          <label class="input-wrap" id="paperLimitWrap" hidden><span>限价（元）</span><input id="paperLimitPrice" type="number" min="0" step="0.01" placeholder="低于市价挂单，到了才成交"></label>
+          <label class="input-wrap" id="paperValidWrap" hidden><span>有效期</span><select id="paperValidDays">
+            <option value="1">当日（15:00 失效）</option>
+            <option value="3">3 个交易日</option>
+            <option value="5">5 个交易日</option>
+          </select></label>
+        </div>
+        <p class="muted small" id="paperRuleHint">规则：${esc(isSell ? (sellRuleHint || '') : (buyRuleHint || ''))}</p>
         <div class="paper-preview" id="paperPreview"><span class="muted small">选择标的并填写股数后，这里显示预计成交金额与费用</span></div>
         <label class="input-wrap"><span>备注</span><input id="paperNote" maxlength="40" placeholder="可选，如：回踩 MA20 买入"></label>
         <div class="modal-actions">

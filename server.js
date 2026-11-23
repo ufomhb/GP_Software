@@ -9082,10 +9082,12 @@ function alertConditionText(a) {
   return `${ALERT_KIND_LABEL[a.kind]} ${op} ${Number(a.value).toFixed(2)}${unit}`;
 }
 
-/** 读某个用户的预警盒（默认关闭：云端预警要显式打开） */
-function getAlertBox(user) {
+/** 读某个用户的预警盒（默认关闭：云端预警要显式打开）
+ *  v2.12.0：key 可指定，模拟盘持仓预警存在 user_extras['paper_alerts']，与自选股预警分开存，
+ *  避免两边规则混在一起互相覆盖（同一套评估 / 推送机制）。 */
+function getAlertBox(user, key = 'alerts') {
   if (!user) return { enabled: false, items: [], updatedAt: null };
-  const raw = dataStore.loadUserExtra(user.id, 'alerts', null);
+  const raw = dataStore.loadUserExtra(user.id, key, null);
   if (!raw || typeof raw !== 'object') return { enabled: false, items: [], updatedAt: null };
   return {
     enabled: raw.enabled === true,
@@ -9095,7 +9097,7 @@ function getAlertBox(user) {
   };
 }
 
-function saveAlertBox(user, box) {
+function saveAlertBox(user, box, key = 'alerts') {
   if (!user) return;
   const payload = {
     enabled: box.enabled === true,
@@ -9103,8 +9105,24 @@ function saveAlertBox(user, box) {
     updatedAt: Date.now(),
     lastPush: box.lastPush || null,
   };
-  dataStore.saveUserExtra(user.id, 'alerts', payload);
+  dataStore.saveUserExtra(user.id, key, payload);
   return payload;
+}
+
+const PAPER_ALERT_KEY = 'paper_alerts';
+
+/** 模拟盘持仓条件预警盒（与自选股预警同一套规则/推送，只是单独存） */
+function getPaperAlertBox(user) {
+  const box = getAlertBox(user, PAPER_ALERT_KEY);
+  return { ...box, items: box.items.map((a) => ({ ...a, scope: 'paper' })) };
+}
+
+function savePaperAlertBox(user, box) {
+  return saveAlertBox(user, {
+    enabled: box.enabled === true,
+    items: normalizeServerAlerts((box.items || []).map((a) => ({ ...a, scope: 'paper' }))),
+    lastPush: box.lastPush || null,
+  }, PAPER_ALERT_KEY);
 }
 
 /** 单条规则判定：与前端 evalAlertRule 同口径（服务端要独立一份，不能 import 前端模块） */
@@ -9167,9 +9185,12 @@ function evalAlertRule(alert, quote, kline) {
  * 只在「有启用规则」时被调用，避免给没开预警的用户发无谓请求。
  */
 async function evaluateUserAlerts(user, opts = {}) {
-  const box = getAlertBox(user);
-  if (!box.enabled) return 0;
-  const active = box.items.filter((a) => a.active);
+  const stockBox = getAlertBox(user);
+  const paperBox = getPaperAlertBox(user);
+  const active = [
+    ...(stockBox.enabled ? stockBox.items.filter((a) => a.active) : []),
+    ...(paperBox.enabled ? paperBox.items.filter((a) => a.active) : []),
+  ];
   if (!active.length) return 0;
 
   const secids = [...new Set(active
@@ -9193,6 +9214,8 @@ async function evaluateUserAlerts(user, opts = {}) {
 
   let klineUsed = 0;
   let triggered = 0;
+  let stockDirty = false;
+  let paperDirty = false;
   for (const alert of active) {
     const q = qmap.get(alert.secid) || null;
     let kline = null;
@@ -9231,9 +9254,12 @@ async function evaluateUserAlerts(user, opts = {}) {
     alert.triggeredAt = Date.now();
     alert.triggerNote = res.note || '';
     triggered += 1;
+    const srcBox = alert.scope === 'paper' ? paperBox : stockBox;
+    if (alert.scope === 'paper') paperDirty = true;
+    else stockDirty = true;
 
     if (opts.push !== false) {
-      const paper = PAPER_ALERT_KINDS.includes(alert.kind);
+      const paper = alert.scope === 'paper' || PAPER_ALERT_KINDS.includes(alert.kind);
       const msg = `${alert.name || alert.code || '模拟账户'} ${alertConditionText(alert)}${res.note ? ` · ${res.note}` : ''}`;
       try {
         await pushService.sendPushMessage({
@@ -9247,16 +9273,20 @@ async function evaluateUserAlerts(user, opts = {}) {
             `- 账号：${user.username || ''}`,
           ].join('\n'),
         });
-        box.lastPush = { at: Date.now(), ok: true, message: msg };
+        srcBox.lastPush = { at: Date.now(), ok: true, message: msg };
       } catch (err) {
-        box.lastPush = { at: Date.now(), ok: false, message: `${msg}（推送失败：${err.message}）` };
+        srcBox.lastPush = { at: Date.now(), ok: false, message: `${msg}（推送失败：${err.message}）` };
       }
     }
   }
 
-  if (triggered) {
-    box.items = normalizeServerAlerts(box.items);
-    saveAlertBox(user, box);
+  if (stockDirty) {
+    stockBox.items = normalizeServerAlerts(stockBox.items);
+    saveAlertBox(user, stockBox);
+  }
+  if (paperDirty) {
+    paperBox.items = normalizeServerAlerts(paperBox.items);
+    savePaperAlertBox(user, paperBox);
   }
   return triggered;
 }
@@ -9267,15 +9297,22 @@ async function alertsTick() {
   if (alertsTicking) return;
   alertsTicking = true;
   try {
-    const owners = dataStore.listUserExtraOwners('alerts').slice(0, 50);
-    if (!owners.length) return;
+    // v2.12.0：自选股预警 + 模拟盘持仓预警各存一份，这里取并集一起评估
+    const ownerSet = new Set();
+    for (const key of ['alerts', PAPER_ALERT_KEY]) {
+      for (const id of dataStore.listUserExtraOwners(key)) ownerSet.add(String(id));
+    }
+    if (!ownerSet.size) return;
+    const owners = [...ownerSet].slice(0, 60);
     const users = (dataStore.loadUsers() || {}).users || [];
     const byId = new Map(users.map((u) => [String(u.id), u]));
     for (const id of owners) {
       const user = byId.get(String(id));
       if (!user) continue;
-      const box = getAlertBox(user);
-      if (!box.enabled || !box.items.some((a) => a.active)) continue;
+      const stockBox = getAlertBox(user);
+      const paperBox = getPaperAlertBox(user);
+      if (!stockBox.enabled && !paperBox.enabled) continue;
+      if (!stockBox.items.some((a) => a.active) && !paperBox.items.some((a) => a.active)) continue;
       try {
         await evaluateUserAlerts(user);
       } catch {
@@ -9709,6 +9746,11 @@ async function getPaper(user) {
     allowFollow: account.allowFollow !== false,
     corporate: Object.values(account.corporate || {}).slice(-10).reverse(),
     periods: period,
+    // v2.12.0：持仓条件预警（和自选股预警同一套规则与推送，只是独立存储）
+    alerts: (() => {
+      const box = getPaperAlertBox(user);
+      return { enabled: box.enabled, items: box.items, lastPush: box.lastPush };
+    })(),
     rules: paperRules(cfg),
   };
 }
@@ -10323,7 +10365,12 @@ async function createPaperPlan(user, payload = {}) {
     }
     account.plans = paperAuto.sanitizePlans([...(account.plans || []), plan]);
     savePaperAccount(user, account);
-    return { ok: true, plan, plans: account.plans };
+    const added = account.plans.find((p) => String(p.id) === String(plan.id)) || plan;
+    return {
+      ok: true,
+      plan: added.kind === 'grid' ? { ...added, levels: paperAuto.gridLevels(added) } : added,
+      plans: account.plans,
+    };
   });
 }
 
@@ -10658,6 +10705,7 @@ async function getPaperAdminOverview() {
     };
   });
   rows.sort((a, b) => b.total - a.total || String(a.username).localeCompare(String(b.username)));
+  const corporateEvents = loadCorporateEvents();
   return {
     ok: true,
     config,
@@ -10671,9 +10719,9 @@ async function getPaperAdminOverview() {
       conditions: rows.reduce((s, r) => s + (r.conditions || []).filter((c) => c.status === 'active').length, 0),
       plans: rows.reduce((s, r) => s + (r.plans || []).filter((p) => p.status === 'active').length, 0),
       followers: rows.reduce((s, r) => s + (Number(r.followers) || 0), 0),
-      corporate: (config && config.__corporateCount) || 0,
+      corporate: corporateEvents.length,
     },
-    corporateEvents: loadCorporateEvents(),
+    corporateEvents,
     estimated,
     updatedAt: Date.now(),
   };
@@ -11018,6 +11066,8 @@ const httpRoutes = createHttpRoutes({
   fetchFundMNFInfo,
   getAlertBox,
   saveAlertBox,
+  getPaperAlertBox,
+  savePaperAlertBox,
   getPaper,
   getPaperAdminOverview,
   getPaperPnl,

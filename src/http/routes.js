@@ -38,6 +38,8 @@ function createHttpRoutes(deps) {
     fetchFundMNFInfo,
     getAlertBox,
     saveAlertBox,
+    getPaperAlertBox,
+    savePaperAlertBox,
     getPaper,
     getPaperAdminOverview,
     getPaperPnl,
@@ -1360,6 +1362,22 @@ async function handleApi(req, res, url) {
       return { ok: true, enabled: merged.enabled, items: merged.items, updatedAt: merged.updatedAt };
     }
     return getAlertBox(currentUser(req));
+  }
+  /* 模拟盘持仓条件预警（v2.12.0）：规则存在 user_extras['paper_alerts']，
+     与自选股预警同一套评估与推送，只是独立存放，互不覆盖。 */
+  if (p === '/api/paper/alerts') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    if (req.method === 'POST') {
+      const body = req.body || {};
+      const current = getPaperAlertBox(user);
+      const merged = savePaperAlertBox(user, {
+        enabled: body.enabled === undefined ? current.enabled : body.enabled === true,
+        items: body.items === undefined ? current.items : body.items,
+      });
+      return { ok: true, enabled: merged.enabled, items: merged.items, updatedAt: merged.updatedAt };
+    }
+    return getPaperAlertBox(user);
   }
   if (p === '/api/paper') {
     const user = currentUser(req);
