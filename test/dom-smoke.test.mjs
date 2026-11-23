@@ -1544,7 +1544,7 @@ test('DOM：盈亏日历「日」视图是周一到周五网格，周末不占�
   const box = document.querySelector('#fundPnlCalendar');
   assert.ok(box.querySelector('.pnl-calendar'), '缺少日历网格');
   const heads = [...box.querySelectorAll('.pnl-calendar-head')].map((el) => el.textContent.trim()).filter(Boolean);
-  assert.deepEqual(heads, ['', '周一', '周二', '周三', '周四', '周五'], '表头必须是周一~周五');
+  assert.deepEqual(heads, ['周一', '周二', '周三', '周四', '周五'], '表头必须是周一~周五');
   // 2026-11-07 / 08 是周末：不应出现 7、8 号格子
   const dayTexts = [...box.querySelectorAll('.pnl-calendar-day')].map((el) => el.textContent.trim());
   assert.ok(!dayTexts.includes('7') && !dayTexts.includes('8'), '周末不占列');
