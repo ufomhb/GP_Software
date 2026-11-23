@@ -399,3 +399,138 @@ test('排行榜：黑名单用户不在榜上，但仍能自己交易；隐藏�
   const back = await admin.get('/api/paper/ranking');
   assert.equal(back.body.items.length, 2);
 });
+
+
+/* ---------------- v2.11.0：排行详情 / 增量资金 / 超量买入 / 幂等 ---------------- */
+
+test('v2.11.0 排行详情：可看他人完整持仓、不透出账号 ID；黑名单对他人 404', async (t) => {
+  const app = await startApp({ env: { ALLOW_REGISTER: '1' } });
+  t.after(() => app.stop());
+  const a = app.client();
+  const regA = await a.post('/api/auth/register', { username: 'detailA', password: 'detail-pw-111' });
+  assert.equal(regA.status, 200);
+  const b = app.client();
+  const regB = await b.post('/api/auth/register', { username: 'detailB', password: 'detail-pw-222' });
+  assert.equal(regB.status, 200);
+
+  const det = await b.get('/api/paper/ranking/detail?username=' + encodeURIComponent('detailA'));
+  assert.equal(det.status, 200);
+  assert.equal(det.body.username, 'detailA');
+  assert.equal(det.body.isSelf, false);
+  assert.ok(Array.isArray(det.body.positions), '要能拿到具体持仓');
+  assert.ok(Array.isArray(det.body.realized));
+  assert.ok(!('id' in det.body) && !('userId' in det.body), '不能透出账号 ID');
+  assert.ok(!('trades' in det.body), '不返回成交流水 / 备注');
+
+  const self = await a.get('/api/paper/ranking/detail?username=detailA');
+  assert.equal(self.status, 200);
+  assert.equal(self.body.isSelf, true);
+
+  // 管理员把 detailA 移出排行榜 → 别人看详情 404，自己仍可看
+  const list = await a.get('/api/admin/paper');
+  const target = list.body.users.find((x) => x.username === 'detailA');
+  assert.ok(target);
+  await a.post('/api/admin/paper/config', { hiddenUserIds: [target.id] });
+  const denied = await b.get('/api/paper/ranking/detail?username=detailA');
+  assert.equal(denied.status, 404);
+  const own = await a.get('/api/paper/ranking/detail?username=detailA');
+  assert.equal(own.status, 200);
+
+  const anon = await b.req('/api/paper/ranking/detail?username=detailA', { cookie: '' });
+  assert.equal(anon.status, 401);
+});
+
+test('v2.11.0 增量资金：全部账户加等额资金、本金口径、批次幂等、审计与重置', async (t) => {
+  const app = await startApp({ env: { ALLOW_REGISTER: '1' } });
+  t.after(() => app.stop());
+  const a = app.client();
+  assert.equal((await a.post('/api/auth/register', { username: 'capAdmin', password: 'cap-pw-111' })).status, 200);
+  const b = app.client();
+  assert.equal((await b.post('/api/auth/register', { username: 'capUser', password: 'cap-pw-222' })).status, 200);
+
+  const before = await b.get('/api/paper');
+  assert.equal(before.body.initial, 1000000);
+  assert.equal(before.body.injected, 0);
+  assert.equal(before.body.principal, 1000000);
+
+  const deny = await b.post('/api/admin/paper/inject', { amount: 1000 });
+  assert.equal(deny.status, 403, '普通用户不能加钱');
+
+  const bad = await a.post('/api/admin/paper/inject', { amount: 500 });
+  assert.equal(bad.status, 400, '低于下限被拒');
+
+  const r1 = await a.post('/api/admin/paper/inject', { amount: 1000, note: '测试加仓', batchId: 'batch-t1' });
+  assert.equal(r1.status, 200);
+  assert.equal(r1.body.duplicate, false);
+  assert.equal(r1.body.users, 2);
+  assert.equal(r1.body.total, 2000);
+
+  const after = await b.get('/api/paper');
+  assert.equal(after.body.cash, before.body.cash + 1000);
+  assert.equal(after.body.initial, before.body.initial, '初始资金不变');
+  assert.equal(after.body.injected, 1000);
+  assert.equal(after.body.principal, before.body.initial + 1000);
+  assert.equal(after.body.profit, 0, '加钱不能产生盈亏');
+  assert.equal(after.body.profitPct, 0);
+  assert.equal(after.body.capital.events.length, 1);
+
+  // 同一 batchId 重复提交：幂等，不再加钱
+  const r2 = await a.post('/api/admin/paper/inject', { amount: 1000, note: '测试加仓', batchId: 'batch-t1' });
+  assert.equal(r2.status, 200);
+  assert.equal(r2.body.duplicate, true);
+  const after2 = await b.get('/api/paper');
+  assert.equal(after2.body.cash, after.body.cash);
+
+  // 只给已有模拟记录：没有成交/持仓 → 0 个目标
+  const tradedOnly = await a.post('/api/admin/paper/inject', { amount: 1000, onlyTraded: true, batchId: 'batch-t2' });
+  assert.equal(tradedOnly.status, 200);
+  assert.equal(tradedOnly.body.users, 0);
+
+  // 审计：后台能看到批次，用户重置后追加资金清零
+  const admin = await a.get('/api/admin/paper');
+  assert.ok(admin.body.config.capitalBatches.some((x) => x.batchId === 'batch-t1'));
+  const u = admin.body.users.find((x) => x.username === 'capUser');
+  assert.equal(u.injected, 1000);
+  assert.equal(u.principal, 1001000);
+
+  const reset = await b.post('/api/paper/reset', {});
+  assert.equal(reset.status, 200);
+  const reopened = await b.get('/api/paper');
+  assert.equal(reopened.body.injected, 0);
+  assert.equal(reopened.body.principal, reopened.body.initial);
+  assert.deepEqual(reopened.body.realized, []);
+});
+
+test('v2.11.0 超过可买股数：拒绝且账户零变化', async () => {
+  await withApp(async (c) => {
+    const before = await c.get('/api/paper');
+    const r = await c.post('/api/paper/trade', { secid: '1.600519', side: 'buy', shares: 1000000 });
+    assert.equal(r.status, 400);
+    assert.match(String(JSON.stringify(r.body)), /资金|最新价|股数/);
+    const after = await c.get('/api/paper');
+    assert.equal(after.body.cash, before.body.cash, '被拒绝时现金不能变');
+    assert.equal(after.body.trades.length, 0, '被拒绝时不能落成交');
+    assert.deepEqual(after.body.positions, []);
+  });
+});
+
+test('v2.11.0 同一 clientOrderId 并发重试只成交一次（无行情则跳过）', async (t) => {
+  await withApp(async (c) => {
+    const payload = { secid: '1.600519', side: 'buy', shares: 100, clientOrderId: 'dup-order-1' };
+    const [r1, r2] = await Promise.all([
+      c.post('/api/paper/trade', payload),
+      c.post('/api/paper/trade', payload),
+    ]);
+    if (r1.status !== 200 || r2.status !== 200) {
+      t.diagnostic(`跳过：需要实时行情（${r1.status}/${r2.status}）`);
+      return;
+    }
+    const dupes = [r1.body, r2.body].filter((x) => x.duplicate);
+    assert.equal(dupes.length, 1, '两次提交只有一次真正成交');
+    const acc = await c.get('/api/paper');
+    const hits = acc.body.trades.filter((x) => x.clientOrderId === 'dup-order-1');
+    assert.equal(hits.length, 1, '成交记录只能有一条');
+    assert.equal(acc.body.positions.length, 1);
+    assert.equal(acc.body.positions[0].shares, 100);
+  });
+});

@@ -3251,7 +3251,26 @@ button[hidden] { display: none !important; }
   .paper-qty { gap: 8px; }
   .paper-ratio-seg { width: 100%; }
   .paper-ratio-seg button { flex: 1; padding: 9px 0; }
+  /* v2.11.0：窄屏先隐藏「已实现」列，避免持仓表横向溢出 */
+  .paper-pos-table th:nth-child(9),
+  .paper-pos-table td:nth-child(9),
+  .paper-trade-table th:nth-child(8),
+  .paper-trade-table td:nth-child(8) { display: none; }
 }
+
+/* =========================================================
+   v2.11.0：模拟盘盈亏日历 / 个股累计收益 / 排行榜持仓详情
+   ========================================================= */
+.paper-pnl-kpis { margin: 10px 0 12px; }
+.paper-pnl-chart { height: 220px; margin-top: 12px; }
+.paper-pnl-chart .empty { padding: 28px 0; text-align: center; }
+.paper-realized-table td, .paper-realized-table th { vertical-align: middle; }
+.paper-realized-table .badge { font-size: 9px; padding: 1px 6px; }
+.paper-rank-table .paper-detail-btn { white-space: nowrap; font-size: 11px; }
+.paper-detail-modal .paper-detail-kpis { margin: 10px 0 4px; }
+.paper-detail-modal .paper-pos-table,
+.paper-detail-modal .paper-realized-table { min-width: 640px; }
+.paper-realized-meta { margin-top: 6px; }
 
 
 /* =========================================================

@@ -2064,6 +2064,7 @@ function renderPaperAdmin(data) {
       { label: '模拟账户', value: n(totals.users), sub: `已交易 ${n(totals.traded)} 个` },
       { label: '排行榜隐藏', value: n(totals.hidden), sub: '黑名单（仍可自己交易）' },
       { label: '全局初始资金', value: n(cfg.initial).toLocaleString('zh-CN'), sub: '新账号 / 重置用', tone: 'accent' },
+      { label: '累计增量资金', value: n(totals.injected || 0).toLocaleString('zh-CN'), sub: '本金 = 初始 + 追加' },
     ]);
   }
   const initialInput = $('#paperInitial');
@@ -2072,6 +2073,7 @@ function renderPaperAdmin(data) {
   if (meta) {
     meta.textContent = `${users.length} 个用户 · 隐藏 ${n(totals.hidden)} 个 · 初始资金 ${n(cfg.initial).toLocaleString('zh-CN')} 元 · 持仓取价：${data.estimated ? '部分按成本估算' : '实时'}`;
   }
+  renderPaperCapitalBatches(cfg.capitalBatches || []);
   const rows = users.map((u) => {
     const profit = Number(u.profit) || 0;
     const tone = profit > 0 ? 'ok' : profit < 0 ? 'bad' : '';
@@ -2079,6 +2081,8 @@ function renderPaperAdmin(data) {
       <td><b>${esc(u.username)}</b>${u.primary ? ' <span class="admin-badge admin">主账号</span>' : ''}</td>
       <td><button type="button" class="admin-btn ${u.hidden ? '' : 'primary'}" data-paper-hide="${esc(u.id)}" data-hidden="${u.hidden ? '1' : '0'}">${u.hidden ? '已隐藏' : '进排行榜'}</button></td>
       <td class="num">${n(u.initial).toLocaleString('zh-CN')}</td>
+      <td class="num">${n(u.injected || 0).toLocaleString('zh-CN')}</td>
+      <td class="num">${n(u.principal || u.initial).toLocaleString('zh-CN')}</td>
       <td class="num">${n(u.cash).toLocaleString('zh-CN')}</td>
       <td class="num">${n(u.marketValue).toLocaleString('zh-CN')}</td>
       <td class="num">${n(u.total).toLocaleString('zh-CN')}</td>
@@ -2094,8 +2098,8 @@ function renderPaperAdmin(data) {
   const box = $('#paperUsers');
   if (box) {
     box.innerHTML = `<table class="admin-table"><thead><tr>
-      <th>用户</th><th>排行榜</th><th>初始资金</th><th>可用资金</th><th>持仓市值</th><th>总资产</th><th>累计盈亏</th><th>持仓数</th><th>最近操作</th><th>操作</th>
-    </tr></thead><tbody>${rows || '<tr><td colspan="10"><div class="admin-empty">还没有用户</div></td></tr>'}</tbody></table>`;
+      <th>用户</th><th>排行榜</th><th>初始资金</th><th>累计追加</th><th>本金</th><th>可用资金</th><th>持仓市值</th><th>总资产</th><th>累计盈亏</th><th>持仓数</th><th>最近操作</th><th>操作</th>
+    </tr></thead><tbody>${rows || '<tr><td colspan="12"><div class="admin-empty">还没有用户</div></td></tr>'}</tbody></table>`;
   }
   $$('[data-paper-hide]').forEach((btn) => btn.addEventListener('click', () => togglePaperHidden(btn.getAttribute('data-paper-hide'))));
   $$('[data-paper-view]').forEach((btn) => btn.addEventListener('click', () => showPaperDetail(btn.getAttribute('data-paper-view'))));
@@ -2149,6 +2153,67 @@ async function savePaperInitial() {
   }
 }
 
+/* ---------------- 增量资金（v2.11.0） ----------------
+   给全部账户各加等额资金：现金 +amount、本金 = 初始 + 累计追加；
+   累计盈亏不被抬高，收益率分母同步变大。批次重复提交幂等。
+   --------------------------------------------------- */
+
+let paperCapitalPendingId = '';
+
+function renderPaperCapitalBatches(batches) {
+  const box = $('#paperCapitalBatches');
+  if (!box) return;
+  const list = Array.isArray(batches) ? batches : [];
+  if (!list.length) {
+    box.innerHTML = '<div class="admin-empty">还没有增量资金记录</div>';
+    return;
+  }
+  const rows = list.slice().reverse().map((b) => `<tr>
+    <td class="nowrap muted">${esc(fmtClock(b.at))}</td>
+    <td class="num">+${n(b.amount).toLocaleString('zh-CN')}</td>
+    <td class="num">${n(b.users)} 个</td>
+    <td class="num">${n(b.total).toLocaleString('zh-CN')}</td>
+    <td>${b.onlyTraded ? '仅已有模拟记录' : '全部账户'}</td>
+    <td class="muted">${esc(b.note || '—')}${b.by ? ` · ${esc(b.by)}` : ''}</td>
+  </tr>`).join('');
+  box.innerHTML = `<table class="admin-table"><thead><tr><th>时间</th><th>每户增加</th><th>账户数</th><th>合计</th><th>范围</th><th>备注 / 操作者</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function submitPaperCapital() {
+  const amountInput = $('#paperCapitalAmount');
+  const noteInput = $('#paperCapitalNote');
+  const onlyTraded = $('#paperCapitalOnlyTraded') ? $('#paperCapitalOnlyTraded').checked : false;
+  const amount = Number(amountInput ? amountInput.value : 0);
+  if (!Number.isFinite(amount) || amount < 1000 || amount > 100000000) {
+    toast('每个账户增加的金额需在 1,000 ~ 100,000,000 元之间', 'warn');
+    return;
+  }
+  const note = String(noteInput ? noteInput.value : '').slice(0, 60);
+  const cmd = $('#paperCapitalBtn');
+  const text = `确定给${onlyTraded ? '已有模拟记录的' : '全部'}账户各增加 ${amount.toLocaleString('zh-CN')} 元？\n\n现金与本金同步增加，累计盈亏不会被抬高；该操作不可撤销。`;
+  if (!window.confirm(text)) return;
+  // 同一批次只生成一次 id：超时 / 重试复用，服务端幂等，不会重复加钱
+  if (!paperCapitalPendingId) paperCapitalPendingId = `cap-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  const batchId = paperCapitalPendingId;
+  if (cmd) { cmd.disabled = true; cmd.textContent = '提交中…'; }
+  const hint = $('#paperCapitalHint');
+  if (hint) hint.textContent = '正在给目标账户增加资金，请稍候（提交期间不要关闭页面）…';
+  try {
+    const res = await apiPost('/api/admin/paper/inject', { amount, note, onlyTraded, batchId }, 60000);
+    paperCapitalPendingId = '';
+    toast(res.duplicate
+      ? '该批次已经执行过，本次未重复加钱'
+      : `已给 ${n(res.users)} 个账户各增加 ${n(res.amount).toLocaleString('zh-CN')} 元（合计 ${n(res.total).toLocaleString('zh-CN')} 元）`, 'ok');
+    await loadPaper();
+  } catch (err) {
+    // 结果未知时保留 batchId：再点一次「给全部账户增加」会带同一批次号重试
+    if (hint) hint.textContent = `提交失败：${err.message}。如不确定是否已执行，可直接再点一次（同一批次会按幂等处理）。`;
+    toast(`增量资金失败：${err.message}`, 'err');
+  } finally {
+    if (cmd) { cmd.disabled = false; cmd.textContent = '给全部账户增加'; }
+  }
+}
+
 async function resetPaperUser(id, name, currentInitial) {
   const raw = window.prompt(`把「${name}」的模拟账户清空并按初始资金重开。输入初始资金（元）：`, String(currentInitial || 1000000));
   if (raw === null) return;
@@ -2182,14 +2247,15 @@ function showPaperDetail(id) {
     <td class="num">${n(p.marketValue).toLocaleString('zh-CN')}</td>
     <td class="num ${p.profit > 0 ? 'ok' : p.profit < 0 ? 'bad' : ''}">${p.profit > 0 ? '+' : ''}${n(p.profit).toLocaleString('zh-CN')}</td>
     <td class="num">${p.profitPct === null || p.profitPct === undefined ? '--' : `${n(p.profitPct).toFixed(2)}%`}</td>
+    <td class="num ${p.realizedAmount > 0 ? 'ok' : p.realizedAmount < 0 ? 'bad' : ''}">${p.realizedAmount ? `${p.realizedAmount > 0 ? '+' : ''}${n(p.realizedAmount).toLocaleString('zh-CN')}` : '--'}</td>
   </tr>`).join('');
   box.innerHTML = `<div class="admin-kv-list">
-      <div class="admin-kv"><span>初始资金</span><b>${n(user.initial).toLocaleString('zh-CN')} 元</b></div>
+      <div class="admin-kv"><span>初始资金 / 累计追加 / 本金</span><b>${n(user.initial).toLocaleString('zh-CN')} / ${n(user.injected || 0).toLocaleString('zh-CN')} / ${n(user.principal || user.initial).toLocaleString('zh-CN')} 元</b></div>
       <div class="admin-kv"><span>可用资金</span><b>${n(user.cash).toLocaleString('zh-CN')} 元</b></div>
       <div class="admin-kv"><span>持仓市值 / 总资产</span><b>${n(user.marketValue).toLocaleString('zh-CN')} / ${n(user.total).toLocaleString('zh-CN')} 元</b></div>
       <div class="admin-kv"><span>累计盈亏</span><b>${user.profit > 0 ? '+' : ''}${n(user.profit).toLocaleString('zh-CN')} 元（${n(user.profitPct).toFixed(2)}%）</b></div>
     </div>
-    ${rows ? `<table class="admin-table"><thead><tr><th>标的</th><th>份额</th><th>成本</th><th>现价</th><th>市值</th><th>浮盈</th><th>收益率</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="admin-empty">该账户当前空仓</div>'}`;
+    ${rows ? `<table class="admin-table"><thead><tr><th>标的</th><th>份额</th><th>成本</th><th>现价</th><th>市值</th><th>浮盈</th><th>收益率</th><th>已实现</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="admin-empty">该账户当前空仓</div>'}`;
   wrap.hidden = false;
   wrap.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
@@ -2197,6 +2263,15 @@ function showPaperDetail(id) {
 function bindPaper() {
   const save = $('#paperSaveInitial');
   if (save) save.addEventListener('click', savePaperInitial);
+  const capital = $('#paperCapitalBtn');
+  if (capital) capital.addEventListener('click', submitPaperCapital);
+  // 改了金额 / 范围 / 备注就当成新的批次，避免沿用上一次的 batchId 被幂等吞掉
+  ['#paperCapitalAmount', '#paperCapitalNote', '#paperCapitalOnlyTraded'].forEach((sel) => {
+    const el = $(sel);
+    if (!el) return;
+    el.addEventListener('input', () => { paperCapitalPendingId = ''; });
+    el.addEventListener('change', () => { paperCapitalPendingId = ''; });
+  });
   const close = $('#paperDetailClose');
   if (close) close.addEventListener('click', () => { const wrap = $('#paperDetailWrap'); if (wrap) wrap.hidden = true; });
 }

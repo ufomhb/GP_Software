@@ -3838,7 +3838,7 @@ function renderPaper() {
     <td>${nf(p.marketValue, 0)}</td>
     <td class="${toneClass(p.profit)}">${nf(p.profit, 0)}</td>
     <td class="${toneClass(p.profitPct)}">${p.profitPct === null ? '--' : `${nf(p.profitPct, 2)}%`}</td>
-    <td class="${toneClass(p.realizedAmount)}">${p.realizedAmount === null || p.realizedAmount === undefined ? '--' : `${signedFmt(p.realizedAmount, 0)}${p.realizedPct === null || p.realizedPct === undefined ? '' : `<div class="t-sub">${nf(p.realizedPct, 2)}%</div>`}`}</td>
+    <td class="${toneClass(p.realizedAmount)}">${p.realizedAmount === null || p.realizedAmount === undefined ? '--' : `${signedFmt(p.realizedAmount, 2)}${p.realizedPct === null || p.realizedPct === undefined ? '' : `<div class="t-sub">${nf(p.realizedPct, 2)}%</div>`}`}</td>
     <td><button class="text-link" data-paper-sell="${esc(p.secid)}" data-paper-name="${esc(p.name)}" data-paper-shares="${p.shares}">卖出</button></td>
   </tr>`).join('') || '<tr><td colspan="10"><div class="empty">还没有模拟持仓。点「模拟买入」按最新价建仓。</div></td></tr>';
 
@@ -4046,7 +4046,7 @@ function renderPaperDetail(detail) {
     <td>${nf(p.marketValue, 0)}</td>
     <td class="t-chg ${toneClass(p.profit)}">${signedFmt(p.profit, 0)}</td>
     <td class="t-chg ${toneClass(p.profitPct)}">${p.profitPct === null || p.profitPct === undefined ? '--' : `${nf(p.profitPct, 2)}%`}</td>
-    <td class="t-chg ${toneClass(p.realizedAmount)}">${p.realizedAmount === null || p.realizedAmount === undefined ? '--' : signedFmt(p.realizedAmount, 0)}</td>
+    <td class="t-chg ${toneClass(p.realizedAmount)}">${p.realizedAmount === null || p.realizedAmount === undefined ? '--' : signedFmt(p.realizedAmount, 2)}</td>
   </tr>`).join('') || '<tr><td colspan="8"><div class="empty">该账户当前空仓</div></td></tr>';
   const realized = (d.realized || []).map((r) => `<tr>
     <td><span class="t-name">${esc(cleanName(r.name) || r.code)}</span><span class="t-sub">${esc(r.code || '')}</span>${r.holding ? ' <span class="badge">持仓中</span>' : ''}</td>

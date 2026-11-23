@@ -1543,7 +1543,7 @@ test('DOM：盈亏日历「日」视图是周一到周五网格，周末不占�
   app.renderFundPnlCalendar();
   const box = document.querySelector('#fundPnlCalendar');
   assert.ok(box.querySelector('.pnl-calendar'), '缺少日历网格');
-  const heads = [...box.querySelectorAll('.pnl-calendar-head')].map((el) => el.textContent.trim());
+  const heads = [...box.querySelectorAll('.pnl-calendar-head')].map((el) => el.textContent.trim()).filter(Boolean);
   assert.deepEqual(heads, ['', '周一', '周二', '周三', '周四', '周五'], '表头必须是周一~周五');
   // 2026-11-07 / 08 是周末：不应出现 7、8 号格子
   const dayTexts = [...box.querySelectorAll('.pnl-calendar-day')].map((el) => el.textContent.trim());
@@ -2073,4 +2073,198 @@ test('DOM：场外基金勾选对比后「已选」计数与按钮同步（v2.10
   app.state.fundView = prevView;
   app.state.fundBoard = prevBoard;
   app.state.fundBoardTab = prevTab;
+});
+
+
+/* ---------------------------------------------------------
+   v2.11.0：模拟盘最大可买 / 当日盈亏 / 已实现 / 盈亏日历 / 排行详情
+   --------------------------------------------------------- */
+
+test('DOM：v2.11.0 最大可买与服务端同口径（整手 / 最低佣金边界）', () => {
+  assert.equal(app.paperMaxBuyShares({ price: 10, cash: 100000, secid: '1.600519' }), 9900);
+  assert.equal(app.paperMaxBuyShares({ price: 10, cash: 1005, secid: '1.600519' }), 100);
+  assert.equal(app.paperMaxBuyShares({ price: 10, cash: 1004.9, secid: '1.600519' }), 0);
+  assert.equal(app.paperMaxBuyShares({ price: 3, cash: 100, secid: '105.AAPL' }), 31);
+  assert.equal(app.paperMaxBuyShares({ price: 0, cash: 100000, secid: '1.600519' }), 0);
+  assert.equal(app.paperMaxBuyShares({ price: 10, cash: 0, secid: '1.600519' }), 0);
+  // 超量校验提示必须带「最多可买 N 股」
+  const poor = app.paperValidateShares({ side: 'buy', shares: 9900, secid: '1.600519', price: 10, cash: 5000, held: 0 });
+  assert.equal(poor.ok, false);
+  assert.match(poor.message, /最多可买/);
+});
+
+test('DOM：v2.11.0 持仓表显示当日盈亏与已实现，KPI 显示起点 / 追加 / 本金', () => {
+  const prev = app.state.paper;
+  app.state.paper = {
+    initial: 1000000,
+    injected: 100000,
+    principal: 1100000,
+    cash: 900000,
+    marketValue: 205000,
+    costValue: 190000,
+    total: 1105000,
+    profit: 5000,
+    profitPct: 0.45,
+    positionProfit: 15000,
+    realizedProfit: -10000,
+    positions: [{
+      secid: '1.600519', code: '600519', name: '<b>危险名</b>', shares: 100, cost: 1900,
+      price: 2050, priceMode: 'live', pct: 1.2, dayPnl: 2400, marketValue: 205000,
+      profit: 15000, profitPct: 7.89, realizedAmount: 189.4, realizedPct: 18.85,
+    }],
+    realized: [{
+      secid: '1.600519', code: '600519', name: '<b>危险名</b>', sellShares: 100, sellAmount: 1200,
+      costBasis: 1005, realized: 189.4, realizedPct: 18.85, holding: true, holdingShares: 100,
+      unrealized: 150, totalProfit: 339.4, lastAt: 1795440000000, rounds: 1, incomplete: false,
+    }],
+    trades: [{
+      id: 't1', ts: 1795440000000, secid: '1.600519', code: '600519', name: '贵州茅台',
+      side: 'sell', price: 12, shares: 100, amount: 1200, fee: 5.6, realized: 189.4, realizedPct: 18.85,
+      signal: { score: 30, rating: '防御' },
+    }],
+    capital: { injected: 100000, events: [{ at: 1795440000000, amount: 100000 }] },
+    rules: {},
+  };
+  app.renderPaper();
+  const panel = document.querySelector('#paperPanel');
+  const kpis = panel.querySelector('.paper-kpis').textContent;
+  assert.match(kpis, /起点/, '总资产副行要写起点');
+  assert.match(kpis, /追加/, '总资产副行要写追加');
+  assert.match(kpis, /本金/, '总资产副行要写本金');
+
+  const posRow = panel.querySelector('.paper-pos-table tbody tr');
+  assert.match(posRow.textContent, /2,400/, '当日盈亏要显示金额');
+  assert.match(posRow.textContent, /189\.40/, '持仓行要显示已实现');
+  assert.equal(panel.querySelectorAll('.paper-pos-table b').length, 0, '股票名里的标签必须被转义');
+
+  const tradeRow = panel.querySelector('.paper-trade-table tbody tr');
+  assert.match(tradeRow.textContent, /189\.40/, '卖出成交要显示已实现');
+  assert.match(panel.textContent, /增量资金/, '有追加资金时给出说明');
+  app.state.paper = prev;
+});
+
+test('DOM：v2.11.0 个股累计收益表保留已清仓标的、转义名称、给出合计', () => {
+  const prev = app.state.paper;
+  app.state.paper = {
+    initial: 1000000, injected: 0, principal: 1000000, cash: 1000000,
+    marketValue: 0, total: 1000000, profit: 0, profitPct: 0,
+    positions: [], trades: [],
+    realized: [
+      { secid: '1.600519', code: '600519', name: '<b>坏</b>', sellShares: 100, sellAmount: 1200, costBasis: 1005, realized: 189.4, realizedPct: 18.85, holding: false, unrealized: null, totalProfit: 189.4, lastAt: 1, rounds: 1, incomplete: false },
+      { secid: '0.300750', code: '300750', name: '宁德时代', sellShares: 100, sellAmount: 19000, costBasis: 20000, realized: -1000, realizedPct: -5, holding: false, unrealized: null, totalProfit: -1000, lastAt: 2, rounds: 1, incomplete: true },
+    ],
+  };
+  app.renderPaperRealized();
+  const box = document.querySelector('#paperRealizedTable');
+  assert.ok(box.querySelector('.paper-realized-table'), '缺少累计收益表');
+  assert.equal(box.querySelectorAll('tbody tr').length, 2, '清仓标的仍保留');
+  assert.match(box.textContent, /已清仓/);
+  assert.match(box.textContent, /历史不完整/);
+  assert.equal(box.querySelectorAll('b').length, 0, '名称里的标签必须被转义');
+  const meta = document.querySelector('#paperRealizedMeta').textContent;
+  assert.match(meta, /合计已实现/);
+  assert.match(meta, /未计入合计/, '历史不完整的标的要说明不计入合计');
+  app.state.paper = prev;
+});
+
+test('DOM：v2.11.0 模拟盘盈亏日历 日/月/年 + 金额/收益率 + 空状态', () => {
+  const prevPaper = app.state.paper;
+  const prevPnl = app.state.paperPnl;
+  const prevUnit = app.state.paperCalendarUnit;
+  const prevMetric = app.state.paperCalendarMetric;
+  const prevYm = app.state.paperCalendarYearMonth;
+  const prevYear = app.state.paperCalendarYear;
+  app.state.paper = {
+    initial: 1000000, injected: 0, principal: 1000000, cash: 900000, marketValue: 120000,
+    total: 1020000, profit: 20000, profitPct: 2, positions: [], trades: [{ id: 't1', ts: 1, side: 'buy' }],
+    realized: [], capital: { injected: 0, events: [] },
+  };
+  app.state.paperPnl = {
+    rows: [
+      { d: '2026-11-19', pnl: -5, pct: -0.01, mv: 999995, base: 1000000, flow: 0 },
+      { d: '2026-11-20', pnl: 100, pct: 0.01, mv: 1000095, base: 999995, flow: 0 },
+      { d: '2026-11-23', pnl: 100, pct: 0.01, mv: 1000195, base: 1000095, flow: 0 },
+    ],
+    todayFlow: 0, days: 800, startDate: '2026-11-19', endDate: '2026-11-23',
+    missing: [], estimated: false, truncated: false,
+  };
+  app.state.paperCalendarUnit = 'day';
+  app.state.paperCalendarMetric = 'amount';
+  app.state.paperCalendarYearMonth = '2026-11';
+  app.state.paperCalendarYear = '2026';
+  app.renderPaperPnlCalendar();
+  const box = document.querySelector('#paperPnlCalendar');
+  assert.ok(box.querySelector('.pnl-calendar'), '缺少日历网格');
+  const heads = [...box.querySelectorAll('.pnl-calendar-head')].map((el) => el.textContent.trim()).filter(Boolean);
+  assert.deepEqual(heads, ['周一', '周二', '周三', '周四', '周五'], '日视图只占周一~周五');
+  assert.match(document.querySelector('#paperPnlKpis').textContent, /今日盈亏/);
+  assert.match(document.querySelector('#paperPnlKpis').textContent, /累计盈亏/);
+  assert.match(document.querySelector('#paperPnlCalendarMeta').textContent, /按金额/);
+
+  app.state.paperCalendarMetric = 'rate';
+  app.renderPaperPnlCalendar();
+  assert.match(document.querySelector('#paperPnlCalendarMeta').textContent, /按收益率/);
+
+  app.state.paperCalendarUnit = 'month';
+  app.renderPaperPnlCalendar();
+  assert.equal(box.querySelectorAll('.pnl-calendar-tile').length, 12, '月视图 12 格');
+
+  app.state.paperCalendarUnit = 'year';
+  app.renderPaperPnlCalendar();
+  assert.ok(box.querySelectorAll('.pnl-calendar-tile').length >= 1, '年视图至少 1 格');
+
+  // 没有成交 → 空状态，不请求也不显示「计算中」
+  app.state.paper.trades = [];
+  app.state.paperPnl = null;
+  app.state.paperCalendarUnit = 'day';
+  app.renderPaperPnlCalendar();
+  assert.match(box.textContent, /还没有模拟成交/);
+
+  app.state.paper = prevPaper;
+  app.state.paperPnl = prevPnl;
+  app.state.paperCalendarUnit = prevUnit;
+  app.state.paperCalendarMetric = prevMetric;
+  app.state.paperCalendarYearMonth = prevYm;
+  app.state.paperCalendarYear = prevYear;
+});
+
+test('DOM：v2.11.0 排行榜每行可点开持仓详情，详情含完整持仓但不显示账号 ID', () => {
+  const prevPaper = app.state.paper;
+  const prevRank = app.state.paperRank;
+  const prevOpen = app.state.paperRankOpen;
+  app.state.paper = {
+    initial: 1000000, injected: 0, principal: 1000000, cash: 1000000, marketValue: 0,
+    total: 1000000, profit: 0, profitPct: 0, positions: [], trades: [], rules: {},
+  };
+  app.state.paperRank = {
+    items: [{ username: 'detailTarget', total: 1200000, profit: 200000, profitPct: 20, positionCount: 1, positions: [{ name: '贵州茅台', code: '600519', shares: 100 }] }],
+    at: Date.now(),
+  };
+  app.state.paperRankOpen = true;
+  app.renderPaper();
+  const body = document.querySelector('#paperRankBody');
+  const btn = body.querySelector('[data-paper-detail]');
+  assert.ok(btn, '排行榜行要有看持仓入口');
+  assert.equal(btn.dataset.paperDetail, 'detailTarget');
+
+  app.renderPaperDetail({
+    username: 'detailTarget', isSelf: false,
+    initial: 1000000, injected: 0, principal: 1000000, cash: 300000, marketValue: 900000,
+    costValue: 800000, total: 1200000, profit: 200000, profitPct: 20,
+    positionProfit: 100000, realizedProfit: 100000, positionCount: 1,
+    positions: [{ secid: '1.600519', code: '600519', name: '<b>茅台</b>', shares: 100, cost: 8000, price: 9000, marketValue: 900000, profit: 100000, profitPct: 12.5, realizedAmount: 189.4, priceMode: 'live' }],
+    realized: [{ secid: '1.600519', code: '600519', name: '茅台', sellShares: 100, costBasis: 1005, realized: 189.4, realizedPct: 18.85, holding: true }],
+    updatedAt: Date.now(),
+  });
+  const overlay = document.querySelector('.overlay, .modal-overlay');
+  assert.ok(overlay, '详情弹窗应打开');
+  assert.match(document.body.textContent, /detailTarget 的模拟持仓/);
+  assert.match(document.body.textContent, /持仓明细/);
+  assert.match(document.body.textContent, /189\.40/);
+  assert.ok(!document.body.textContent.includes('userId'), '不显示账号 ID');
+  app.closeOverlay();
+
+  app.state.paper = prevPaper;
+  app.state.paperRank = prevRank;
+  app.state.paperRankOpen = prevOpen;
 });

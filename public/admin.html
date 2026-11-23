@@ -371,6 +371,20 @@
         </article>
         <article class="admin-card">
           <div class="admin-card-head">
+            <h2>增量资金</h2>
+            <span class="muted small">给全部账户各加等量资金：现金与本金同步增加，累计盈亏不会被抬高，收益率分母同步变大。</span>
+          </div>
+          <div class="admin-actions">
+            <label class="admin-inline-field"><span>每个账户增加（元）</span><input type="number" id="paperCapitalAmount" min="1000" max="100000000" step="1000" placeholder="如 100000"></label>
+            <label class="admin-inline-field"><span>备注（可选）</span><input type="text" id="paperCapitalNote" maxlength="60" placeholder="如：11 月模拟赛加仓"></label>
+            <label class="admin-inline-field"><span>范围</span><input type="checkbox" id="paperCapitalOnlyTraded"> 只给已有模拟记录</label>
+            <button type="button" class="admin-btn primary" id="paperCapitalBtn">给全部账户增加</button>
+          </div>
+          <p class="admin-note" id="paperCapitalHint">不可撤销：每次提交都会把现金与本金同步增加；同一批次重复提交按幂等处理，不会重复加钱。</p>
+          <div id="paperCapitalBatches" class="admin-table-wrap"></div>
+        </article>
+        <article class="admin-card">
+          <div class="admin-card-head">
             <h2>用户模拟盘</h2>
             <span class="muted small" id="paperMeta">—</span>
           </div>
