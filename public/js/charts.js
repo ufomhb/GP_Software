@@ -1675,7 +1675,7 @@ export function fundPnlAreaChart(el, points, options = {}) {
   const rows = (Array.isArray(points) ? points : []).filter((p) => Number.isFinite(Number(p.v)));
   if (!el) return null;
   if (rows.length < 2) {
-    el.innerHTML = '<div class="empty small">净值历史不足，暂时画不出曲线</div>';
+    el.innerHTML = `<div class="empty small">${esc(String(options.emptyText || '净值历史不足，暂时画不出曲线'))}</div>`;
     return null;
   }
   const cost = Number.isFinite(Number(options.cost)) ? Number(options.cost) : null;

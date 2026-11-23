@@ -233,7 +233,7 @@ export function renderPaperPnlCalendar() {
   }
   if (chart) {
     const points = rows.map((r) => ({ d: r.d, v: r.mv }));
-    fundPnlAreaChart(chart, points, { label: '总资产' });
+    fundPnlAreaChart(chart, points, { label: '总资产', emptyText: '成交天数不足，暂时画不出资产曲线' });
   }
   if (bars) fundPnlMonthlyBars(bars, paperMonthlyBars(rows));
   if (meta) {

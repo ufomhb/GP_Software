@@ -9507,7 +9507,13 @@ async function paperTrade(user, payload = {}) {
     // 幂等：同一 clientOrderId 已经成交过，直接返回那笔（重试/双击不再买第二次）
     if (clientOrderId) {
       const dup = account.trades.find((t) => t && t.clientOrderId === clientOrderId);
-      if (dup) return { trade: dup, duplicate: true };
+      if (dup) {
+        // 幂等键被另一笔委托复用时不能静默返回旧成交，必须让前端重新生成
+        if (String(dup.secid) !== secid || String(dup.side) !== side) {
+          throw bad('这次委托的幂等标识已用于另一笔标的/方向，请关闭弹窗重新下单');
+        }
+        return { trade: dup, duplicate: true };
+      }
     }
     let shares = sharesInput;
     if (useRatio) {
