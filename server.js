@@ -9799,7 +9799,7 @@ async function getPaperPnl(user, days = 800) {
       todayFlow: 0, missing: [], estimated: false, truncated: false, costValue: null, marketValue: null,
     };
   }
-  const key = `paperpnl:${user.id}:${shanghaiToday()}:${account.trades.length}:${(account.capital.events || []).length}:${limit}`;
+  const key = `paperpnl:${user.id}:${shanghaiToday()}:${account.updatedAt || 0}:${account.trades.length}:${(account.capital.events || []).length}:${limit}`;
   return cached(key, 60000, async () => {
     const barsBySecid = {};
     await mapLimit(secids, 3, async (secid) => {

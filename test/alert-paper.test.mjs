@@ -7,6 +7,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { startApp } from './helpers/app.mjs';
 
 async function withApp(fn) {
@@ -533,4 +535,42 @@ test('v2.11.0 同一 clientOrderId 并发重试只成交一次（无行情则跳
     assert.equal(acc.body.positions.length, 1);
     assert.equal(acc.body.positions[0].shares, 100);
   });
+});
+
+test('v2.11.0 模拟盘逐日盈亏接口：从首笔成交起算、入金单列 flow、本金含追加', async (t) => {
+  const app = await startApp({ env: { ALLOW_REGISTER: '1' } });
+  t.after(() => app.stop());
+  const c = app.client();
+  assert.equal((await c.post('/api/auth/register', { username: 'pnlApi', password: 'pnl-pw-111' })).status, 200);
+  const users = JSON.parse(readFileSync(join(app.dataDir, 'users.json'), 'utf8')).users;
+  const uid = users.find((u) => u.username === 'pnlApi').id;
+  const at = (s) => Date.parse(`${s}T10:00:00+08:00`);
+  mkdirSync(join(app.dataDir, 'userdata'), { recursive: true });
+  writeFileSync(join(app.dataDir, 'userdata', `${uid}.extras.json`), JSON.stringify({
+    paper: {
+      initial: 10000,
+      cash: 9539.725,
+      positions: { '1.600519': { code: '600519', name: '贵州茅台', shares: 50, cost: 10.05 } },
+      trades: [
+        { ts: at('2026-11-19'), secid: '1.600519', code: '600519', name: '贵州茅台', side: 'buy', price: 10, shares: 100, amount: 1000, fee: 5 },
+        { ts: at('2026-11-20'), secid: '1.600519', code: '600519', name: '贵州茅台', side: 'sell', price: 11, shares: 50, amount: 550, fee: 5.6, realized: 41.95, realizedPct: 4.17 },
+      ],
+      capital: { injected: 1000, events: [{ at: at('2026-11-20'), amount: 1000, note: '加仓' }] },
+      updatedAt: at('2026-11-20'),
+    },
+  }), 'utf8');
+
+  const pnl = await c.get('/api/paper/pnl?days=60');
+  assert.equal(pnl.status, 200);
+  assert.ok(pnl.body.rows.length >= 1, '至少覆盖首笔成交日');
+  assert.equal(pnl.body.startDate, '2026-11-19', '从首笔成交开始');
+  assert.equal(pnl.body.principal, 11000, '本金 = initial + 追加');
+  assert.equal(pnl.body.injected, 1000);
+  const row20 = pnl.body.rows.find((x) => x.d === '2026-11-20');
+  assert.ok(row20, '应包含卖出 + 入金那天');
+  assert.equal(row20.flow, 1000, '入金要单列，不能算进盈亏');
+  assert.ok(Number.isFinite(row20.pnl));
+  // 未登录不能看日历
+  const anon = await c.req('/api/paper/pnl?days=60', { cookie: '' });
+  assert.equal(anon.status, 401);
 });

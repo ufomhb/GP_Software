@@ -14,7 +14,7 @@ import {
   intradayVsIndex,
   fundTopMovers,
 } from './fundpnl.js?v=2.11.0';
-import { calendarGridHtml, fmtCalendarValue, WEEK_LABELS } from './pnlcalendar.js?v=2.11.0';
+import { calendarGridHtml } from './pnlcalendar.js?v=2.11.0';
 
 export function activePortfolio() {
   const list = state.portfolios || [];

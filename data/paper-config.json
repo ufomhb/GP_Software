@@ -4,5 +4,17 @@
     "umwfuy8ta72b2a8",
     "umwh6javp3bcfbe"
   ],
-  "updatedAt": 1795180416535
+  "capitalBatches": [
+    {
+      "batchId": "cap-1795441938289-d784fb",
+      "at": 1795441938308,
+      "amount": 2000000,
+      "users": 5,
+      "total": 10000000,
+      "note": "",
+      "by": "meng-haibo",
+      "onlyTraded": false
+    }
+  ],
+  "updatedAt": 1795441938322
 }
