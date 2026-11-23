@@ -13,7 +13,7 @@
  * - 逐日盈亏 = 当日收盘总资产 − 上一可用日总资产 − 当日入金（入金不算收益）。
  */
 
-const FEES = Object.freeze({ rate: 0.00025, min: 5, taxRate: 0.0005 });
+const FEES = Object.freeze({ rate: 0.00025, min: 5, taxRate: 0.0005, slippageBps: 0 });
 const PAPER_TRADES_KEEP = 1000;
 const PAPER_PNL_MAX_SECIDS = 20;
 const PAPER_DAYS_MIN = 60;
@@ -66,11 +66,24 @@ function shanghaiDateKey(input = Date.now()) {
 
 function normalizeFees(fees) {
   const src = fees && typeof fees === 'object' ? fees : {};
+  const bps = Number(src.slippageBps);
   return {
     rate: Number.isFinite(Number(src.rate)) && Number(src.rate) >= 0 ? Number(src.rate) : FEES.rate,
     min: Number.isFinite(Number(src.min)) && Number(src.min) >= 0 ? Number(src.min) : FEES.min,
     taxRate: Number.isFinite(Number(src.taxRate)) && Number(src.taxRate) >= 0 ? Number(src.taxRate) : FEES.taxRate,
+    // v2.12.0：滑点（万分之 N，买卖各让一点价），0 = 不模拟滑点
+    slippageBps: Number.isFinite(bps) && bps >= 0 && bps <= 500 ? bps : 0,
   };
+}
+
+/** 市价成交的滑点价：买入往上让、卖出往下让（限价单不滑点，价格由委托价兜住） */
+function slippagePrice(price, side, fees) {
+  const p = num(price);
+  const bps = normalizeFees(fees).slippageBps;
+  if (!(p > 0)) return p;
+  if (!bps) return p;
+  const delta = p * bps / 10000;
+  return side === 'sell' ? Math.max(0.01, p - delta) : p + delta;
 }
 
 /** A 股 / 场内 ETF（0./1. + 6 位）按 100 股整手；其它标的 1 股起 */
@@ -159,9 +172,23 @@ function sanitizePositions(raw) {
       name: String(p.name || '').slice(0, 40),
       shares,
       cost: Math.max(0, round4(p.cost)),
+      // v2.12.0 T+1：当日买入的股数记在 lockedShares（lockedDate 是锁定那天的上海日期），
+      // 隔日自动解锁 —— 不改历史数据，老持仓没有这两个字段时视为全部可卖。
+      lockedShares: Math.min(shares, Math.max(0, Math.floor(num(p.lockedShares)))),
+      lockedDate: /^\d{4}-\d{2}-\d{2}$/.test(String(p.lockedDate || '')) ? String(p.lockedDate) : '',
     };
   }
   return out;
+}
+
+/** T+1 可卖股数：当日买入的部分不能当日卖出（t1 关闭时调用方直接用 shares） */
+function availableShares(account, secid, todayKey) {
+  const pos = account && account.positions ? account.positions[secid] : null;
+  if (!pos) return 0;
+  const total = Math.max(0, Math.floor(num(pos.shares)));
+  const lockedDate = String(pos.lockedDate || '');
+  if (!lockedDate || lockedDate !== String(todayKey || '')) return total;
+  return Math.max(0, total - Math.max(0, Math.floor(num(pos.lockedShares))));
 }
 
 function sanitizeCapital(raw) {
@@ -350,7 +377,7 @@ function newLedgerEntry(secid, code, name, rounds = 1) {
  * 买入（调用方已取到 live 报价并校验过 lot / shares）。
  * 资金不足返回 { error }，绝不修改入参账户。
  */
-function applyBuy(account, { quote, shares: rawShares, note = '', signal = null, ratio, clientOrderId, fees, at } = {}) {
+function applyBuy(account, { quote, shares: rawShares, note = '', signal = null, ratio, clientOrderId, fees, at, orderId, source, today } = {}) {
   const acc = cloneAccount(account);
   const secid = String((quote && quote.secid) || '');
   const price = num(quote && quote.price);
@@ -379,13 +406,24 @@ function applyBuy(account, { quote, shares: rawShares, note = '', signal = null,
   acc.cash = Math.max(0, round2(acc.cash - cost));
   const code = String((quote && quote.code) || secid.split('.')[1] || '');
   const name = String((quote && quote.name) || '');
+  const todayKey = /^\d{4}-\d{2}-\d{2}$/.test(String(today || '')) ? String(today) : shanghaiDateKey(ts);
   const pos = acc.positions[secid];
   if (pos) {
     const newShares = pos.shares + shares;
     const newCost = (pos.cost * pos.shares + amount + commission) / newShares;
-    acc.positions[secid] = { ...pos, code: code || pos.code, name: name || pos.name, shares: newShares, cost: round4(newCost) };
+    // T+1：当日买入累加到 lockedShares；跨日买入则重新开始锁今天这笔
+    const lockedShares = String(pos.lockedDate || '') === todayKey
+      ? Math.max(0, num(pos.lockedShares)) + shares
+      : shares;
+    acc.positions[secid] = {
+      ...pos, code: code || pos.code, name: name || pos.name, shares: newShares, cost: round4(newCost),
+      lockedShares: Math.min(newShares, lockedShares), lockedDate: todayKey,
+    };
   } else {
-    acc.positions[secid] = { code, name, shares, cost: round4((amount + commission) / shares) };
+    acc.positions[secid] = {
+      code, name, shares, cost: round4((amount + commission) / shares),
+      lockedShares: shares, lockedDate: todayKey,
+    };
     // 重新建仓：保留历史已实现账本（累计收益跨轮次累计），只把轮次 +1
     const ledger = acc.realized[secid];
     if (ledger) {
@@ -418,6 +456,8 @@ function applyBuy(account, { quote, shares: rawShares, note = '', signal = null,
     note: String(note || '').slice(0, 80),
     ...(ratio ? { ratio: Number(ratio) } : {}),
     ...(clientOrderId ? { clientOrderId: String(clientOrderId).slice(0, 64) } : {}),
+    ...(orderId ? { orderId: String(orderId).slice(0, 64) } : {}),
+    ...(source ? { source: String(source).slice(0, 20) } : {}),
     signal: signal && typeof signal === 'object' ? signal : null,
   };
   acc.trades = [...acc.trades, trade].slice(-PAPER_TRADES_KEEP);
@@ -429,7 +469,7 @@ function applyBuy(account, { quote, shares: rawShares, note = '', signal = null,
  * 卖出（调用方已校验持仓与整手规则）。
  * 已实现写进成交记录 + 按标的累计账本；清仓保留账本，重买继续累计。
  */
-function applySell(account, { quote, shares: rawShares, note = '', signal = null, ratio, clientOrderId, fees, at } = {}) {
+function applySell(account, { quote, shares: rawShares, note = '', signal = null, ratio, clientOrderId, fees, at, t1 = false, today, orderId, source } = {}) {
   const acc = cloneAccount(account);
   const secid = String((quote && quote.secid) || '');
   const price = num(quote && quote.price);
@@ -438,6 +478,20 @@ function applySell(account, { quote, shares: rawShares, note = '', signal = null
   if (!(shares > 0)) return { error: { status: 400, message: '股数必须是正整数' } };
   const pos = acc.positions[secid];
   if (!pos || pos.shares < shares) return { error: { status: 400, message: '持仓不足，无法卖出' } };
+  const todayKey = /^\d{4}-\d{2}-\d{2}$/.test(String(today || '')) ? String(today) : shanghaiDateKey(Number(at) || Date.now());
+  if (t1) {
+    const available = availableShares(acc, secid, todayKey);
+    if (available < shares) {
+      return {
+        error: {
+          status: 400,
+          message: available > 0
+            ? `T+1：当日买入的 ${pos.shares - available} 股不能当日卖出，今天最多可卖 ${available} 股`
+            : 'T+1：当日买入的股数不能当日卖出（隔日开盘后可卖）',
+        },
+      };
+    }
+  }
   const f = normalizeFees(fees);
   const ts = Number(at) || Date.now();
   const amount = price * shares;
@@ -484,6 +538,8 @@ function applySell(account, { quote, shares: rawShares, note = '', signal = null
     note: String(note || '').slice(0, 80),
     ...(ratio ? { ratio: Number(ratio) } : {}),
     ...(clientOrderId ? { clientOrderId: String(clientOrderId).slice(0, 64) } : {}),
+    ...(orderId ? { orderId: String(orderId).slice(0, 64) } : {}),
+    ...(source ? { source: String(source).slice(0, 20) } : {}),
     signal: signal && typeof signal === 'object' ? signal : null,
   };
   acc.trades = [...acc.trades, trade].slice(-PAPER_TRADES_KEEP);
@@ -646,10 +702,23 @@ function clampDays(days) {
  * - 缺当日 K 线的标的沿用上一收盘；整段没有 K 线的标的按成本价估值并列入 missing；
  * - 只从首笔成交日开始，绝不把开户前的历史算进来。
  */
-function reconstructDailyPnl({ account, barsBySecid, days = 800, today } = {}) {
+function reconstructDailyPnl({ account, barsBySecid, days = 800, today, dividends, fees } = {}) {
   const acc = account || emptyAccount();
+  const f = normalizeFees(fees);
   const todayKey = /^\d{4}-\d{2}-\d{2}$/.test(String(today || '')) ? String(today) : shanghaiDateKey();
   const limit = clampDays(days);
+  // v2.12.0 分红除权：除权日现金入账 + 送转股调整，否则除权日会凭空出现一笔浮亏
+  const divByDate = new Map();
+  for (const ev of (Array.isArray(dividends) ? dividends : [])) {
+    const exDate = String((ev && ev.exDate) || '').slice(0, 10);
+    const secid = String((ev && ev.secid) || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(exDate) || !secid) continue;
+    const cashPerShare = Math.max(0, num(ev.cashPerShare));
+    const shareRatio = Math.max(0, num(ev.shareRatio));
+    if (!(cashPerShare > 0) && !(shareRatio > 0)) continue;
+    if (!divByDate.has(exDate)) divByDate.set(exDate, []);
+    divByDate.get(exDate).push({ secid, cashPerShare, shareRatio });
+  }
   const barMaps = {};
   const missing = [];
   let estimated = false;
@@ -712,6 +781,9 @@ function reconstructDailyPnl({ account, barsBySecid, days = 800, today } = {}) {
       if (d >= firstDate && d <= todayKey) dateSet.add(d);
     }
   }
+  for (const d of divByDate.keys()) {
+    if (d >= firstDate && d <= todayKey) dateSet.add(d);
+  }
   let grid = [...dateSet].filter((d) => d >= firstDate && d <= todayKey).sort();
   const truncated = grid.length > limit;
   if (truncated) grid = grid.slice(-limit);
@@ -744,24 +816,39 @@ function reconstructDailyPnl({ account, barsBySecid, days = 800, today } = {}) {
       const qty = Math.floor(num(t.shares));
       const amount = price * qty;
       if (t.side === 'buy') {
-        const fee = Math.max(5, amount * FEES.rate);
+        const fee = Math.max(f.min, amount * f.rate);
         cash -= amount + fee;
         const oldQty = shares[secid] || 0;
         const newQty = oldQty + qty;
         avgCost[secid] = (num(avgCost[secid]) * oldQty + amount + fee) / newQty;
         shares[secid] = newQty;
       } else {
-        cash += amount - Math.max(5, amount * FEES.rate) - amount * FEES.taxRate;
+        cash += amount - Math.max(f.min, amount * f.rate) - amount * f.taxRate;
         shares[secid] = (shares[secid] || 0) - qty;
         if (shares[secid] <= 0) { shares[secid] = 0; delete avgCost[secid]; }
       }
       tradeIdx += 1;
     }
-    while (injIdx < injections.length && shanghaiDateKey(injections[injIdx].at) <= d) {
+    while (injIdx < injections.length && shanghaiDateKey(injections[injIdx].at) === d) {
       const e = injections[injIdx];
       cash += num(e.amount);
-      if (shanghaiDateKey(e.at) === d) flow += num(e.amount);
+      flow += num(e.amount);
       injIdx += 1;
+    }
+    // 分红除权：现金分红进现金、送转股增加股数（总成本不变，每股成本被摊薄）
+    const divs = divByDate.get(d);
+    if (divs) {
+      for (const ev of divs) {
+        const qty = num(shares[ev.secid]);
+        if (!(qty > 0)) continue;
+        const totalCost = num(avgCost[ev.secid]) * qty;
+        const cashAdd = round2(ev.cashPerShare * qty);
+        if (cashAdd > 0) cash += cashAdd;
+        const newQty = ev.shareRatio > 0 ? Math.max(1, Math.floor(qty * (1 + ev.shareRatio / 10))) : qty;
+        const remainCost = Math.max(0, totalCost - cashAdd);
+        shares[ev.secid] = newQty;
+        avgCost[ev.secid] = round4(remainCost / newQty);
+      }
     }
     let mv = 0;
     let costBasis = 0;
@@ -816,6 +903,8 @@ module.exports = {
   PAPER_DAYS_MAX,
   CASH_EPS,
   normalizeFees,
+  slippagePrice,
+  availableShares,
   lotOf,
   feeOf,
   taxOf,
