@@ -1679,6 +1679,8 @@ export function fundPnlAreaChart(el, points, options = {}) {
     return null;
   }
   const cost = Number.isFinite(Number(options.cost)) ? Number(options.cost) : null;
+  const valueLabel = String(options.label || '组合市值');
+  const costLabel = String(options.costLabel || '成本');
   const dates = rows.map((p) => String(p.d).slice(0, 10));
   const values = rows.map((p) => Number(p.v));
   const up = values[values.length - 1] >= values[0];
@@ -1697,7 +1699,7 @@ export function fundPnlAreaChart(el, points, options = {}) {
         const v = values[idx];
         const pnl = cost ? v - cost : null;
         return `<div style="color:#7f8fa8;font-size:10px">${esc(dates[idx])}</div>
-          <div style="font-size:11px;color:#dbe7f6;margin-top:3px">组合市值 <b style="font-family:Bahnschrift">${v.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</b></div>
+          <div style="font-size:11px;color:#dbe7f6;margin-top:3px">${valueLabel} <b style="font-family:Bahnschrift">${v.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</b></div>
           ${pnl === null ? '' : `<div style="font-size:10px;color:${pnl >= 0 ? C.up : C.down};margin-top:2px">对成本 ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div>`}`;
       },
     },
@@ -1744,7 +1746,7 @@ export function fundPnlAreaChart(el, points, options = {}) {
           position: 'insideEndTop',
           color: C.muted,
           fontSize: 8,
-          formatter: '成本',
+          formatter: costLabel,
         },
         lineStyle: { color: 'rgba(245,196,81,.55)', width: 1, type: 'dashed' },
         data: [{ yAxis: cost }],

@@ -2,18 +2,19 @@
    ---------------------------------------------------------------
    只负责 DOM：多份持仓 TAB、今日盈亏 TOP5、盈亏日历、组合 vs 上证。
    取数仍在 app.js；纯计算在 views/fundpnl.js。 */
-import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.10.7';
-import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc } from '../util.js?v=2.10.7';
-import { $, $$ } from '../dom.js?v=2.10.7';
-import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.10.7';
-import { fundDayBasis } from './funds.js?v=2.10.7';
+import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.11.0';
+import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc } from '../util.js?v=2.11.0';
+import { $, $$ } from '../dom.js?v=2.11.0';
+import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.11.0';
+import { fundDayBasis } from './funds.js?v=2.11.0';
 import {
   computeFundDailyPnl,
   fundCalendarBuckets,
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './fundpnl.js?v=2.10.7';
+} from './fundpnl.js?v=2.11.0';
+import { calendarGridHtml, fmtCalendarValue, WEEK_LABELS } from './pnlcalendar.js?v=2.11.0';
 
 export function activePortfolio() {
   const list = state.portfolios || [];
@@ -95,40 +96,6 @@ export function renderFundTopMovers() {
 function getFundHoldingIn(holdings, code) {
   const h = holdings && holdings[String(code)];
   return h && Number(h.shares) > 0 ? h : null;
-}
-
-const WEEK_LABELS = ['周一', '周二', '周三', '周四', '周五'];
-
-function fmtCalendarValue(value, metric) {
-  if (!isNum(value)) return '--';
-  if (metric === 'rate') return `${value >= 0 ? '+' : ''}${Number(value).toFixed(2)}%`;
-  return `${value >= 0 ? '+' : ''}${nf(value, 2)}`;
-}
-
-/** 日历网格 HTML（日 / 月 / 年共用；pending 与正常数据都走同一个渲染） */
-function calendarGridHtml(buckets, unit, metric) {
-  if (unit === 'day') {
-    return `<div class="pnl-calendar">
-      <div class="pnl-calendar-head"></div>${WEEK_LABELS.map((w) => `<div class="pnl-calendar-head">${w}</div>`).join('')}
-      ${(buckets.weeks || []).map((week, wi) => `<div class="pnl-calendar-week">${wi + 1}</div>${week.map((cell) => {
-        if (!cell) return '<div class="pnl-calendar-cell is-empty"></div>';
-        // 没有当天数据（非交易日 / 净值未出 / 建仓前）一律显示 --，不要写「休」误导用户
-        if (!cell.hasData) return `<div class="pnl-calendar-cell is-rest"><div class="pnl-calendar-day">${cell.day}</div><div class="pnl-calendar-val muted">--</div></div>`;
-        const tone = Number(cell.pnl) > 0 ? 'is-up' : Number(cell.pnl) < 0 ? 'is-down' : '';
-        return `<div class="pnl-calendar-cell ${tone}" title="${esc(`${cell.d} · ${signedFmt(cell.pnl, 2)}`)}"><div class="pnl-calendar-day">${cell.day}</div><div class="pnl-calendar-val ${toneClass(cell.pnl)}">${fmtCalendarValue(cell.value, metric)}</div></div>`;
-      }).join('')}`).join('')}
-    </div>`;
-  }
-  if (unit === 'month') {
-    return `<div class="pnl-calendar-months">${(buckets.tiles || []).map((t) => {
-      const tone = Number(t.pnl) > 0 ? 'is-up' : Number(t.pnl) < 0 ? 'is-down' : '';
-      return `<div class="pnl-calendar-tile ${t.hasData ? tone : ''}" data-calendar-month="${esc(t.month)}"><span>${esc(t.label)}</span><b class="${toneClass(t.pnl)}">${t.hasData ? fmtCalendarValue(t.value, metric) : '--'}</b></div>`;
-    }).join('')}</div>`;
-  }
-  return `<div class="pnl-calendar-years">${(buckets.tiles || []).map((t) => {
-    const tone = Number(t.pnl) > 0 ? 'is-up' : Number(t.pnl) < 0 ? 'is-down' : '';
-    return `<div class="pnl-calendar-tile ${tone}"><span>${esc(t.label)}</span><b class="${toneClass(t.pnl)}">${fmtCalendarValue(t.value, metric)}</b></div>`;
-  }).join('') || '<div class="empty">还没有跨年数据</div>'}</div>`;
 }
 
 export function renderFundPnlCalendar() {

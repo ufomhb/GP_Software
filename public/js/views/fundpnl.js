@@ -7,8 +7,8 @@
    - portfolioVsIndex：组合 vs 上证（本周 / 本月 / 今年 / 全部）
    - fundTopMovers：今日盈亏 TOP5 / 亏损 TOP5
    口径：份额按当前录入值静态加权；不含申赎费；今日盈亏用「我的持仓」同一份实时/估值价。 */
-import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.10.7';
-import { fundHoldingRow } from './funds.js?v=2.10.7';
+import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.11.0';
+import { fundHoldingRow } from './funds.js?v=2.11.0';
 
 function round2(v) {
   const n = Number(v);
@@ -551,6 +551,7 @@ function getHoldingOf(holdings, code) {
   return shares > 0 ? h : null;
 }
 
+// v2.11.0：rangeBaseDate / sumPnlAfter 供模拟盘盈亏日历复用同一套区间口径
 export {
   round2,
   shanghaiDateKey,
@@ -565,4 +566,6 @@ export {
   intradayVsIndex,
   fundTopMovers,
   holdingStartDate,
+  rangeBaseDate,
+  sumPnlAfter,
 };
