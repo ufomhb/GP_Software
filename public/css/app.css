@@ -3409,3 +3409,79 @@ tr.is-dim td { opacity: .62; }
 @media (max-width: 1560px) and (min-width: 901px) {
   .nav-meta { flex: none; }
 }
+
+/* =========================================================
+   v2.13.1：模拟交易手机端适配
+   ---------------------------------------------------------
+   1) 表单：一个字段一行，标签不再被挤成竖排、select 不再溢出输入框
+   2) 表格：手机上只留关键列（浮盈 / 操作按钮必须在首屏），
+      否则「浮动盈亏」「撤单」要横向滑动才看得到
+   3) 长文本单元格允许换行，避免再次撑出横向滚动
+   ========================================================= */
+.only-mobile { display: none; }
+
+@media (max-width: 780px) {
+  .only-mobile { display: block; }
+
+  /* --- 表单 --- */
+  .paper-auto-form .input-wrap,
+  .paper-order-type .input-wrap { flex: 1 1 100%; min-width: 0; }
+  .paper-auto-form .input-wrap span,
+  .paper-order-type .input-wrap span { flex: 0 0 auto; white-space: nowrap; }
+  .paper-auto-form .input-wrap select,
+  .paper-auto-form .input-wrap input,
+  .paper-order-type .input-wrap select,
+  .paper-order-type .input-wrap input { min-width: 0; flex: 1 1 auto; width: 100%; }
+  .paper-auto-form .btn.small { flex: 1 1 100%; }
+  .paper-auto-form .paper-toggle { flex: 1 1 100%; }
+  .paper-follow-row { flex-wrap: wrap; gap: 6px; }
+  .paper-period-strip { gap: 8px; }
+
+  /* --- 表格：列裁剪 --- */
+  .paper-pos-table,
+  .paper-trade-table,
+  .paper-realized-table,
+  .paper-order-table,
+  .paper-cond-table,
+  .paper-plan-table,
+  .paper-review-table,
+  .paper-detail-modal .paper-pos-table,
+  .paper-detail-modal .paper-realized-table { min-width: 0; }
+
+  /* 持仓：留「持仓 / 股数 / 现价 / 当日 / 浮盈(含收益率) / 卖出」 */
+  .paper-pos-table th:nth-child(3), .paper-pos-table td:nth-child(3),
+  .paper-pos-table th:nth-child(6), .paper-pos-table td:nth-child(6),
+  .paper-pos-table th:nth-child(8), .paper-pos-table td:nth-child(8),
+  .paper-pos-table th:nth-child(9), .paper-pos-table td:nth-child(9) { display: none; }
+
+  /* 成交：留「时间 / 方向 / 标的 / 价 / 股数 / 已实现」 */
+  .paper-trade-table th:nth-child(6), .paper-trade-table td:nth-child(6),
+  .paper-trade-table th:nth-child(7), .paper-trade-table td:nth-child(7),
+  .paper-trade-table th:nth-child(9), .paper-trade-table td:nth-child(9) { display: none; }
+
+  /* 个股累计收益：成本列可省，保留股数 / 金额 / 已实现 / 收益率 */
+  .paper-realized-table th:nth-child(4), .paper-realized-table td:nth-child(4) { display: none; }
+
+  /* 委托：状态已并入委托时间，成交均价省掉，撤单留在首屏 */
+  .paper-order-table th:nth-child(6), .paper-order-table td:nth-child(6),
+  .paper-order-table th:nth-child(7), .paper-order-table td:nth-child(7) { display: none; }
+
+  /* 网格 / 定投：执行次数并入规则列，暂停 / 删除留在首屏 */
+  .paper-plan-table th:nth-child(4), .paper-plan-table td:nth-child(4) { display: none; }
+
+  /* 复盘：说明列是口径解释，手机上让位给指标与数值 */
+  .paper-review-table th:nth-child(3), .paper-review-table td:nth-child(3) { display: none; }
+
+  /* --- 长文本换行（否则 nowrap 会把表格重新撑宽） --- */
+  .paper-order-table th, .paper-order-table td,
+  .paper-cond-table th, .paper-cond-table td,
+  .paper-plan-table th, .paper-plan-table td,
+  .paper-review-table th, .paper-review-table td { white-space: normal; }
+  .paper-order-table .t-sub,
+  .paper-cond-table .t-sub,
+  .paper-plan-table .t-sub { white-space: normal; }
+
+  .paper-pos-table th, .paper-pos-table td,
+  .paper-trade-table th, .paper-trade-table td,
+  .paper-realized-table th, .paper-realized-table td { padding-left: 5px; padding-right: 5px; }
+}

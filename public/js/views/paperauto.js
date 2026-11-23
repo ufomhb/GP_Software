@@ -3,13 +3,13 @@
    委托单 / 条件单（止盈止损）/ 网格 / 定投 / 跟单 / 持仓预警 / 复盘报告。
    只负责 state → DOM 与少量按钮回调（小操作直接走 apiPost，成功后调 opts.reload），
    账本与撮合口径全部在服务端 src/services/paper-*.js。 */
-import { state } from '../core.js?v=2.13.0';
+import { state } from '../core.js?v=2.13.1';
 import {
   isNum, nf, signedFmt, toneClass, cleanName, esc, timeText, pctFmt,
-} from '../util.js?v=2.13.0';
-import { $, $$, toast } from '../dom.js?v=2.13.0';
-import { apiPost } from '../api.js?v=2.13.0';
-import { fundPnlAreaChart } from '../charts.js?v=2.13.0';
+} from '../util.js?v=2.13.1';
+import { $, $$, toast } from '../dom.js?v=2.13.1';
+import { apiPost } from '../api.js?v=2.13.1';
+import { fundPnlAreaChart } from '../charts.js?v=2.13.1';
 
 const ORDER_STATUS_LABEL = {
   pending: '挂单中',
@@ -76,7 +76,7 @@ export function renderPaperOrders() {
     const shares = Number(o.shares) || 0;
     const progress = shares > 0 ? Math.round((filled / shares) * 100) : 0;
     return `<tr class="${isActive ? 'paper-order-active' : ''}">
-      <td class="t-dim">${o.createdAt ? esc(timeText(o.createdAt)) : '--'}<div class="t-sub">${esc((o.expiresDate || '') ? `${o.expiresDate} 15:00 前有效` : '')}</div></td>
+      <td class="t-dim">${o.createdAt ? esc(timeText(o.createdAt)) : '--'}<div class="t-sub">${esc((o.expiresDate || '') ? `${o.expiresDate} 15:00 前有效` : '')}</div><div class="t-sub only-mobile"><span class="badge ${isActive ? '' : 'muted'}">${esc(status)}</span></div></td>
       <td><span class="t-name">${esc(cleanName(o.name) || o.code || '')}</span><span class="t-sub">${esc(o.code || '')}</span></td>
       <td>${sideTag(o.side)}</td>
       <td>${o.type === 'limit' ? `限价 ${nf(o.limitPrice, 3)}` : '市价'}<div class="t-sub">${esc(o.source === 'condition' ? '条件单' : o.source === 'grid' ? '网格' : o.source === 'dca' ? '定投' : o.source === 'follow' ? '跟单' : '手动')}</div></td>

@@ -26,7 +26,7 @@ import {
   intradayCompareChart,
   compareTrendChart,
   COLORS,
-} from './charts.js?v=2.13.0';
+} from './charts.js?v=2.13.1';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -44,11 +44,11 @@ import {
   esc,
   safeUrl,
   timeText,
-} from './util.js?v=2.13.0';
+} from './util.js?v=2.13.1';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.13.0';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.13.0';
+import { $, $$, toast, debounce } from './dom.js?v=2.13.1';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.13.1';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -61,7 +61,7 @@ import {
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.13.0';
+} from './core.js?v=2.13.1';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -78,7 +78,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.13.0';
+} from './views/funds.js?v=2.13.1';
 
 // 基金页新增子页渲染（v2.10.0：涨跌分布 / 板块总览 / 场外基金四榜，见 views/fundpanes.js）
 import {
@@ -88,7 +88,7 @@ import {
   renderFundBoard,
   renderFundBoardCompareBar,
   sortFundThemes,
-} from './views/fundpanes.js?v=2.13.0';
+} from './views/fundpanes.js?v=2.13.1';
 
 // 自选基金：多组合 / 今日 TOP5 / 盈亏日历 / 组合 vs 上证（v2.10.0）
 import {
@@ -98,7 +98,7 @@ import {
   renderFundVsIndex,
   activePortfolio,
   activeHoldings,
-} from './views/fundwatch.js?v=2.13.0';
+} from './views/fundwatch.js?v=2.13.1';
 import {
   computeFundPnl,
   computeFundDailyPnl,
@@ -110,7 +110,7 @@ import {
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './views/fundpnl.js?v=2.13.0';
+} from './views/fundpnl.js?v=2.13.1';
 
 // 模拟盘盈亏日历 / 资产曲线 / 个股累计收益（v2.11.0，见 views/paperpnl.js）
 import {
@@ -120,7 +120,7 @@ import {
   paperCalendarBuckets,
   paperPnlSummary,
   paperMonthlyBars,
-} from './views/paperpnl.js?v=2.13.0';
+} from './views/paperpnl.js?v=2.13.1';
 
 // 模拟盘自动化：委托 / 条件单 / 网格定投 / 跟单 / 持仓预警 / 复盘（v2.12.0，见 views/paperauto.js）
 import {
@@ -129,7 +129,7 @@ import {
   renderPaperReview,
   paperOrderStatusLabel,
   conditionText,
-} from './views/paperauto.js?v=2.13.0';
+} from './views/paperauto.js?v=2.13.1';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -139,7 +139,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.13.0';
+} from './views/market.js?v=2.13.1';
 
 
 /* =========================================================
@@ -3877,7 +3877,7 @@ function renderPaper() {
     <td>${nf(p.price, 3)}${p.priceMode === 'prevClose' ? '<div class="t-sub">昨收</div>' : p.priceMode === 'cost' ? '<div class="t-sub">按成本估</div>' : ''}</td>
     <td class="${toneClass(p.pct)}"${p.priceMode === 'prevClose' ? ' title="开盘前没有成交价，按昨收估"' : ''}>${p.pct === null ? '--' : pctFmt(p.pct)}${p.dayPnl === null || p.dayPnl === undefined ? '' : `<div class="t-sub">${signedFmt(p.dayPnl, 0)}</div>`}</td>
     <td>${nf(p.marketValue, 0)}</td>
-    <td class="${toneClass(p.profit)}">${nf(p.profit, 0)}</td>
+    <td class="${toneClass(p.profit)}">${nf(p.profit, 0)}<div class="t-sub only-mobile">${p.profitPct === null ? '--' : `${nf(p.profitPct, 2)}%`}</div></td>
     <td class="${toneClass(p.profitPct)}">${p.profitPct === null ? '--' : `${nf(p.profitPct, 2)}%`}</td>
     <td class="${toneClass(p.realizedAmount)}">${p.realizedAmount === null || p.realizedAmount === undefined ? '--' : `${signedFmt(p.realizedAmount, 2)}${p.realizedPct === null || p.realizedPct === undefined ? '' : `<div class="t-sub">${nf(p.realizedPct, 2)}%</div>`}`}</td>
     <td><button class="text-link" data-paper-sell="${esc(p.secid)}" data-paper-name="${esc(p.name)}" data-paper-shares="${p.available !== undefined ? p.available : p.shares}">卖出</button></td>
@@ -8278,6 +8278,18 @@ function resetAll() {
 /* =========================================================
    视图切换 / 加载
    ========================================================= */
+/** v2.13.1：导航有 12 项，手机上排在后面的标签在横向滚动区外；
+ *  切视图后把当前项滚进可见区（只动 nav 的 scrollLeft，不带动整页滚动）。 */
+function scrollActiveNavTab() {
+  const inner = $('.nav-inner');
+  if (!inner || inner.scrollWidth <= inner.clientWidth + 1) return;
+  const act = inner.querySelector('.nav-tab.is-active');
+  if (!act) return;
+  const max = inner.scrollWidth - inner.clientWidth;
+  const target = act.offsetLeft - (inner.clientWidth - act.offsetWidth) / 2;
+  inner.scrollLeft = Math.max(0, Math.min(max, target));
+}
+
 function showView(view) {
   // v2.13.0：'paper'（模拟交易）与 VIEWS 保持一致，两处都改，避免深链 / 点导航时被回退到全景
   const known = ['dashboard', 'china', 'global', 'us', 'commodities', 'sectors', 'funds', 'data', 'strategy', 'fundwatch', 'stockwatch', 'paper'];
@@ -8285,6 +8297,7 @@ function showView(view) {
   if (view !== 'strategy') stopTimeline();
   state.view = view;
   $$('.nav-tab').forEach((tab) => tab.classList.toggle('is-active', tab.dataset.view === view));
+  scrollActiveNavTab();
   $$('.view').forEach((section) => section.classList.toggle('is-active', section.id === `view-${view}`));
   setTimeout(resizeCharts, 60);
   pingActivity('view');
@@ -10189,6 +10202,7 @@ async function init() {
   state.view = initial;
   $$('.nav-tab').forEach((tab) => tab.classList.toggle('is-active', tab.dataset.view === initial));
   $$('.view').forEach((section) => section.classList.toggle('is-active', section.id === `view-${initial}`));
+  scrollActiveNavTab();
 
   await loadOverview();
   loadSectors('industry');

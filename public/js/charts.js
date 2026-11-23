@@ -1307,6 +1307,14 @@ export function intradayChart(el, options = {}) {
   const yMax = hi + pad;
   const hasVolume = volumes.some((v) => v > 0);
   const pctLabel = (v) => (Number.isFinite(preClose) && preClose ? `${(((v - preClose) / preClose) * 100).toFixed(2)}%` : '');
+  // v2.13.1：窄容器（手机分时图只有 340px 左右）里 10 个整点刻度会挤成一团，
+  // 按实际宽度降密度；宽屏仍是整点全标。
+  const chartWidth = Number(el.clientWidth) || 600;
+  const markSet = chartWidth < 380
+    ? new Set(['09:30', '11:00', '13:30', '15:00'])
+    : chartWidth < 520
+      ? new Set(['09:30', '10:30', '11:30', '13:30', '14:30', '15:00'])
+      : CN_INTRADAY_MARKS;
 
   return setOption(el, {
     animation: false,
@@ -1333,15 +1341,15 @@ export function intradayChart(el, options = {}) {
       : [{ left: 52, right: 56, top: 12, height: '76%' }],
     xAxis: hasVolume
       ? [
-          { type: 'category', data: axisLabels, boundaryGap: false, axisLine: { lineStyle: { color: C.line } }, axisTick: { show: false }, axisLabel: fullSession ? { color: C.muted, fontSize: 9, interval: 0, formatter: (v) => (CN_INTRADAY_MARKS.has(v) ? v : '') } : { color: C.muted, fontSize: 9, interval: Math.max(1, Math.floor(times.length / 7)), hideOverlap: true }, splitLine: { show: false } },
+          { type: 'category', data: axisLabels, boundaryGap: false, axisLine: { lineStyle: { color: C.line } }, axisTick: { show: false }, axisLabel: fullSession ? { color: C.muted, fontSize: 9, interval: 0, formatter: (v) => (markSet.has(v) ? v : '') } : { color: C.muted, fontSize: 9, interval: Math.max(1, Math.floor(times.length / 7)), hideOverlap: true }, splitLine: { show: false } },
           { type: 'category', data: axisLabels, gridIndex: 1, boundaryGap: false, axisLine: { lineStyle: { color: C.line } }, axisTick: { show: false }, axisLabel: { show: false }, splitLine: { show: false } },
         ]
-      : [{ type: 'category', data: axisLabels, boundaryGap: false, axisLine: { lineStyle: { color: C.line } }, axisTick: { show: false }, axisLabel: fullSession ? { color: C.muted, fontSize: 9, interval: 0, formatter: (v) => (CN_INTRADAY_MARKS.has(v) ? v : '') } : { color: C.muted, fontSize: 9, interval: Math.max(1, Math.floor(times.length / 7)), hideOverlap: true }, splitLine: { show: false } }],
+      : [{ type: 'category', data: axisLabels, boundaryGap: false, axisLine: { lineStyle: { color: C.line } }, axisTick: { show: false }, axisLabel: fullSession ? { color: C.muted, fontSize: 9, interval: 0, formatter: (v) => (markSet.has(v) ? v : '') } : { color: C.muted, fontSize: 9, interval: Math.max(1, Math.floor(times.length / 7)), hideOverlap: true }, splitLine: { show: false } }],
     yAxis: hasVolume
       ? [
           { min: yMin, max: yMax, scale: false, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 9, formatter: (v) => Number(v).toFixed(2) }, splitLine: { lineStyle: { color: C.split } } },
           { min: yMin, max: yMax, position: 'right', axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 8, formatter: pctLabel }, splitLine: { show: false } },
-          { gridIndex: 1, scale: true, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 8, formatter: (v) => (v >= 1e4 ? `${(v / 1e4).toFixed(0)}万` : `${Math.round(v)}`) }, splitLine: { show: false } },
+          { gridIndex: 1, scale: true, splitNumber: 1, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 8, formatter: (v) => (v >= 1e4 ? `${(v / 1e4).toFixed(0)}万` : `${Math.round(v)}`) }, splitLine: { show: false } },
         ]
       : [
           { min: yMin, max: yMax, scale: false, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.muted, fontSize: 9, formatter: (v) => Number(v).toFixed(2) }, splitLine: { lineStyle: { color: C.split } } },
