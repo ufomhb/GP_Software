@@ -50,6 +50,20 @@ function createHttpRoutes(deps) {
     getFundPnlSeries,
     paperTrade,
     resetPaper,
+    // v2.12.0：模拟盘自动化（委托/条件单/网格定投/跟单/复盘/分红除权）
+    paperSweepAccount,
+    cancelPaperOrder,
+    createPaperCondition,
+    cancelPaperCondition,
+    createPaperPlan,
+    updatePaperPlan,
+    deletePaperPlan,
+    followPaperUser,
+    unfollowPaperUser,
+    setPaperAllowFollow,
+    getPaperReview,
+    addCorporateEvent,
+    removeCorporateEvent,
     savePaperConfig,
     // v2.9.2：持仓多端合并 + 写入审计/快照
     portfolioRevOf,
@@ -419,15 +433,45 @@ async function handleAdmin(req, res, url) {
     const patch = {};
     if (body.initial !== undefined) patch.initial = body.initial;
     if (body.hiddenUserIds !== undefined) patch.hiddenUserIds = body.hiddenUserIds;
+    // v2.12.0：费率（含滑点）、交易规则开关（T+1 / 涨跌停 / 停牌）、委托有效期
+    if (body.fees !== undefined) patch.fees = body.fees;
+    if (body.trading !== undefined) patch.trading = body.trading;
+    if (body.order !== undefined) patch.order = body.order;
     const before = getPaperConfig();
     const config = savePaperConfig(patch);
+    const feeText = `佣金 ${(config.fees.rate * 10000).toFixed(2)} 万（最低 ${config.fees.min} 元）· 印花税 ${(config.fees.taxRate * 10000).toFixed(2)} 万 · 滑点 ${config.fees.slippageBps} bp`;
+    const ruleText = `T+1 ${config.trading.t1 ? '开' : '关'} · 涨跌停 ${config.trading.limitCheck ? '开' : '关'} · 停牌 ${config.trading.suspend ? '开' : '关'}`;
     recordLoginEvent(req, {
       user: actor,
       ok: true,
       action: 'paper',
-      reason: `模拟盘配置：初始资金 ${before.initial} → ${config.initial}，隐藏 ${config.hiddenUserIds.length} 人`,
+      reason: `模拟盘配置：初始资金 ${before.initial} → ${config.initial}，隐藏 ${config.hiddenUserIds.length} 人；${feeText}；${ruleText}`,
     });
     return { ok: true, config };
+  }
+  /* v2.12.0：分红除权事件（管理员录入）
+     - POST /api/admin/paper/dividends          新增
+     - POST /api/admin/paper/dividends/remove   删除 */
+  if (p === '/api/admin/paper/dividends' && req.method === 'POST') {
+    const body = req.body || {};
+    const list = addCorporateEvent({
+      ...body,
+      createdAt: Date.now(),
+      createdBy: actor.username,
+    });
+    recordLoginEvent(req, {
+      user: actor, ok: true, action: 'paper',
+      reason: `新增分红除权：${body.name || body.code || body.secid} ${body.exDate} 每股派 ${body.cashPerShare || 0} 元 / 每 10 股送转 ${body.shareRatio || 0} 股`,
+    });
+    return { ok: true, events: list };
+  }
+  if (p === '/api/admin/paper/dividends/remove' && req.method === 'POST') {
+    const body = req.body || {};
+    const list = removeCorporateEvent(body.id);
+    recordLoginEvent(req, {
+      user: actor, ok: true, action: 'paper', reason: `删除分红除权事件 ${body.id || ''}`,
+    });
+    return { ok: true, events: list };
   }
   if (p === '/api/admin/paper/reset' && req.method === 'POST') {
     const body = req.body || {};
@@ -1349,6 +1393,76 @@ async function handleApi(req, res, url) {
     const user = currentUser(req);
     if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
     return resetPaper(user);
+  }
+  /* ---------------------------------------------------------
+     模拟盘自动化（v2.12.0）
+     - POST /api/paper/order/cancel      撤单
+     - POST /api/paper/condition         新增条件单（止盈止损/价格条件）
+     - POST /api/paper/condition/cancel  取消条件单
+     - POST /api/paper/plan              新增网格 / 定投
+     - POST /api/paper/plan/update       暂停 / 恢复 / 改参数
+     - POST /api/paper/plan/delete       删除计划
+     - GET  /api/paper/review            复盘报告（胜率/盈亏比/回撤/集中度）
+     - POST /api/paper/follow            跟单某人
+     - POST /api/paper/unfollow          取消跟单
+     - POST /api/paper/follow/allow      是否允许别人跟单
+     - POST /api/paper/sweep             立刻撮合一次（页面刷新用）
+     --------------------------------------------------------- */
+  if (p === '/api/paper/order/cancel' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return cancelPaperOrder(user, (req.body || {}).orderId);
+  }
+  if (p === '/api/paper/condition' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return createPaperCondition(user, req.body || {});
+  }
+  if (p === '/api/paper/condition/cancel' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return cancelPaperCondition(user, (req.body || {}).id);
+  }
+  if (p === '/api/paper/plan' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return createPaperPlan(user, req.body || {});
+  }
+  if (p === '/api/paper/plan/update' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return updatePaperPlan(user, req.body || {});
+  }
+  if (p === '/api/paper/plan/delete' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return deletePaperPlan(user, (req.body || {}).id);
+  }
+  if (p === '/api/paper/review') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return getPaperReview(user);
+  }
+  if (p === '/api/paper/follow' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return followPaperUser(user, req.body || {});
+  }
+  if (p === '/api/paper/unfollow' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return unfollowPaperUser(user, (req.body || {}).username);
+  }
+  if (p === '/api/paper/follow/allow' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return setPaperAllowFollow(user, (req.body || {}).allow !== false);
+  }
+  if (p === '/api/paper/sweep' && req.method === 'POST') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    const res = await paperSweepAccount(user, { force: true });
+    return { ok: true, ...res };
   }
   if (p === '/api/stock/news') {
     const code = q.get('code');

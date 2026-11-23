@@ -9006,10 +9006,20 @@ async function getScreener(params = {}) {
    评估频率跟着主进程的 60 秒 tick 走；量比与趋势类才拉 K 线，且每轮最多 8 条，
    避免一个用户挂几十条均线预警把上游打爆。
    ========================================================= */
-const ALERT_KINDS = ['price', 'pct', 'volume', 'ma', 'macd'];
-const ALERT_KIND_LABEL = { price: '价格', pct: '涨跌幅', volume: '量比', ma: '均线穿越', macd: 'MACD 交叉' };
-const ALERT_OP_LABEL = { above: '突破', below: '跌破', golden: '金叉', dead: '死叉' };
+const ALERT_KINDS = ['price', 'pct', 'volume', 'ma', 'macd', 'holdingPct', 'accountPct'];
+const ALERT_KIND_LABEL = {
+  price: '价格',
+  pct: '涨跌幅',
+  volume: '量比',
+  ma: '均线穿越',
+  macd: 'MACD 交叉',
+  // v2.12.0：模拟盘持仓条件预警（复用同一套规则盒子 / 同一条推送通道）
+  holdingPct: '持仓收益率',
+  accountPct: '账户收益率',
+};
+const ALERT_OP_LABEL = { above: '突破', below: '跌破', golden: '金叉', dead: '死叉', up: '高于', down: '低于' };
 const ALERT_KLINE_BUDGET = 8;
+const PAPER_ALERT_KINDS = ['holdingPct', 'accountPct'];
 
 function isTrendAlert(kind) {
   return kind === 'ma' || kind === 'macd';
@@ -9020,8 +9030,10 @@ function normalizeServerAlerts(list) {
   const out = [];
   const seen = new Set();
   (Array.isArray(list) ? list : []).forEach((raw, i) => {
-    if (!raw || !raw.secid) return;
+    if (!raw) return;
+    // v2.12.0：账户级预警（accountPct）没有标的，允许 secid 为空
     const kindRaw = raw.kind;
+    if (!raw.secid && kindRaw !== 'accountPct') return;
     let kind = ALERT_KINDS.includes(kindRaw) ? kindRaw : 'price';
     let op = raw.op;
     let value = raw.value;
@@ -9037,7 +9049,8 @@ function normalizeServerAlerts(list) {
       value = Number(value);
       if (!Number.isFinite(value)) return;
     }
-    const secid = String(raw.secid);
+    const secid = String(raw.secid || '');
+    const scope = raw.scope === 'paper' || PAPER_ALERT_KINDS.includes(kind) ? 'paper' : 'stock';
     let id = raw.id ? String(raw.id) : `alert-${Date.now()}-${i}`;
     if (seen.has(id)) id = `${id}-${i}`;
     seen.add(id);
@@ -9049,6 +9062,7 @@ function normalizeServerAlerts(list) {
       kind,
       op,
       value,
+      scope,
       active: raw.active !== false,
       createdAt: Number(raw.createdAt) || Date.now(),
       triggeredAt: Number(raw.triggeredAt) || null,
@@ -9059,9 +9073,12 @@ function normalizeServerAlerts(list) {
 }
 
 function alertConditionText(a) {
-  const op = ALERT_OP_LABEL[a.op] || a.op;
+  const paper = PAPER_ALERT_KINDS.includes(a.kind);
+  const op = paper
+    ? (a.op === 'below' ? '低于' : '高于')
+    : (ALERT_OP_LABEL[a.op] || a.op);
   if (isTrendAlert(a.kind)) return `${ALERT_KIND_LABEL[a.kind]} ${op}`;
-  const unit = a.kind === 'pct' ? '%' : a.kind === 'volume' ? ' 倍' : '';
+  const unit = a.kind === 'pct' || paper ? '%' : a.kind === 'volume' ? ' 倍' : '';
   return `${ALERT_KIND_LABEL[a.kind]} ${op} ${Number(a.value).toFixed(2)}${unit}`;
 }
 
@@ -9155,7 +9172,10 @@ async function evaluateUserAlerts(user, opts = {}) {
   const active = box.items.filter((a) => a.active);
   if (!active.length) return 0;
 
-  const secids = [...new Set(active.map((a) => a.secid))].slice(0, 60);
+  const secids = [...new Set(active
+    .map((a) => a.secid)
+    .filter((s) => /^\d+\.[0-9A-Za-z]+$/.test(String(s || ''))))]
+    .slice(0, 60);
   let quotes = [];
   try {
     quotes = await fetchQuoteList(secids, 'stock');
@@ -9163,22 +9183,49 @@ async function evaluateUserAlerts(user, opts = {}) {
     return 0; // 行情取不到就等下一轮，不做误判
   }
   const qmap = new Map((quotes || []).map((q) => [q.secid, q]));
+  // v2.12.0：持仓条件预警复用同一条推送通道，判定口径来自模拟盘账户（持仓收益率 / 账户收益率）
+  let paperAccount = null;
+  let paperTotals = null;
+  if (active.some((a) => PAPER_ALERT_KINDS.includes(a.kind))) {
+    paperAccount = getPaperAccount(user);
+    paperTotals = paperLedger.accountTotals(paperAccount, qmap);
+  }
 
   let klineUsed = 0;
   let triggered = 0;
   for (const alert of active) {
     const q = qmap.get(alert.secid) || null;
     let kline = null;
-    if (alert.kind === 'volume' || isTrendAlert(alert.kind)) {
-      if (klineUsed >= ALERT_KLINE_BUDGET) continue; // 预算用尽，下一轮再说
-      klineUsed += 1;
-      try {
-        kline = await getKline(alert.secid, 101, 120);
-      } catch {
-        kline = null;
+    let res = null;
+    if (alert.kind === 'holdingPct') {
+      const pos = (paperAccount && paperAccount.positions[alert.secid]) || null;
+      const price = Number(q && q.price);
+      if (!pos || !(price > 0) || !(Number(pos.cost) > 0)) continue;
+      const pct = ((price - Number(pos.cost)) / Number(pos.cost)) * 100;
+      res = {
+        hit: alert.op === 'below' ? pct <= Number(alert.value) : pct >= Number(alert.value),
+        note: `持仓收益率 ${nf(pct, 2)}%（现价 ${nf(price, 3)} / 成本 ${nf(pos.cost, 3)} / ${nf(pos.shares, 0)} 股）`,
+      };
+    } else if (alert.kind === 'accountPct') {
+      if (!paperTotals) continue;
+      const pct = Number(paperTotals.profitPct);
+      if (!Number.isFinite(pct)) continue;
+      res = {
+        hit: alert.op === 'below' ? pct <= Number(alert.value) : pct >= Number(alert.value),
+        note: `账户累计收益率 ${nf(pct, 2)}%（总资产 ${nf(paperTotals.total, 0)} / 本金 ${nf(paperTotals.principal, 0)}）`,
+      };
+    } else {
+      if (alert.kind === 'volume' || isTrendAlert(alert.kind)) {
+        if (klineUsed >= ALERT_KLINE_BUDGET) continue; // 预算用尽，下一轮再说
+        klineUsed += 1;
+        try {
+          kline = await getKline(alert.secid, 101, 120);
+        } catch {
+          kline = null;
+        }
       }
+      res = evalAlertRule(alert, q, kline);
     }
-    const res = evalAlertRule(alert, q, kline);
     if (!res.hit) continue;
     alert.active = false;
     alert.triggeredAt = Date.now();
@@ -9186,11 +9233,19 @@ async function evaluateUserAlerts(user, opts = {}) {
     triggered += 1;
 
     if (opts.push !== false) {
-      const msg = `${alert.name || alert.code} ${alertConditionText(alert)}${res.note ? ` · ${res.note}` : ''}`;
+      const paper = PAPER_ALERT_KINDS.includes(alert.kind);
+      const msg = `${alert.name || alert.code || '模拟账户'} ${alertConditionText(alert)}${res.note ? ` · ${res.note}` : ''}`;
       try {
         await pushService.sendPushMessage({
-          title: `预警触发 · ${alert.name || alert.code}`,
-          content: [`### 条件预警触发`, `- 标的：${alert.name || ''} ${alert.code || ''}`, `- 条件：${alertConditionText(alert)}`, `- ${res.note || ''}`, `- 触发时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`, `- 账号：${user.username || ''}`].join('\n'),
+          title: `${paper ? '模拟持仓预警' : '预警'}触发 · ${alert.name || alert.code || '模拟账户'}`,
+          content: [
+            `### ${paper ? '模拟持仓条件预警触发' : '条件预警触发'}`,
+            `- 标的：${alert.name || ''} ${alert.code || ''}`,
+            `- 条件：${alertConditionText(alert)}`,
+            `- ${res.note || ''}`,
+            `- 触发时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`,
+            `- 账号：${user.username || ''}`,
+          ].join('\n'),
         });
         box.lastPush = { at: Date.now(), ok: true, message: msg };
       } catch (err) {
@@ -9892,8 +9947,10 @@ function resetPaper(user, initial) {
   const amount = initial === undefined || initial === null || initial === ''
     ? loadPaperConfig().initial
     : sanitizePaperInitial(initial);
-  // 重置 = 重开账户：持仓/成交/已实现/增量资金全部清空（重开后的本金只有 initial）
+  // 重置 = 重开账户：持仓/成交/已实现/增量资金/委托/条件单/网格定投/分红入账/权益曲线全部清空
+  // （跟单关系保留：那是账号级别的订阅，不是持仓）
   return withPaperLock(() => {
+    const prev = getPaperAccount(user);
     savePaperAccount(user, {
       initial: amount,
       cash: amount,
@@ -9901,9 +9958,511 @@ function resetPaper(user, initial) {
       trades: [],
       realized: {},
       capital: { injected: 0, events: [] },
+      orders: [],
+      conditions: [],
+      plans: [],
+      corporate: {},
+      equity: {},
+      following: prev.following || [],
+      followers: prev.followers || [],
+      allowFollow: prev.allowFollow !== false,
     });
     return { ok: true, initial: amount };
   });
+}
+
+/* =========================================================
+   模拟盘自动撮合 / 条件单 / 网格 / 定投 / 分红（v2.12.0）
+   ---------------------------------------------------------
+   撮合时机：
+   - 服务端每 60 秒 tick（关掉页面也继续撮合，和云端预警同一个定时器）；
+   - 用户打开模拟盘页面时也会撮合一次（同一账户 15 秒最多一次，避免刷屏打行情）。
+   行情在锁外取、账本在锁内改，保证并发下单 / 撮合不丢更新。
+   ========================================================= */
+const PAPER_SWEEP_MIN_MS = 15000;
+const paperSweepAt = new Map();
+let paperTicking = false;
+
+/** 单账户扫一轮：分红入账 → 委托到期 → 撮合 → 条件单 → 网格 → 定投 → 权益快照 */
+async function paperSweepAccount(user, { now = Date.now(), force = false } = {}) {
+  if (!user) return { changed: false, trades: 0 };
+  const last = paperSweepAt.get(user.id) || 0;
+  if (!force && now - last < PAPER_SWEEP_MIN_MS) return { changed: false, throttled: true, trades: 0 };
+  const snapshot = getPaperAccount(user);
+  const work = paperWorkState(snapshot);
+  const today = shanghaiToday();
+  const corporateEvents = loadCorporateEvents();
+  const corporateDue = corporateEvents.some((ev) => ev && ev.exDate <= today && snapshot.positions[ev.secid]);
+  if (!work.any && !corporateDue) {
+    paperSweepAt.set(user.id, now);
+    return { changed: false, trades: 0 };
+  }
+  // 收集要行情的标的：持仓（算权益 / 网格）优先，其次委托、条件单、计划
+  const secids = [];
+  const seen = new Set();
+  const push = (s) => {
+    if (!s || seen.has(s) || secids.length >= 40) return;
+    seen.add(s);
+    secids.push(s);
+  };
+  Object.keys(snapshot.positions || {}).forEach(push);
+  (snapshot.orders || []).forEach((o) => { if (o.status === 'pending' || o.status === 'partial') push(o.secid); });
+  (snapshot.conditions || []).forEach((c) => { if (c.status === 'active') push(c.secid); });
+  (snapshot.plans || []).forEach((p) => { if (p.status === 'active') push(p.secid); });
+  let quotes = [];
+  if (secids.length) {
+    try { quotes = await fetchQuoteList(secids, 'stock'); } catch { quotes = []; }
+  }
+  const qmap = new Map((quotes || []).map((q) => [q.secid, q]));
+  paperSweepAt.set(user.id, now);
+  const cfg = loadPaperConfig();
+  const t1 = cfg.trading.t1 !== false;
+  const afterClose = now >= Date.parse(`${today}T15:00:00+08:00`);
+
+  return withPaperLock(() => {
+    const account = getPaperAccount(user);
+    const trades = [];
+    let changed = false;
+    let equityOnly = false;
+
+    // 1) 分红除权入账
+    if (corporateDue) {
+      const res = paperAuto.applyCorporateActions({ account, events: corporateEvents, todayKey: today, at: now });
+      if (res.applied.length) { changed = true; equityOnly = false; }
+    }
+    // 2) 到期委托失效
+    const exp = paperAuto.expireOrders(account.orders, { now });
+    if (exp.expired) { account.orders = exp.orders; changed = true; }
+    // 3) 撮合未结委托（限价单 / 收盘后挂的市价单）
+    const nextOrders = [];
+    for (const o of account.orders) {
+      if (!(o.status === 'pending' || o.status === 'partial')) { nextOrders.push(o); continue; }
+      const q = qmap.get(o.secid) || null;
+      const ctx = paperCtxFor(q || { secid: o.secid }, cfg, now);
+      const r = paperAuto.matchOrder({ account, order: o, quote: q, ctx });
+      nextOrders.push(r.order);
+      if (r.trade) { trades.push(r.trade); changed = true; }
+      else if (r.order.status !== o.status) changed = true;
+      else if (r.order.lastCheck && (!o.lastCheck || o.lastCheck.reason !== r.order.lastCheck.reason)) changed = true;
+    }
+    account.orders = paperAuto.sanitizeOrders(nextOrders);
+
+    // 4) 条件单（止盈止损 / 价格条件）
+    const nextConds = [];
+    for (const c of account.conditions) {
+      if (c.status !== 'active') { nextConds.push(c); continue; }
+      const q = qmap.get(c.secid) || null;
+      const pos = account.positions[c.secid] || null;
+      const ev = paperAuto.evalCondition({ cond: c, quote: q, pos, todayKey: today });
+      const price = Number(q && q.price);
+      if (!ev.hit) {
+        nextConds.push({ ...c, lastCheck: Number(price) > 0 ? { at: now, price: paperLedger.round3(price), reason: String(ev.reason || '') } : c.lastCheck });
+        continue;
+      }
+      const shares = paperAuto.conditionShares({ cond: c, quote: q, account, todayKey: today, fees: cfg.fees, t1 });
+      if (!(shares > 0)) {
+        nextConds.push({ ...c, lastError: '触发时没有可卖股数 / 可用资金（可能被 T+1 或持仓限制挡住）', lastCheck: { at: now, price: paperLedger.round3(price), reason: ev.reason || '' } });
+        changed = true;
+        continue;
+      }
+      const ctx = paperCtxFor(q, cfg, now);
+      const guard = paperAuto.tradeGuard({ quote: q, side: c.side, ctx });
+      if (guard.blocked) {
+        nextConds.push({ ...c, lastError: guard.message, lastCheck: { at: now, price: paperLedger.round3(price), reason: guard.message } });
+        changed = true;
+        continue;
+      }
+      const fillPrice = paperLedger.round3(paperLedger.slippagePrice(price, c.side, cfg.fees));
+      const res = c.side === 'buy'
+        ? paperLedger.applyBuy(account, {
+          quote: { ...q, secid: c.secid, price: fillPrice }, shares, note: `条件单·${paperAuto.conditionLabel(c)}`,
+          fees: cfg.fees, at: now, today, source: 'condition',
+        })
+        : paperLedger.applySell(account, {
+          quote: { ...q, secid: c.secid, price: fillPrice }, shares, note: `条件单·${paperAuto.conditionLabel(c)}`,
+          fees: cfg.fees, at: now, today, t1, source: 'condition',
+        });
+      if (res.error) {
+        nextConds.push({ ...c, lastError: res.error.message, lastCheck: { at: now, price: paperLedger.round3(price), reason: res.error.message } });
+        changed = true;
+        continue;
+      }
+      account.cash = res.account.cash;
+      account.positions = res.account.positions;
+      account.trades = res.account.trades;
+      account.realized = res.account.realized;
+      account.updatedAt = res.account.updatedAt;
+      trades.push(res.trade);
+      nextConds.push({ ...c, status: 'triggered', triggeredAt: now, lastCheck: { at: now, price: paperLedger.round3(price), reason: ev.reason || '' } });
+      changed = true;
+    }
+    account.conditions = paperAuto.sanitizeConditions(nextConds);
+
+    // 5) 网格（一次 tick 只走一格）
+    for (const p of account.plans) {
+      if (p.kind !== 'grid' || p.status !== 'active') continue;
+      const q = qmap.get(p.secid) || null;
+      const price = Number(q && q.price);
+      if (!(price > 0)) continue;
+      const available = t1 ? paperLedger.availableShares(account, p.secid, today) : Number((account.positions[p.secid] || {}).shares) || 0;
+      const act = paperAuto.gridAction({
+        plan: p, price, pos: account.positions[p.secid], cash: account.cash, fees: cfg.fees, t1, todayKey: today, available,
+      });
+      if (act.action === 'init') {
+        // 初始化网格位置：不动仓位，只记住现价在第几格
+        const idx = paperAuto.gridIndexFor(p, price);
+        if (idx !== null) { p.gridIndex = idx; p.updatedAt = now; changed = true; }
+        continue;
+      }
+      if (act.action !== 'buy' && act.action !== 'sell') continue;
+      const side = act.action === 'buy' ? 'buy' : 'sell';
+      const ctx = paperCtxFor(q, cfg, now);
+      const guard = paperAuto.tradeGuard({ quote: q, side, ctx });
+      if (guard.blocked) { p.lastError = guard.message; p.lastErrorAt = now; changed = true; continue; }
+      const fillPrice = paperLedger.round3(paperLedger.slippagePrice(price, side, cfg.fees));
+      const res = side === 'buy'
+        ? paperLedger.applyBuy(account, {
+          quote: { ...q, secid: p.secid, price: fillPrice }, shares: act.shares, note: `网格·第 ${act.index + 1} 段`,
+          fees: cfg.fees, at: now, today, source: 'grid',
+        })
+        : paperLedger.applySell(account, {
+          quote: { ...q, secid: p.secid, price: fillPrice }, shares: act.shares, note: `网格·第 ${act.index + 1} 段`,
+          fees: cfg.fees, at: now, today, t1, source: 'grid',
+        });
+      if (res.error) { p.lastError = res.error.message; p.lastErrorAt = now; changed = true; continue; }
+      account.cash = res.account.cash;
+      account.positions = res.account.positions;
+      account.trades = res.account.trades;
+      account.realized = res.account.realized;
+      account.updatedAt = res.account.updatedAt;
+      trades.push(res.trade);
+      p.gridIndex = act.newIndex;
+      p.runs = (Number(p.runs) || 0) + 1;
+      p.lastAction = act.message;
+      p.updatedAt = now;
+      p.lastError = '';
+      changed = true;
+    }
+
+    // 6) 定投（每个约定日只买一次，买完就把下次日期推到下一个交易日）
+    for (const p of account.plans) {
+      if (p.kind !== 'dca' || p.status !== 'active') continue;
+      if (!paperAuto.dcaDue({ plan: p, todayKey: today })) continue;
+      const nextDate = paperAuto.dcaNextDate({ freq: p.freq, weekday: p.weekday, dayOfMonth: p.dayOfMonth, fromKey: today });
+      const q = qmap.get(p.secid) || null;
+      const price = Number(q && q.price);
+      if (!(price > 0)) { p.lastError = '取不到行情，顺延到下一个交易日'; p.nextDateKey = nextDate; changed = true; continue; }
+      const ctx = paperCtxFor(q, cfg, now);
+      const guard = paperAuto.tradeGuard({ quote: q, side: 'buy', ctx });
+      if (guard.blocked) { p.lastError = guard.message; p.nextDateKey = nextDate; changed = true; continue; }
+      const fillPrice = paperLedger.round3(paperLedger.slippagePrice(price, 'buy', cfg.fees));
+      const lot = paperLedger.lotOf(p.secid);
+      let shares = Math.floor(p.amount / (fillPrice * (1 + cfg.fees.rate)) / lot) * lot;
+      const max = paperLedger.maxBuyShares({ price: fillPrice, cash: account.cash, lot, fees: cfg.fees });
+      if (shares > max.shares) shares = max.shares;
+      if (!(shares > 0)) {
+        p.lastError = `每期 ${nf(p.amount, 0)} 元买不到一手（现价 ${nf(fillPrice, 3)} 元），本期跳过`;
+        p.nextDateKey = nextDate;
+        changed = true;
+        continue;
+      }
+      const res = paperLedger.applyBuy(account, {
+        quote: { ...q, secid: p.secid, price: fillPrice }, shares,
+        note: `定投 ${p.freq === 'daily' ? '每日' : p.freq === 'weekly' ? '每周' : '每月'} ${nf(p.amount, 0)} 元`,
+        fees: cfg.fees, at: now, today, source: 'dca',
+      });
+      if (res.error) { p.lastError = res.error.message; p.nextDateKey = nextDate; changed = true; continue; }
+      account.cash = res.account.cash;
+      account.positions = res.account.positions;
+      account.trades = res.account.trades;
+      account.realized = res.account.realized;
+      account.updatedAt = res.account.updatedAt;
+      trades.push(res.trade);
+      p.runs = (Number(p.runs) || 0) + 1;
+      p.todayRuns = p.todayKey === today ? (Number(p.todayRuns) || 0) + 1 : 1;
+      p.todayKey = today;
+      p.lastRun = now;
+      p.nextDateKey = nextDate;
+      p.lastAction = `定投买入 ${shares} 股`;
+      p.lastError = '';
+      p.updatedAt = now;
+      changed = true;
+    }
+    account.plans = paperAuto.sanitizePlans(account.plans);
+
+    // 7) 日终权益快照（排行周期收益 / 回撤的数据来源）
+    const hasHistory = (account.trades || []).length || Object.keys(account.positions || {}).length
+      || paperLedger.num(account.capital && account.capital.injected) > 0;
+    if (hasHistory) {
+      const totals = paperLedger.accountTotals(account, qmap);
+      const todayKey = today;
+      const existing = (account.equity || {})[todayKey];
+      const need = existing === undefined || (afterClose && Math.abs(Number(existing) - totals.total) > 0.01);
+      if (need) {
+        account.equity = paperAuto.recordEquity(account, todayKey, totals.total).equity;
+        changed = true;
+        if (!trades.length) equityOnly = true;
+      }
+    }
+
+    if (changed) {
+      // 只有权益快照变化时不推进 updatedAt，避免把「最近操作 / 盈亏缓存的键」每分钟刷一次
+      savePaperAccount(user, account, { touch: !equityOnly });
+      // 自动交易（条件单/网格/定投）产生的成交也要分发给跟单人
+      for (const t of trades) mirrorPaperFills(user, account, t);
+    }
+    return { changed, trades: trades.length, equityOnly };
+  });
+}
+
+/** 主进程 60 秒 tick 调它：遍历所有有模拟账户的用户，撮合挂单 / 条件单 / 网格 / 定投 */
+async function paperSweepTick() {
+  if (paperTicking) return;
+  paperTicking = true;
+  try {
+    const owners = dataStore.listUserExtraOwners('paper').slice(0, 60);
+    if (!owners.length) return;
+    const users = loadUsers().users || [];
+    const byId = new Map(users.map((u) => [String(u.id), u]));
+    for (const id of owners) {
+      const user = byId.get(String(id));
+      if (!user) continue;
+      try {
+        await paperSweepAccount(user);
+      } catch {
+        // 单个账户失败不影响其它账户
+      }
+    }
+  } finally {
+    paperTicking = false;
+  }
+}
+
+/* ---------------- 用户侧自动化接口 ---------------- */
+
+async function cancelPaperOrder(user, orderId) {
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  return withPaperLock(() => {
+    const account = getPaperAccount(user);
+    const res = paperAuto.cancelOrder(account.orders, orderId, { at: Date.now(), reason: '用户主动撤单' });
+    if (res.error) throw Object.assign(new Error(res.error.message), { status: res.error.status });
+    account.orders = res.orders;
+    savePaperAccount(user, account);
+    return { ok: true, order: paperAuto.orderView(res.order), orders: paperAuto.sanitizeOrders(account.orders).reverse().map((o) => paperAuto.orderView(o)) };
+  });
+}
+
+async function createPaperCondition(user, payload = {}) {
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  const secid = String(payload.secid || '');
+  if (!/^\d+\.[0-9A-Za-z]+$/.test(secid)) throw Object.assign(new Error('标的不合法'), { status: 400 });
+  return withPaperLock(() => {
+    const account = getPaperAccount(user);
+    const cond = paperAuto.sanitizeCondition({
+      secid,
+      code: payload.code,
+      name: payload.name,
+      kind: payload.kind,
+      value: payload.value,
+      side: payload.side,
+      shares: payload.shares,
+      note: payload.note,
+      status: 'active',
+      createdAt: Date.now(),
+    });
+    if (!cond) throw Object.assign(new Error('条件单不合法：需要类型与触发值'), { status: 400 });
+    if (cond.kind === 'takeProfit' || cond.kind === 'stopLoss') {
+      const pos = account.positions[secid];
+      if (!pos || !(Number(pos.shares) > 0)) throw Object.assign(new Error('止盈/止损需要先持有该标的'), { status: 400 });
+    }
+    const activeCount = (account.conditions || []).filter((c) => c.status === 'active').length;
+    if (activeCount >= paperAuto.PAPER_CONDITION_MAX) {
+      throw Object.assign(new Error(`条件单最多同时挂 ${paperAuto.PAPER_CONDITION_MAX} 条`), { status: 400 });
+    }
+    account.conditions = paperAuto.sanitizeConditions([...(account.conditions || []), cond]);
+    savePaperAccount(user, account);
+    return { ok: true, condition: cond, conditions: account.conditions };
+  });
+}
+
+async function cancelPaperCondition(user, id) {
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  const key = String(id || '');
+  return withPaperLock(() => {
+    const account = getPaperAccount(user);
+    const idx = (account.conditions || []).findIndex((c) => String(c.id) === key);
+    if (idx < 0) throw Object.assign(new Error('条件单不存在'), { status: 404 });
+    const list = [...account.conditions];
+    list[idx] = { ...list[idx], status: 'cancelled' };
+    account.conditions = paperAuto.sanitizeConditions(list);
+    savePaperAccount(user, account);
+    return { ok: true, conditions: account.conditions };
+  });
+}
+
+async function createPaperPlan(user, payload = {}) {
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  return withPaperLock(() => {
+    const account = getPaperAccount(user);
+    const plan = paperAuto.sanitizePlan({
+      ...payload,
+      status: 'active',
+      createdAt: Date.now(),
+      gridIndex: null,
+      nextDateKey: '',
+    });
+    if (!plan) throw Object.assign(new Error('计划不合法：网格需要下界 < 上界、每格股数；定投需要每期金额 ≥ 1000 元'), { status: 400 });
+    if (plan.kind === 'dca') {
+      plan.nextDateKey = paperAuto.dcaNextDate({
+        freq: plan.freq, weekday: plan.weekday, dayOfMonth: plan.dayOfMonth, fromKey: shanghaiToday(),
+      });
+    }
+    const activeCount = (account.plans || []).filter((p) => p.status === 'active').length;
+    if (activeCount >= paperAuto.PAPER_PLAN_MAX) {
+      throw Object.assign(new Error(`自动交易计划最多同时启用 ${paperAuto.PAPER_PLAN_MAX} 个`), { status: 400 });
+    }
+    account.plans = paperAuto.sanitizePlans([...(account.plans || []), plan]);
+    savePaperAccount(user, account);
+    return { ok: true, plan, plans: account.plans };
+  });
+}
+
+async function updatePaperPlan(user, payload = {}) {
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  const id = String(payload.id || '');
+  return withPaperLock(() => {
+    const account = getPaperAccount(user);
+    const idx = (account.plans || []).findIndex((p) => String(p.id) === id);
+    if (idx < 0) throw Object.assign(new Error('计划不存在'), { status: 404 });
+    const cur = account.plans[idx];
+    const next = { ...cur };
+    if (payload.status !== undefined) {
+      next.status = ['active', 'paused', 'stopped'].includes(payload.status) ? payload.status : next.status;
+    }
+    if (payload.amount !== undefined) next.amount = payload.amount;
+    if (payload.sharesPerGrid !== undefined) next.sharesPerGrid = payload.sharesPerGrid;
+    if (payload.lower !== undefined) next.lower = payload.lower;
+    if (payload.upper !== undefined) next.upper = payload.upper;
+    if (payload.grids !== undefined) next.grids = payload.grids;
+    if (payload.note !== undefined) next.note = payload.note;
+    next.updatedAt = Date.now();
+    const sanitized = paperAuto.sanitizePlan(next);
+    if (!sanitized) throw Object.assign(new Error('修改后的计划不合法'), { status: 400 });
+    const list = [...account.plans];
+    list[idx] = { ...sanitized, gridIndex: sanitized.kind === 'grid' ? cur.gridIndex : undefined };
+    account.plans = paperAuto.sanitizePlans(list);
+    savePaperAccount(user, account);
+    return { ok: true, plans: account.plans };
+  });
+}
+
+async function deletePaperPlan(user, id) {
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  const key = String(id || '');
+  return withPaperLock(() => {
+    const account = getPaperAccount(user);
+    const next = (account.plans || []).filter((p) => String(p.id) !== key);
+    if (next.length === (account.plans || []).length) throw Object.assign(new Error('计划不存在'), { status: 404 });
+    account.plans = paperAuto.sanitizePlans(next);
+    savePaperAccount(user, account);
+    return { ok: true, plans: account.plans };
+  });
+}
+
+/** 跟单：订阅某个人的成交（只复制一层，不链式扩散） */
+async function followPaperUser(user, payload = {}) {
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  const targetName = String(payload.username || payload.target || '').trim();
+  if (!targetName) throw Object.assign(new Error('缺少被跟单用户名'), { status: 400 });
+  const users = loadUsers().users || [];
+  const target = users.find((u) => String(u.username || '').toLowerCase() === targetName.toLowerCase());
+  if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
+  if (target.id === user.id) throw Object.assign(new Error('不能跟自己'), { status: 400 });
+  const config = loadPaperConfig();
+  if (config.hiddenUserIds.includes(target.id)) throw Object.assign(new Error('该账户未公开，不能跟单'), { status: 403 });
+  const follow = paperAuto.sanitizeFollow({
+    target: targetName,
+    ratio: payload.ratio,
+    maxShares: payload.maxShares,
+    createdAt: Date.now(),
+  });
+  return withPaperLock(() => {
+    const mine = getPaperAccount(user);
+    const targetAcc = getPaperAccount(target);
+    if (targetAcc.allowFollow === false) throw Object.assign(new Error('对方关闭了跟单'), { status: 403 });
+    if (mine.following.some((f) => String(f.target).toLowerCase() === targetName.toLowerCase())) {
+      throw Object.assign(new Error('已经跟单了，请先取消再调整比例'), { status: 409 });
+    }
+    if (mine.following.length >= paperAuto.PAPER_FOLLOW_MAX) {
+      throw Object.assign(new Error(`最多同时跟 ${paperAuto.PAPER_FOLLOW_MAX} 个人`), { status: 400 });
+    }
+    mine.following = paperAuto.sanitizeFollows([...mine.following, follow]);
+    savePaperAccount(user, mine);
+    targetAcc.followers = paperAuto.sanitizeFollowers([
+      ...targetAcc.followers,
+      { target: user.username, ratio: follow.ratio, maxShares: follow.maxShares, createdAt: Date.now() },
+    ]);
+    savePaperAccount(target, targetAcc);
+    return { ok: true, following: mine.following, followers: targetAcc.followers.length };
+  });
+}
+
+async function unfollowPaperUser(user, username) {
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  const name = String(username || '').trim().toLowerCase();
+  const users = loadUsers().users || [];
+  const target = users.find((u) => String(u.username || '').toLowerCase() === name);
+  return withPaperLock(() => {
+    const mine = getPaperAccount(user);
+    mine.following = mine.following.filter((f) => String(f.target).toLowerCase() !== name);
+    savePaperAccount(user, mine);
+    if (target) {
+      const tacc = getPaperAccount(target);
+      tacc.followers = tacc.followers.filter((f) => String(f.target).toLowerCase() !== String(user.username).toLowerCase());
+      savePaperAccount(target, tacc);
+    }
+    return { ok: true, following: mine.following };
+  });
+}
+
+async function setPaperAllowFollow(user, allow) {
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  return withPaperLock(() => {
+    const account = getPaperAccount(user);
+    account.allowFollow = allow !== false;
+    savePaperAccount(user, account);
+    return { ok: true, allowFollow: account.allowFollow };
+  });
+}
+
+/** 复盘报告：胜率 / 盈亏比 / 最大回撤 / 集中度 + 权益曲线 */
+async function getPaperReview(user) {
+  if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+  const account = getPaperAccount(user);
+  const cfg = loadPaperConfig();
+  const secids = Object.keys(account.positions || {});
+  let quotes = [];
+  if (secids.length) {
+    try { quotes = await fetchQuoteList(secids, 'stock'); } catch { quotes = []; }
+  }
+  const qmap = new Map((quotes || []).map((q) => [q.secid, q]));
+  const totals = paperLedger.accountTotals(account, qmap);
+  const today = shanghaiToday();
+  const metrics = paperAuto.reviewMetrics({
+    account, totalNow: totals.total, positions: totals.positions, todayKey: today,
+  });
+  const curve = paperAuto.equitySeries(account).slice(-800);
+  return {
+    ok: true,
+    ...metrics,
+    curve,
+    total: totals.total,
+    principal: totals.principal,
+    profit: totals.profit,
+    profitPct: totals.profitPct,
+    rules: paperRules(cfg),
+    asOf: Date.now(),
+  };
 }
 
 /* =========================================================
@@ -9916,9 +10475,10 @@ function resetPaper(user, initial) {
 const PAPER_RANK_MAX_USERS = 200;
 
 async function getPaperRanking() {
-  // 配置（初始资金 / 排行榜黑名单 / 增量资金批次）变了就换缓存键，管理端保存后立刻生效
+  // 配置（初始资金 / 排行榜黑名单 / 增量资金批次 / 费率）变了就换缓存键，管理端保存后立刻生效
   const config = loadPaperConfig();
-  return cached(`paperrank:v3:${config.updatedAt}`, 15000, async () => {
+  // v2.12.0：周期收益与回撤按「上海日期」推进，跨天必须换缓存
+  return cached(`paperrank:v4:${config.updatedAt}:${shanghaiToday()}`, 15000, async () => {
     const users = loadUsers().users || [];
     const hiddenSet = new Set(config.hiddenUserIds);
     const visible = users.filter((u) => !hiddenSet.has(u.id));
@@ -9934,6 +10494,7 @@ async function getPaperRanking() {
       }
     }
     let estimated = false;
+    const todayKey = shanghaiToday();
     const items = rows.map(({ user, account }) => {
       let marketValue = 0;
       let costValue = 0;
@@ -9965,6 +10526,8 @@ async function getPaperRanking() {
       const principal = Math.round((Number(account.initial) + injected) * 100) / 100;
       const total = Math.round((account.cash + marketValue) * 100) / 100;
       const profit = Math.round((total - principal) * 100) / 100;
+      // v2.12.0：今日 / 本周 / 本月 / 今年收益率 + 最大回撤（来自日终权益快照）
+      const periods = paperAuto.periodStats({ account, totalNow: total, todayKey });
       return {
         username: user.username,
         initial: Math.round(Number(account.initial) * 100) / 100,
@@ -9976,6 +10539,15 @@ async function getPaperRanking() {
         costValue: Math.round(costValue * 100) / 100,
         profit,
         profitPct: principal ? Math.round((profit / principal) * 10000) / 100 : 0,
+        todayPct: periods.todayPct,
+        weekPct: periods.weekPct,
+        monthPct: periods.monthPct,
+        yearPct: periods.yearPct,
+        totalPct: periods.totalPct,
+        mdd: periods.mdd,
+        mddFrom: periods.mddFrom,
+        mddTo: periods.mddTo,
+        equityDays: periods.equityDays,
         positionCount: positions.length,
         positions: positions.slice(0, 10),
         updatedAt: account.updatedAt,
@@ -10070,6 +10642,18 @@ async function getPaperAdminOverview() {
       positions,
       realized: paperLedger.realizedRows(account, qmap),
       trades: account.trades.slice(-10).reverse(),
+      // v2.12.0：委托 / 条件单 / 网格定投 / 跟单 / 除权入账 摘要
+      orders: (account.orders || []).slice(-10).reverse().map((o) => paperAuto.orderView(o)),
+      orderCount: (account.orders || []).filter((o) => o.status === 'pending' || o.status === 'partial').length,
+      conditions: account.conditions || [],
+      plans: account.plans || [],
+      followers: (account.followers || []).length,
+      following: (account.following || []).length,
+      allowFollow: account.allowFollow !== false,
+      corporate: Object.values(account.corporate || {}).slice(-5).reverse(),
+      periods: paperAuto.periodStats({
+        account, totalNow: total, todayKey: shanghaiToday(),
+      }),
       updatedAt: account.updatedAt,
     };
   });
@@ -10083,7 +10667,13 @@ async function getPaperAdminOverview() {
       traded: rows.filter((r) => r.positionCount > 0 || r.updatedAt).length,
       hidden: rows.filter((r) => r.hidden).length,
       injected: paperLedger.round2(rows.reduce((s, r) => s + (Number(r.injected) || 0), 0)),
+      activeOrders: rows.reduce((s, r) => s + (Number(r.orderCount) || 0), 0),
+      conditions: rows.reduce((s, r) => s + (r.conditions || []).filter((c) => c.status === 'active').length, 0),
+      plans: rows.reduce((s, r) => s + (r.plans || []).filter((p) => p.status === 'active').length, 0),
+      followers: rows.reduce((s, r) => s + (Number(r.followers) || 0), 0),
+      corporate: (config && config.__corporateCount) || 0,
     },
+    corporateEvents: loadCorporateEvents(),
     estimated,
     updatedAt: Date.now(),
   };
@@ -10126,7 +10716,7 @@ async function getPaperPnl(user, days = 800) {
       todayFlow: 0, missing: [], estimated: false, truncated: false, costValue: null, marketValue: null,
     };
   }
-  const key = `paperpnl:${user.id}:${shanghaiToday()}:${account.updatedAt || 0}:${account.trades.length}:${(account.capital.events || []).length}:${limit}`;
+  const key = `paperpnl:${user.id}:${shanghaiToday()}:${account.updatedAt || 0}:${account.trades.length}:${(account.capital.events || []).length}:${loadCorporateEvents().length}:${limit}`;
   return cached(key, 60000, async () => {
     const barsBySecid = {};
     await mapLimit(secids, 3, async (secid) => {
@@ -10139,6 +10729,9 @@ async function getPaperPnl(user, days = 800) {
     });
     const calc = paperLedger.reconstructDailyPnl({
       account, barsBySecid, days: limit, today: shanghaiToday(),
+      // v2.12.0：除权日现金分红入账 + 送转股调整；费率用后台可配的口径
+      dividends: loadCorporateEvents(),
+      fees: loadPaperConfig().fees,
     });
     return { ok: true, ...base, ...calc };
   });
@@ -10169,6 +10762,12 @@ async function getPaperRankingDetail(username, viewer) {
   }
   const qmap = new Map((quotes || []).map((q) => [q.secid, q]));
   const totals = paperLedger.accountTotals(account, qmap);
+  const today = shanghaiToday();
+  const period = paperAuto.periodStats({ account, totalNow: totals.total, todayKey: today });
+  // v2.12.0：详情里也带复盘指标（胜率/盈亏比/回撤/集中度）和周期收益，同样不透出成交明细
+  const review = paperAuto.reviewMetrics({
+    account, totalNow: totals.total, positions: totals.positions, todayKey: today,
+  });
   return {
     ok: true,
     username: user.username,
@@ -10187,9 +10786,26 @@ async function getPaperRankingDetail(username, viewer) {
     positionCount: totals.positions.length,
     positions: totals.positions,
     realized: paperLedger.realizedRows(account, qmap),
+    periods: period,
+    review: {
+      trades: review.trades,
+      sells: review.sells,
+      winRate: review.winRate,
+      payoffRatio: review.payoffRatio,
+      profitFactor: review.profitFactor,
+      mdd: review.mdd,
+      topWeight: review.topWeight,
+      topName: review.topName,
+      avgHoldDays: review.avgHoldDays,
+      realizedTotal: review.realizedTotal,
+    },
+    followers: (account.followers || []).length,
+    activeOrders: (account.orders || []).filter((o) => o.status === 'pending' || o.status === 'partial').length,
+    conditions: (account.conditions || []).filter((c) => c.status === 'active').length,
+    plans: (account.plans || []).filter((p) => p.status === 'active').length,
     anyPrevClose: totals.anyPrevClose,
     updatedAt: account.updatedAt,
-    rules: { feeRate: PAPER_FEE_RATE, feeMin: PAPER_FEE_MIN, taxRate: PAPER_TAX_RATE },
+    rules: paperRules(loadPaperConfig()),
     asOf: Date.now(),
   };
 }
@@ -10416,6 +11032,21 @@ const httpRoutes = createHttpRoutes({
   getFundPnlSeries,
   paperTrade,
   resetPaper,
+  // v2.12.0：模拟盘自动化（委托/条件单/网格定投/跟单/复盘/分红除权）
+  paperSweepAccount,
+  cancelPaperOrder,
+  createPaperCondition,
+  cancelPaperCondition,
+  createPaperPlan,
+  updatePaperPlan,
+  deletePaperPlan,
+  followPaperUser,
+  unfollowPaperUser,
+  setPaperAllowFollow,
+  getPaperReview,
+  loadCorporateEvents,
+  addCorporateEvent,
+  removeCorporateEvent,
   fetchQuoteList,
   flushStats,
   fs,
@@ -10570,9 +11201,59 @@ async function getSystemStatus() {
 }
 
 
+/* ---------------------------------------------------------
+   更新履历（v2.12.0 拆成两套）
+   ---------------------------------------------------------
+   用户之前反馈：客户端更新履历里全是「改了哪个函数 / 加了哪个测试 / 锁和幂等」，
+   看不懂也没意义。现在按读者拆开：
+   - versions（后台看）：完整明细，逻辑变更、口径、测试、部署都保留；
+   - clientVersions（客户端看）：只留用户能感知的 UI / 功能点，实现细节全部滤掉；
+     版本里显式给了 clientItems 就用手写的（最准），没给才按关键词自动简化。
+   --------------------------------------------------------- */
+const CHANGELOG_TECH_PATTERN = /(server\.js|src\/|public\/|test\/|scripts\/|\.mjs|\.js\b|API|接口|函数|SQLite|JSON|schema|缓存|setInterval|tick|npm|commit|字段|归一化|回填|幂等|串行|并发|浮点|脚本|单元测试|断言|回归|冷启动|部署|迁移|索引|路由|中间件|正则|参数|默认值)/i;
+const CHANGELOG_TECH_PREFIX = /^(测试|说明|改动|加固|修复|核查|现象|数据与兼容|兼容|服务端|前端|后端|接口|模块|存储|部署|缓存|依赖|重构|性能|口径|字段)/;
+
+/** 从详细明细里提炼客户端能看懂的几条（只有老版本没有 clientItems 时用） */
+function deriveClientItems(items) {
+  const out = [];
+  for (const raw of (Array.isArray(items) ? items : [])) {
+    let s = String(raw || '').replace(/\s+/g, ' ').trim();
+    if (!s) continue;
+    if (CHANGELOG_TECH_PREFIX.test(s) || CHANGELOG_TECH_PATTERN.test(s)) continue;
+    // 去掉「（用户第 N 条）」这类内部标注
+    s = s.replace(/（用户第\s*\d+\s*条）/g, '').trim();
+    if (s.length < 6) continue;
+    out.push(s.length > 110 ? `${s.slice(0, 110)}…` : s);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function normalizeChangelogEntry(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const items = (Array.isArray(src.items) ? src.items : []).map((x) => String(x || '')).filter(Boolean);
+  const own = (Array.isArray(src.clientItems) ? src.clientItems : []).map((x) => String(x || '')).filter(Boolean);
+  const clientItems = own.length ? own.slice(0, 12) : deriveClientItems(items);
+  return {
+    version: String(src.version || ''),
+    date: String(src.date || ''),
+    title: String(src.title || ''),
+    items,
+    clientItems: clientItems.length ? clientItems : [String(src.title || '')].filter(Boolean),
+  };
+}
+
 function getChangelog() {
   const list = readJsonSafe(path.join(__dirname, 'data', 'changelog.json'), []);
-  return { ok: true, versions: Array.isArray(list) ? list : [] };
+  const versions = (Array.isArray(list) ? list : []).map(normalizeChangelogEntry).filter((v) => v.version || v.title);
+  return {
+    ok: true,
+    versions,
+    // 客户端只拿简化版，避免把实现细节当成更新内容展示给用户
+    clientVersions: versions.map((v) => ({
+      version: v.version, date: v.date, title: v.title, items: v.clientItems,
+    })),
+  };
 }
 
 
@@ -10793,6 +11474,8 @@ server.listen(PORT, HOST, () => {
     strategyLog.tick().catch(() => {});
     // 服务端预警（阶段 2.4）：关掉页面也继续盯，命中走推送
     alertsTick().catch(() => {});
+    // 模拟盘自动撮合（v2.12.0）：挂单 / 条件单 / 网格 / 定投 / 分红除权
+    paperSweepTick().catch(() => {});
   }, 60000);
   const pushCfg = loadPushConfig();
   if (pushCfg.enabled) {

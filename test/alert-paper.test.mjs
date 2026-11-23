@@ -159,6 +159,10 @@ test('模拟交易：重置账户清空持仓与成交', async () => {
 
 test('模拟交易：能拿到行情时买入会扣钱建仓，卖出后仓位归零', async (t) => {
   await withApp(async (c) => {
+    // v2.12.0：默认开启 T+1 强校验（当日买入不能当日卖出）。
+    // 这个用例验证的是账本记账，所以先把 T+1 关掉；T+1 的拦截另有专门用例。
+    const off = await c.post('/api/admin/paper/config', { trading: { t1: false } });
+    assert.equal(off.status, 200, '管理员应能关掉 T+1 开关');
     const buy = await c.req('/api/paper/trade', {
       method: 'POST',
       json: { secid: '1.600519', side: 'buy', shares: 100, note: '测试买入' },
@@ -287,6 +291,8 @@ test('模拟交易：比例参数非法时在取行情之前就拒绝', async ()
 
 test('模拟交易：按比例买入成交在整手，按「全部」能一次卖光（无行情则跳过）', async (t) => {
   await withApp(async (c) => {
+    // 同上：先关 T+1，才能在同一用例里验证「全部卖出」
+    await c.post('/api/admin/paper/config', { trading: { t1: false } });
     const buy = await c.req('/api/paper/trade', { method: 'POST', json: { secid: '1.600519', side: 'buy', ratio: 0.25 } });
     if (buy.status !== 200) {
       t.diagnostic(`跳过：比例买入需要实时行情（${buy.status} ${JSON.stringify(buy.body)}）`);
