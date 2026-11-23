@@ -611,7 +611,9 @@ function gridAction({ plan, price, pos, cash = 0, fees, t1, todayKey, available 
   const p = num(price);
   if (!levels.length || !(p > 0)) return { action: 'hold', message: '价格不可用' };
   const idx = gridIndexFor(plan, p);
-  const prev = Number.isFinite(Number(plan && plan.gridIndex)) ? Number(plan.gridIndex) : null;
+  const rawIdx = plan && plan.gridIndex;
+  const prev = rawIdx === null || rawIdx === undefined || rawIdx === ''
+    ? null : (Number.isFinite(Number(rawIdx)) ? Number(rawIdx) : null);
   if (prev === null) return { action: 'init', index: idx, newIndex: idx, shares: 0, message: `初始化网格位置（第 ${idx + 1} 段）` };
   const step = Math.max(0, Math.floor(num(plan.sharesPerGrid)));
   if (idx < prev) {
@@ -896,10 +898,10 @@ function reviewMetrics({ account, totalNow, positions, todayKey } = {}) {
   const avgLoss = losses.length ? round2(lossSum / losses.length) : null;
   const profitFactor = lossSum !== 0 ? round2(winSum / Math.abs(lossSum)) : (winSum > 0 ? null : 0);
   const realizedTotal = round2(sells.reduce((s, t) => s + Number(t.realized), 0));
-  // 持仓天数：按标的从首笔买入到最近一笔卖出（只统计已清仓的标的）
+  // 持仓天数：按标的从首笔买入到「卖光那一笔」（只统计已经清仓的回合）
   const firstBuyAt = new Map();
-  const lastSellAt = new Map();
   const bought = new Map();
+  const holdingDaysList = [];
   for (const t of trades) {
     const sid = String(t.secid);
     if (t.side === 'buy') {
@@ -909,14 +911,12 @@ function reviewMetrics({ account, totalNow, positions, todayKey } = {}) {
       const qty = Math.floor(num(t.shares));
       const remain = (bought.get(sid) || 0) - qty;
       bought.set(sid, remain);
-      lastSellAt.set(sid, t.ts);
-      if (remain <= 0) firstBuyAt.delete(sid);
+      const start = firstBuyAt.get(sid);
+      if (remain <= 0 && start && t.ts > start) {
+        holdingDaysList.push(Math.max(0, Math.round((t.ts - start) / 86400000)));
+        firstBuyAt.delete(sid);
+      }
     }
-  }
-  const holdingDaysList = [];
-  for (const [sid, at] of lastSellAt) {
-    const start = firstBuyAt.get(sid);
-    if (start && at > start) holdingDaysList.push(Math.max(0, Math.round((at - start) / 86400000)));
   }
   const avgHoldDays = holdingDaysList.length
     ? round2(holdingDaysList.reduce((s, v) => s + v, 0) / holdingDaysList.length) : null;

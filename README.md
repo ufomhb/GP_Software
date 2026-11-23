@@ -209,6 +209,25 @@ npm run selfcheck                         # 安全基线 39 项 + 存储层 23 �
 - 前端渲染约定：**外部文本进 `innerHTML` 前必须 `esc()`；进 `href`/`src` 前必须再过 `safeUrl()`**（`esc` 挡不住 `javascript:` 协议）。2026-11-15 审计了 225 处模板插值，35 处文本型全部安全，并补了 `safeUrl` 覆盖快讯链接等 2 处 href。
 - CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
 
+### v2.12.0 更新（2026-11-23）
+
+> 模拟交易进入「像真的券商终端」阶段：限价委托 / 挂单 / 撤单 / 部分成交、T+1 与涨跌停 / 停牌强校验（后台开关）、排行榜周期收益与回撤、持仓条件预警、费率可配、分红除权记账；P2 的止盈止损 / 条件单、网格 / 定投、组合跟单、复盘报告全部落地；并把更新履历拆成「客户端（功能点）」与「后台（完整明细）」两套。**只在本机 8090 验证，未推 NAS。**
+
+- **限价委托 / 挂单 / 撤单 / 部分成交（P1-1）**：`POST /api/paper/trade` 新增 `orderType=limit` / `limitPrice` / `validDays`。委托状态机 `pending → partial → filled / cancelled / expired / rejected`；每次撮合按可用资金或可卖股数成交，钱不够就 **部分成交**、剩余继续挂着；未结委托最多 30 笔、历史保留 60 条；挂单不冻结资金（成交那一刻才校验），当日有效单 15:00 自动失效；`POST /api/paper/order/cancel` 撤单。撮合时机：服务端 60 秒 tick + 用户打开模拟盘页面时一次（同账户 15 秒节流）。
+- **T+1 / 涨跌停 / 停牌强校验（P1-2，做成开关）**：持仓新增 `lockedShares` / `lockedDate`（当日买入的部分锁定、隔日自动解锁），卖出按可卖股数校验；涨跌停按板块比例算（主板 10%、创业板 / 科创板 20%、北交所 30%、ST 5%，新股不限制），涨停拒买、跌停拒卖；停牌（无实时成交价）不成交。三个开关都在 `paper-config.trading`，后台「交易规则」卡片可关；**默认全开**（所以「当日买入当日卖出」会返回 T+1 提示，这是新口径）。
+- **排行榜周期收益与回撤（P1-3）**：账户新增 `equity` 日终权益快照（最多 1500 天），`periodStats` 算出今日 / 本周 / 本月 / 今年收益率与最大回撤（入金从期末剔除、回撤按剔除入金后的净值曲线算）；排行榜返回 `todayPct / weekPct / monthPct / yearPct / totalPct / mdd / mddFrom / mddTo / equityDays`，前端可按任意一项排序（回撤从小到大）。快照不足两天时显示 `--`，不编造数字。
+- **持仓条件预警（P1-4）**：复用云端预警的规则与推送通道（同一个 60 秒 tick、同一条 Server酱 / PushPlus / 企业微信通道），规则单独存 `user_extras['paper_alerts']`，避免与自选股预警互相覆盖；新增 `holdingPct`（持仓收益率）/ `accountPct`（账户收益率），配合原有 price / pct / volume / ma / macd 一起评估；`GET/POST /api/paper/alerts`。
+- **费率可配（P1-5）**：`paper-config.fees = {rate, min, taxRate, slippageBps}`（佣金率 0~1%、最低佣金 0~100 元、印花税 0~2%、滑点 0~100 bp），后台可改；市价单按滑点让价（买入上浮 / 卖出下浮），限价单按委托价兜住不滑点；`GET /api/paper` 的 `rules` 同时保留旧字段（`feeRate/feeMin/taxRate`）与 `fees/trading/order`。
+- **分红除权记账（P1-6）**：`data/paper-dividends.json` 由后台录入（标 / 除权日 / 每股现金分红 / 每 10 股送转 N 股），除权日给仍持仓账户入账：现金 `+shares×cashPerShare`、送转股按比例增股、总成本扣掉现金后重算每股成本；按「事件 id + 标的」幂等（`account.corporate`）。逐日盈亏重建同样应用这些事件，除权日不再出现假浮亏。后台 `POST /api/admin/paper/dividends` 与 `/dividends/remove`。
+- **止盈止损 / 条件单（P2-1）**：`conditions[]` 支持 `takeProfit`（浮盈 ≥ X%）、`stopLoss`（浮亏 ≥ X%）、`priceAbove` / `priceBelow`；0 股 = 可用全部；命中后按市价 + 滑点成交（同样受 T+1 / 涨跌停 / 停牌校验），失败记 `lastError` 继续监控；每账户最多 24 条。
+- **网格 / 定投（P2-2）**：`plans[]` 支持 `grid`（把 [下界, 上界] 等分 N 格，跌破一格买「每格股数」、涨过一格卖同样股数，一次 tick 只走一格，初始化只记位置不动仓位）与 `dca`（每期固定金额，按 daily / weekly / monthly 排期，只排交易日、周末顺延）；`POST /api/paper/plan`、`/plan/update`、`/plan/delete`。
+- **组合跟单（P2-3）**：`following` / `followers` 双向订阅；被跟单人每笔成交（手动 / 条件单 / 网格 / 定投）按比例复制给跟单人（整手取整、受资金与 T+1 限制、失败跳过不阻塞被跟单人）；**只复制一层**（跟单产生的成交不再二次分发）；被跟单人可关 `allowFollow`，每人最多跟 5 人。
+- **复盘报告（P2-4）**：`GET /api/paper/review` 返回胜率、平均盈利 / 亏损、盈亏比、利润因子、累计已实现、平均持有天数、最大回撤（含峰谷日期）、集中度（最大单一持仓占比 + HHI）、最好 / 最差一笔与权益曲线；排行榜详情也带这些指标（仍不透出成交明细）。
+- **更新履历拆分（用户优化项）**：`data/changelog.json` 新增 `clientItems`；服务端 `getChangelog` 返回 `versions`（后台完整明细）与 `clientVersions`（客户端简化版）。客户端抽屉只用 `clientVersions`；没有 `clientItems` 的老版本按关键词自动过滤技术条目（`server.js` / `src/` / 接口 / 字段 / 测试 / 部署 / 索引…），最多 8 条、单条 110 字。后台更新履历同时展示「完整明细」与「客户端展示」两段，方便核对对外口径。
+- **数据与兼容**：`user_extras['paper']` 新增 `orders / conditions / plans / corporate / equity / following / followers / allowFollow`，持仓新增 `lockedShares / lockedDate`；全部读取即兼容（老账户缺字段回退为空）。`data/paper-config.json` 新增 `fees / trading / order`。SQLite 仍无表结构变更。
+- **代码结构**：新增 `src/services/paper-automation.js`（委托 / 条件单 / 网格 / 定投 / 分红 / 权益 / 周期收益 / 复盘 / 跟单的纯逻辑，`paper-ledger.js` 只再补 T+1 锁仓、可配费率与滑点、除权入账的回放），新增 `public/js/views/paperauto.js`（委托 / 自动交易 / 复盘渲染）。
+- **测试**：新增 `test/paper-automation.test.mjs` 25 项（纯逻辑：撮合 / 部分成交 / 到期 / T+1 / 涨跌停 / 条件单 / 网格档位 / 定投排期 / 分红除权 / 周期收益与回撤 / 复盘指标 / 跟单取整）、`test/paper-api.test.mjs` 13 项（接口级：配置夹取 / 限价挂单撤单 / T+1 开关 / 条件单 / 网格定投 / 跟单 / 持仓预警 / 复盘 / 分红 / 排行周期字段 / 更新履历拆分）、`dom-smoke` +5 项（三个新面板 + 委托列表 + 四个自动交易 TAB + 复盘 + 排行榜周期列与排序）；`alert-paper` 里两个"同买同卖"的用例改为显式关闭 T+1。`npm test` **369 项全绿**。
+
 ### v2.11.0 更新（2026-11-23）
 
 > 模拟交易全面加固与补全：买入校验（最大可买 / 幂等 / 并发）+ 个股累计收益 + 日/月/年盈亏日历 + 排行榜持仓详情 + 后台增量资金；并按同花顺模拟盘的常见能力给出分阶段路线图。**只在本机 8090 验证，未推 NAS。**

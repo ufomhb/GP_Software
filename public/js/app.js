@@ -26,7 +26,7 @@ import {
   intradayCompareChart,
   compareTrendChart,
   COLORS,
-} from './charts.js?v=2.11.0';
+} from './charts.js?v=2.12.0';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -44,11 +44,11 @@ import {
   esc,
   safeUrl,
   timeText,
-} from './util.js?v=2.11.0';
+} from './util.js?v=2.12.0';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.11.0';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.11.0';
+import { $, $$, toast, debounce } from './dom.js?v=2.12.0';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.12.0';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -61,7 +61,7 @@ import {
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.11.0';
+} from './core.js?v=2.12.0';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -78,7 +78,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.11.0';
+} from './views/funds.js?v=2.12.0';
 
 // 基金页新增子页渲染（v2.10.0：涨跌分布 / 板块总览 / 场外基金四榜，见 views/fundpanes.js）
 import {
@@ -88,7 +88,7 @@ import {
   renderFundBoard,
   renderFundBoardCompareBar,
   sortFundThemes,
-} from './views/fundpanes.js?v=2.11.0';
+} from './views/fundpanes.js?v=2.12.0';
 
 // 自选基金：多组合 / 今日 TOP5 / 盈亏日历 / 组合 vs 上证（v2.10.0）
 import {
@@ -98,7 +98,7 @@ import {
   renderFundVsIndex,
   activePortfolio,
   activeHoldings,
-} from './views/fundwatch.js?v=2.11.0';
+} from './views/fundwatch.js?v=2.12.0';
 import {
   computeFundPnl,
   computeFundDailyPnl,
@@ -110,7 +110,7 @@ import {
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './views/fundpnl.js?v=2.11.0';
+} from './views/fundpnl.js?v=2.12.0';
 
 // 模拟盘盈亏日历 / 资产曲线 / 个股累计收益（v2.11.0，见 views/paperpnl.js）
 import {
@@ -120,7 +120,7 @@ import {
   paperCalendarBuckets,
   paperPnlSummary,
   paperMonthlyBars,
-} from './views/paperpnl.js?v=2.11.0';
+} from './views/paperpnl.js?v=2.12.0';
 
 // 模拟盘自动化：委托 / 条件单 / 网格定投 / 跟单 / 持仓预警 / 复盘（v2.12.0，见 views/paperauto.js）
 import {
@@ -139,7 +139,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.11.0';
+} from './views/market.js?v=2.12.0';
 
 
 /* =========================================================

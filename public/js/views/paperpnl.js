@@ -5,10 +5,10 @@
    - fundCalendarBuckets：日 / 月 / 年分桶；
    - pnlcalendar.js 的 calendarGridHtml：日历网格 DOM；
    - fundPnlAreaChart / fundPnlMonthlyBars：资产曲线与月度柱。 */
-import { state } from '../core.js?v=2.11.0';
-import { isNum, nf, signedFmt, toneClass, cleanName, esc, timeText } from '../util.js?v=2.11.0';
-import { $ } from '../dom.js?v=2.11.0';
-import { fundPnlAreaChart, fundPnlMonthlyBars } from '../charts.js?v=2.11.0';
+import { state } from '../core.js?v=2.12.0';
+import { isNum, nf, signedFmt, toneClass, cleanName, esc, timeText } from '../util.js?v=2.12.0';
+import { $ } from '../dom.js?v=2.12.0';
+import { fundPnlAreaChart, fundPnlMonthlyBars } from '../charts.js?v=2.12.0';
 import {
   round2,
   shanghaiDateKey,
@@ -16,8 +16,8 @@ import {
   fundCalendarBuckets,
   rangeBaseDate,
   sumPnlAfter,
-} from './fundpnl.js?v=2.11.0';
-import { calendarGridHtml } from './pnlcalendar.js?v=2.11.0';
+} from './fundpnl.js?v=2.12.0';
+import { calendarGridHtml } from './pnlcalendar.js?v=2.12.0';
 
 const CALENDAR_UNITS = ['day', 'month', 'year'];
 
@@ -249,7 +249,7 @@ export function renderPaperPnlCalendar() {
     const parts = [
       '口径：当日盈亏 = 当日收盘总资产 − 上一可用日总资产 − 当日入金（增量资金不算收益）。',
       data.truncated ? `日线最长回看 ${data.days} 个交易日，更早的成交只影响累计、不进日历。` : '',
-      '模拟盘不处理分红除权，除权日可能出现单日浮亏（真实账户会由现金分红 / 送股抵消）。',
+      'v2.12.0 起除权日按后台录入的分红除权事件入账（现金分红进现金、送转股增加股数），不再凭空出现单日浮亏。',
       data.estimated || (data.missing && data.missing.length) ? '有标的取不到日线，已按成本价估值。' : '',
     ].filter(Boolean);
     note.textContent = parts.join(' ');

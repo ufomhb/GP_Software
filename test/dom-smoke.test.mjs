@@ -2268,3 +2268,156 @@ test('DOM：v2.11.0 排行榜每行可点开持仓详情，详情含完整持仓
   app.state.paperRank = prevRank;
   app.state.paperRankOpen = prevOpen;
 });
+
+/* =========================================================
+   v2.12.0：委托 / 自动交易 / 复盘 / 排行榜周期列
+   ========================================================= */
+
+test('DOM：v2.12.0 index.html 有委托、自动交易、复盘三个新面板', () => {
+  for (const id of ['#paperOrderPanel', '#paperOrderBody', '#paperOrderMeta', '#paperAutoPanel', '#paperAutoSeg', '#paperAutoBody', '#paperReviewPanel', '#paperReviewBody', '#paperReviewChart']) {
+    assert.ok(document.querySelector(id), `缺少 ${id}`);
+  }
+});
+
+test('DOM：v2.12.0 委托面板显示委托价 / 成交进度 / 撤单按钮，名称被转义', () => {
+  const prev = app.state.paper;
+  app.state.paper = {
+    orders: [
+      {
+        id: 'o1', secid: '1.600519', code: '600519', name: '<b>坏</b>', side: 'buy', type: 'limit',
+        limitPrice: 10, shares: 200, filledShares: 100, avgPrice: 10, status: 'partial',
+        createdAt: Date.now(), expiresAt: Date.now() + 3600000, expiresDate: '2026-11-24',
+        source: 'manual', lastCheck: { at: Date.now(), price: 10, reason: '限价 10 未触及' },
+        remainingShares: 100, progressPct: 50, canCancel: true, active: true,
+      },
+      { id: 'o2', secid: '0.000001', code: '000001', name: '平安银行', side: 'sell', type: 'market', shares: 100, filledShares: 100, avgPrice: 11, status: 'filled', createdAt: Date.now(), canCancel: false, active: false },
+    ],
+  };
+  app.renderPaperOrders();
+  const box = document.querySelector('#paperOrderBody');
+  assert.ok(box.querySelector('.paper-order-table'), '缺少委托表');
+  assert.equal(box.querySelectorAll('tbody tr').length, 2);
+  assert.match(box.textContent, /限价 10\.000/);
+  assert.match(box.textContent, /部分成交/);
+  assert.match(box.textContent, /已成交/);
+  assert.equal(box.querySelectorAll('[data-paper-cancel-order]').length, 1, '只有未结委托能撤单');
+  assert.equal(box.querySelectorAll('b').length, 0, '标的名称必须被转义');
+  const meta = document.querySelector('#paperOrderMeta').textContent;
+  assert.match(meta, /1 笔未结/);
+  app.state.paper = prev;
+});
+
+test('DOM：v2.12.0 自动交易四个 TAB 都能渲染（条件单 / 网格定投 / 跟单 / 持仓预警）', () => {
+  const prevPaper = app.state.paper;
+  const prevTab = app.state.paperAutoTab;
+  const prevSort = app.state.paperRankSort;
+  const paper = {
+    initial: 1000000, cash: 900000, total: 1000000, positions: [{ secid: '1.600519', code: '600519', name: '贵州茅台', shares: 100, available: 0, locked: 100 }],
+    conditions: [{ id: 'c1', secid: '1.600519', code: '600519', name: '贵州茅台', kind: 'stopLoss', value: 5, side: 'sell', shares: 0, status: 'active', lastError: '' }],
+    plans: [{ id: 'p1', kind: 'grid', secid: '1.600519', code: '600519', name: '贵州茅台', lower: 1000, upper: 2000, grids: 5, sharesPerGrid: 100, gridIndex: 2, status: 'active', runs: 3, levels: [1000, 1200, 1400, 1600, 1800, 2000] }],
+    following: [{ target: 'detailTarget', ratio: 0.5, maxShares: 200 }],
+    followers: [{ target: 'someone', ratio: 0.3 }],
+    allowFollow: true,
+    alerts: { enabled: true, items: [{ id: 'pa1', secid: '1.600519', code: '600519', name: '贵州茅台', kind: 'holdingPct', op: 'above', value: 8, active: true }] },
+    rules: { fees: { rate: 0.00025, min: 5, taxRate: 0.0005, slippageBps: 0 }, trading: { t1: true, limitCheck: true, suspend: true }, order: { validDays: 1 } },
+  };
+  app.state.paper = paper;
+
+  app.state.paperAutoTab = 'condition';
+  app.renderPaperAuto();
+  let box = document.querySelector('#paperAutoBody');
+  assert.match(box.textContent, /浮亏 ≥ 5\.00%/);
+  assert.ok(box.querySelector('[data-paper-cancel-cond]'), '监控中的条件单要能取消');
+  assert.ok(box.querySelector('#paperCondForm'), '缺少条件单表单');
+
+  app.state.paperAutoTab = 'plan';
+  app.renderPaperAuto();
+  box = document.querySelector('#paperAutoBody');
+  assert.match(box.textContent, /1,000\.00 ~ 2,000\.00/);
+  assert.match(box.textContent, /当前第 3 段/);
+  assert.ok(box.querySelector('[data-paper-plan-status]'), '计划要能暂停');
+  assert.ok(box.querySelector('#paperGridForm') && box.querySelector('#paperDcaForm'));
+
+  app.state.paperAutoTab = 'follow';
+  app.renderPaperAuto();
+  box = document.querySelector('#paperAutoBody');
+  assert.match(box.textContent, /跟单 detailTarget/);
+  assert.match(box.textContent, /50%/);
+  assert.ok(box.querySelector('[data-paper-unfollow]'));
+  assert.ok(box.querySelector('#paperAllowFollow'));
+
+  app.state.paperAutoTab = 'alert';
+  app.renderPaperAuto();
+  box = document.querySelector('#paperAutoBody');
+  assert.match(box.textContent, /持仓收益率 高于 8\.00%/);
+  assert.ok(box.querySelector('#paperAlertEnabled'));
+
+  app.state.paper = prevPaper;
+  app.state.paperAutoTab = prevTab;
+  app.state.paperRankSort = prevSort;
+});
+
+test('DOM：v2.12.0 复盘面板显示胜率 / 盈亏比 / 回撤 / 集中度，空态给引导', () => {
+  const prevReview = app.state.paperReview;
+  const prevPaper = app.state.paper;
+  app.state.paper = { trades: [{ id: 't1' }], total: 1010000, profit: 10000, profitPct: 1 };
+  app.state.paperReview = {
+    trades: 4, buys: 2, sells: 2, winCount: 1, lossCount: 1, winRate: 50, avgWin: 195, avgLoss: -105,
+    payoffRatio: 1.86, profitFactor: 1.86, realizedTotal: 90, avgHoldDays: 2.5,
+    mdd: 10, mddFrom: '2026-11-03', mddTo: '2026-11-04', topWeight: 39.8, topName: '<b>茅台</b>', hhi: 0.5,
+    totalPct: 3, todayPct: 0.98, weekPct: 3, monthPct: 3, yearPct: 3, equityDays: 4,
+    bestTrade: { name: '茅台', realized: 195, at: 1 }, worstTrade: { name: '平安', realized: -105, at: 2 },
+    curve: [{ d: '2026-11-03', v: 100000 }, { d: '2026-11-04', v: 101000 }],
+  };
+  app.renderPaperReview();
+  const box = document.querySelector('#paperReviewBody');
+  assert.match(box.textContent, /胜率/);
+  assert.match(box.textContent, /50\.0%/);
+  assert.match(box.textContent, /盈亏比/);
+  assert.match(box.textContent, /最大回撤/);
+  assert.match(box.textContent, /-10\.00%/);
+  assert.match(box.textContent, /集中度/);
+  assert.match(box.textContent, /39\.8%/);
+  assert.equal(box.querySelectorAll('b').length, 0, '集中度里的名称也要转义');
+  const meta = document.querySelector('#paperReviewMeta').textContent;
+  assert.match(meta, /权益快照 4 天/);
+
+  // 空态：没有成交时给引导，不是空白
+  app.state.paper = { trades: [] };
+  app.state.paperReview = { trades: 0, curve: [] };
+  app.renderPaperReview();
+  assert.match(document.querySelector('#paperReviewBody').textContent, /还没有成交/);
+
+  app.state.paperReview = prevReview;
+  app.state.paper = prevPaper;
+});
+
+test('DOM：v2.12.0 排行榜带今日/本周/本月/今年/回撤列，可按回撤排序', () => {
+  const prevRank = app.state.paperRank;
+  const prevOpen = app.state.paperRankOpen;
+  const prevSort = app.state.paperRankSort;
+  app.state.paperRankOpen = true;
+  app.state.paperRank = {
+    ok: true,
+    items: [
+      { username: 'AAA', total: 1100000, profit: 100000, profitPct: 10, todayPct: 1.2, weekPct: 2.3, monthPct: 3.4, yearPct: 4.5, mdd: 8.1, equityDays: 30, positionCount: 0, positions: [], updatedAt: 1 },
+      { username: 'BBB', total: 1050000, profit: 50000, profitPct: 5, todayPct: -0.5, weekPct: null, monthPct: null, yearPct: null, mdd: 2.4, equityDays: 2, positionCount: 0, positions: [], updatedAt: 2 },
+    ],
+    estimated: false,
+    truncated: false,
+    updatedAt: Date.now(),
+  };
+  app.state.paperRankSort = 'mdd';
+  app.renderPaperRanking();
+  const head = document.querySelector('#paperRankBody thead').textContent;
+  for (const label of ['今日', '本周', '本月', '今年', '回撤']) {
+    assert.match(head, new RegExp(label), `表头缺少 ${label}`);
+  }
+  const firstRow = document.querySelector('#paperRankBody tbody tr');
+  assert.match(firstRow.textContent, /BBB/, '按回撤从小到大排序，回撤小的在前');
+  assert.match(document.querySelector('#paperRankBody thead').textContent, /累计收益率/);
+
+  app.state.paperRank = prevRank;
+  app.state.paperRankOpen = prevOpen;
+  app.state.paperRankSort = prevSort;
+});
