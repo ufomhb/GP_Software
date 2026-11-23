@@ -54,6 +54,7 @@ function createHttpRoutes(deps) {
     resetPaper,
     // v2.12.0：模拟盘自动化（委托/条件单/网格定投/跟单/复盘/分红除权）
     paperSweepAccount,
+    paperSeedEquityFor,
     cancelPaperOrder,
     createPaperCondition,
     cancelPaperCondition,
@@ -1480,7 +1481,9 @@ async function handleApi(req, res, url) {
     const user = currentUser(req);
     if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
     const res = await paperSweepAccount(user, { force: true });
-    return { ok: true, ...res };
+    // 顺便把这个账户的日终权益快照补齐（排行榜的周期收益 / 回撤要用），一天最多一次
+    const seeded = await paperSeedEquityFor(user).catch(() => 0);
+    return { ok: true, ...res, seeded };
   }
   if (p === '/api/stock/news') {
     const code = q.get('code');

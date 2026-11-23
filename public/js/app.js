@@ -4222,8 +4222,20 @@ function shanghaiTodayKey() {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
+/** v2.12.0：费率以后台配置为准（state.paper.rules.fees），取不到时回退到默认值 */
+function paperFeesCfg() {
+  const f = (state.paper && state.paper.rules && state.paper.rules.fees) || {};
+  return {
+    rate: isNum(f.rate) ? Number(f.rate) : PAPER_FEE_RATE,
+    min: isNum(f.min) ? Number(f.min) : PAPER_FEE_MIN,
+    taxRate: isNum(f.taxRate) ? Number(f.taxRate) : PAPER_TAX_RATE,
+    slippageBps: isNum(f.slippageBps) ? Number(f.slippageBps) : 0,
+  };
+}
+
 function paperFeeOf(amount) {
-  return Math.max(PAPER_FEE_MIN, Number(amount) * PAPER_FEE_RATE);
+  const f = paperFeesCfg();
+  return Math.max(f.min, Number(amount) * f.rate);
 }
 
 /**
@@ -4235,8 +4247,9 @@ function paperMaxBuyShares({ price, cash, secid = '' } = {}) {
   const p = Number(price);
   const c = Math.max(0, Number(cash) || 0);
   const lot = paperLotOf(secid);
+  const f = paperFeesCfg();
   if (!(p > 0) || !(c > 0)) return 0;
-  let shares = Math.floor(c / (p * (1 + PAPER_FEE_RATE)) / lot) * lot;
+  let shares = Math.floor(c / (p * (1 + f.rate)) / lot) * lot;
   const costOf = (n) => p * n + paperFeeOf(p * n);
   let guard = 0;
   while (shares > 0 && costOf(shares) > c + 0.005 && guard < 100000) {
@@ -4267,7 +4280,8 @@ function paperRatioShares({ side, ratio, price, cash, held, lot }) {
     return ratio >= 1 ? shares : Math.floor((shares * ratio) / step) * step;
   }
   const budget = Math.max(0, (Number(cash) || 0) * ratio);
-  let want = Math.floor(budget / (p * (1 + PAPER_FEE_RATE)) / step) * step;
+  const rate = paperFeesCfg().rate;
+  let want = Math.floor(budget / (p * (1 + rate)) / step) * step;
   while (want > 0 && p * want + paperFeeOf(p * want) > (Number(cash) || 0) + 0.005) want -= step;
   return Math.max(0, want);
 }

@@ -442,6 +442,15 @@
 .admin-version-head span { color: var(--muted); font-size: 11.5px; }
 .admin-version-head strong { font-size: 13px; }
 .admin-version ul { margin: 7px 0 0; padding-left: 18px; color: var(--text-2); font-size: 12.5px; line-height: 1.8; }
+/* v2.12.0：同一版本里把「完整明细」和「客户端展示」分开标 */
+.admin-version-tag {
+  display: inline-block; margin-top: 10px; padding: 2px 8px;
+  border: 1px solid var(--line); border-radius: 5px;
+  color: var(--muted); font-size: 10.5px; letter-spacing: .04em;
+}
+.admin-version-tag + ul { margin-top: 5px; }
+.admin-version ul.admin-version-client { color: var(--accent-2, #9fd3ff); }
+.admin-version ul.admin-version-client li { list-style: square; }
 
 /* ---------- 响应式 ---------- */
 @media (max-width: 1080px) {

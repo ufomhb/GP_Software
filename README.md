@@ -226,7 +226,7 @@ npm run selfcheck                         # 安全基线 39 项 + 存储层 23 �
 - **更新履历拆分（用户优化项）**：`data/changelog.json` 新增 `clientItems`；服务端 `getChangelog` 返回 `versions`（后台完整明细）与 `clientVersions`（客户端简化版）。客户端抽屉只用 `clientVersions`；没有 `clientItems` 的老版本按关键词自动过滤技术条目（`server.js` / `src/` / 接口 / 字段 / 测试 / 部署 / 索引…），最多 8 条、单条 110 字。后台更新履历同时展示「完整明细」与「客户端展示」两段，方便核对对外口径。
 - **数据与兼容**：`user_extras['paper']` 新增 `orders / conditions / plans / corporate / equity / following / followers / allowFollow`，持仓新增 `lockedShares / lockedDate`；全部读取即兼容（老账户缺字段回退为空）。`data/paper-config.json` 新增 `fees / trading / order`。SQLite 仍无表结构变更。
 - **代码结构**：新增 `src/services/paper-automation.js`（委托 / 条件单 / 网格 / 定投 / 分红 / 权益 / 周期收益 / 复盘 / 跟单的纯逻辑，`paper-ledger.js` 只再补 T+1 锁仓、可配费率与滑点、除权入账的回放），新增 `public/js/views/paperauto.js`（委托 / 自动交易 / 复盘渲染）。
-- **测试**：新增 `test/paper-automation.test.mjs` 25 项（纯逻辑：撮合 / 部分成交 / 到期 / T+1 / 涨跌停 / 条件单 / 网格档位 / 定投排期 / 分红除权 / 周期收益与回撤 / 复盘指标 / 跟单取整）、`test/paper-api.test.mjs` 13 项（接口级：配置夹取 / 限价挂单撤单 / T+1 开关 / 条件单 / 网格定投 / 跟单 / 持仓预警 / 复盘 / 分红 / 排行周期字段 / 更新履历拆分）、`dom-smoke` +5 项（三个新面板 + 委托列表 + 四个自动交易 TAB + 复盘 + 排行榜周期列与排序）；`alert-paper` 里两个"同买同卖"的用例改为显式关闭 T+1。`npm test` **369 项全绿**。
+- **测试**：新增 `test/paper-automation.test.mjs` 25 项（纯逻辑：撮合 / 部分成交 / 到期 / T+1 / 涨跌停 / 条件单 / 网格档位 / 定投排期 / 分红除权 / 周期收益与回撤 / 复盘指标 / 跟单取整）、`test/paper-api.test.mjs` 13 项（接口级：配置夹取 / 限价挂单撤单 / T+1 开关 / 条件单 / 网格定投 / 跟单 / 持仓预警 / 复盘 / 分红 / 排行周期字段 / 更新履历拆分）、`dom-smoke` +5 项（三个新面板 + 委托列表 + 四个自动交易 TAB + 复盘 + 排行榜周期列与排序）；`alert-paper` 里两个"同买同卖"的用例改为显式关闭 T+1。`npm test` **374 项全绿**。
 
 ### v2.11.0 更新（2026-11-23）
 

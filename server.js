@@ -10275,9 +10275,64 @@ async function paperSweepTick() {
         // 单个账户失败不影响其它账户
       }
     }
+    // 权益快照历史补齐（v2.12.0）：排行榜的今日/本周/本月/今年收益率与回撤依赖日终快照，
+    // 老账户此前没有这份数据。每分钟最多补 2 个账户，用已有的逐日盈亏重建把历史写进来，
+    // 避免一次性拉几百个标的的日线把上游打爆。
+    await paperEquityBackfill(byId).catch(() => {});
   } finally {
     paperTicking = false;
   }
+}
+
+/* ---------------- 权益快照历史补齐 ---------------- */
+
+const PAPER_EQUITY_SEED_PER_TICK = 2;
+const PAPER_EQUITY_SEED_MIN_DAYS = 20;
+const paperSeedTried = new Map(); // userId → 尝试日期（同一天只试一次，失败的账户不会每分钟重试）
+
+/** 把某个账户的逐日盈亏重建结果写成日终权益快照（不含今天，今天由实时总资产覆盖） */
+async function paperSeedEquityFor(user) {
+  if (!user) return 0;
+  const id = String(user.id);
+  const today = shanghaiToday();
+  if (paperSeedTried.get(id) === today) return 0;
+  const account = getPaperAccount(user);
+  const hasTrades = (account.trades || []).length > 0 || Object.keys(account.positions || {}).length > 0;
+  if (!hasTrades) return 0;
+  if (paperAuto.equitySeries(account).length >= PAPER_EQUITY_SEED_MIN_DAYS) return 0;
+  paperSeedTried.set(id, today);
+  try {
+    const pnl = await getPaperPnl(user, 400);
+    const rows = (pnl && pnl.rows) || [];
+    if (!rows.length) return 0;
+    const fresh = getPaperAccount(user);
+    const equity = paperAuto.sanitizeEquity(fresh.equity);
+    let wrote = 0;
+    for (const row of rows) {
+      const d = String((row && row.d) || '').slice(0, 10);
+      if (!d || d === today) continue; // 今天由实时总资产覆盖，不写死
+      if (!(Number(row.mv) > 0) || equity[d]) continue;
+      equity[d] = paperLedger.round2(row.mv);
+      wrote += 1;
+    }
+    if (!wrote) return 0;
+    savePaperAccount(user, { ...fresh, equity }, { touch: false });
+    return wrote;
+  } catch {
+    return 0;
+  }
+}
+
+async function paperEquityBackfill(byId) {
+  const owners = dataStore.listUserExtraOwners('paper').slice(0, 60);
+  let seeded = 0;
+  for (const id of owners) {
+    if (seeded >= PAPER_EQUITY_SEED_PER_TICK) break;
+    const user = byId.get(String(id));
+    if (!user) continue;
+    if (await paperSeedEquityFor(user)) seeded += 1;
+  }
+  return seeded;
 }
 
 /* ---------------- 用户侧自动化接口 ---------------- */
