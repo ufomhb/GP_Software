@@ -209,6 +209,16 @@ npm run selfcheck                         # 安全基线 39 项 + 存储层 23 �
 - 前端渲染约定：**外部文本进 `innerHTML` 前必须 `esc()`；进 `href`/`src` 前必须再过 `safeUrl()`**（`esc` 挡不住 `javascript:` 协议）。2026-11-15 审计了 225 处模板插值，35 处文本型全部安全，并补了 `safeUrl` 覆盖快讯链接等 2 处 href。
 - CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
 
+### v2.13.0 更新（2026-11-23）
+
+> 模拟交易从「自选股票」里独立出来，成为顶部导航的第 12 个板块；自选股票只留自选表与条件预警。**只在本机 8090 验证，未推 NAS。**
+
+- **板块拆分**：模拟盘的 6 个面板（账户 / 盈亏日历 / 个股累计收益 / 委托与挂单 / 自动交易 / 交易复盘）从 `#view-stockwatch` 整体搬到新的 `<section class="view" id="view-paper">`，标题独立成「模拟交易」，导航新增 `data-view="paper"`（排在「自选股票」之后）。排行榜仍在模拟账户面板里（默认收起）。
+- **视图注册**：`VIEWS` 与 `showView()` 的白名单都加 `'paper'`——两处必须同步，否则点导航或深链会被回退到全景；`parseHashRoute()` 因此自动支持 `#paper`；`VIEW_ALIAS` 不变（`#watchlist` / `#watch` 仍落自选股票，旧书签不失效）。
+- **加载与刷新**：`loadView('paper')` 才 `renderPaper` + `loadPaper` + 按需 `loadPaperRanking`；`loadView('stockwatch')` 只做自选表 / 预警 / 评分。15 秒自动刷新与手动刷新里的模拟盘分支从 `state.view === 'stockwatch'` 改成 `'paper'`——**停在自选股票时不再请求 `/api/paper`**（少一半无谓请求）。
+- **互相入口**：自选股票页头新增「模拟交易 →」（`data-goto="paper"`），模拟交易页头新增「自选股票 →」（`data-goto="stockwatch"`），复用已有 `[data-goto]` 委托，没有新增代码路径；自选股票副标题也改成「…模拟交易已经独立成模拟交易板块」，避免以为功能丢了。
+- **测试**：`dom-smoke` 导航用例改为断言「模拟交易在 `#view-paper`、自选股票里不再有 `paperPanel`」，新增 1 项断言 6 个面板都在新板块、两个板块互有入口、`#paper` 能被 `parseHashRoute()` 识别；`dom-smoke` 86 项，`npm test` **375 项全绿**。
+
 ### v2.12.0 更新（2026-11-23）
 
 > 模拟交易进入「像真的券商终端」阶段：限价委托 / 挂单 / 撤单 / 部分成交、T+1 与涨跌停 / 停牌强校验（后台开关）、排行榜周期收益与回撤、持仓条件预警、费率可配、分红除权记账；P2 的止盈止损 / 条件单、网格 / 定投、组合跟单、复盘报告全部落地；并把更新履历拆成「客户端（功能点）」与「后台（完整明细）」两套。**只在本机 8090 验证，未推 NAS。**

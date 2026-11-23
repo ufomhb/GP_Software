@@ -1,5 +1,25 @@
 [
   {
+    "version": "2.13.0",
+    "date": "2026-11-23",
+    "title": "模拟交易独立成板块（从「自选股票」分出来），导航、加载与自动刷新一起调整",
+    "clientItems": [
+      "顶部导航新增「模拟交易」板块：账户、委托与挂单、自动交易、盈亏日历、复盘、排行榜都搬到这里，不再和自选股票挤在一起",
+      "「自选股票」只保留自选表与条件预警，并加了一个「模拟交易 →」入口；模拟交易页也能一键返回自选股票",
+      "模拟盘的数据只在打开「模拟交易」时加载与自动刷新，停留在自选股票时不再重复请求",
+      "直接打开 #paper 链接可以进模拟交易（旧书签 #stockwatch 仍是自选股票）"
+    ],
+    "items": [
+      "板块拆分（用户要求）：模拟交易的 6 个面板（paperPanel / paperPnlCalendarPanel / paperRealizedPanel / paperOrderPanel / paperAutoPanel / paperReviewPanel）从 #view-stockwatch 整体搬到新的 <section class=\"view\" id=\"view-paper\">，导航新增 data-view=\"paper\" 按钮（放在「自选股票」之后），视图标题与副标题独立成「模拟交易」。",
+      "视图注册：VIEWS 与 showView() 白名单都加 'paper'（两处必须同步，否则深链 / 点导航会被回退到全景）；parseHashRoute 因此自动支持 #paper；VIEW_ALIAS 不变（#watchlist / #watch 仍落自选股票）。",
+      "加载与刷新：loadView('paper') 才 renderPaper + loadPaper + 按需 loadPaperRanking；loadView('stockwatch') 只剩 renderWatchTable / renderAlerts / renderWatchTips / loadWatchData / loadCloudAlerts。15 秒自动刷新与「手动刷新」里的模拟盘分支由 state.view === 'stockwatch' 改为 'paper'，停在自选股票时不再请求 /api/paper。",
+      "互相入口：自选股票页头新增 data-goto=\"paper\" 的「模拟交易 →」；模拟交易页头新增 data-goto=\"stockwatch\" 的「自选股票 →」；复用已有的 [data-goto] 委托，不需要新代码路径。",
+      "文案：自选股票副标题改为「自选股评分、条件预警与盯盘；模拟交易已经独立成模拟交易板块」，避免用户以为功能没了。",
+      "测试：dom-smoke 的导航用例改为断言「模拟交易在 #view-paper、自选股票里不再有 paperPanel」，并新增 1 项断言 6 个面板都在 #view-paper、两个板块互有入口、#paper 能被 parseHashRoute 识别；dom-smoke 86 项。",
+      "说明：版本号 2.13.0；只在本机 8090 验证，未推 NAS。"
+    ]
+  },
+  {
     "version": "2.12.0",
     "date": "2026-11-23",
     "title": "模拟交易进阶：限价委托/挂单/撤单/部分成交、T+1 与涨跌停/停牌开关、周期收益与回撤排行、持仓预警、费率可配、分红除权、止盈止损·网格·定投·跟单·复盘；更新履历拆成客户端/后台两套",

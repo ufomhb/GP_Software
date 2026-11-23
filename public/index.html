@@ -13,7 +13,7 @@
   <meta name="description" content="寰球智投：A股、全球指数、期货、黄金白银实时行情，板块资金流向与规则化策略终端。">
   <title>寰球智投 · 全球行情与智能策略终端</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.12.0">
+  <link rel="stylesheet" href="/css/app.css?v=2.13.0">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icon.svg">
 </head>
@@ -130,6 +130,10 @@
       <button class="nav-tab" data-view="stockwatch">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9L12 3Z"></path></svg>
         <span>自选股票</span>
+      </button>
+      <button class="nav-tab" data-view="paper">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="m7 15 3.5-4 3 2.6L20 7"></path><circle cx="20" cy="7" r="1.4"></circle></svg>
+        <span>模拟交易</span>
       </button>
       <div class="nav-meta">
         <span class="freshness" id="dataFreshness"><i></i>连接中</span>
@@ -1505,11 +1509,36 @@
         <div>
           <div class="eyebrow">STOCK WATCHLIST</div>
           <h1>自选股票</h1>
-          <p>模拟交易账户与全用户排行榜、自选股评分、条件预警</p>
+          <p>自选股评分、条件预警与盯盘；模拟交易已经独立成「模拟交易」板块</p>
         </div>
         <div class="head-actions watch-add">
           <div class="input-wrap grow"><input id="watchAddInput" type="search" placeholder="输入代码或名称，如 600519"><span>+</span></div>
           <button class="btn primary" id="watchAddBtn">加入自选</button>
+          <button class="text-link" data-goto="paper" title="模拟账户、委托、自动交易、复盘都搬到独立板块了">模拟交易 →</button>
+        </div>
+      </div>
+
+      <article class="panel">
+        <div class="panel-head"><div><h3>我的自选</h3><span class="muted small" id="watchCount">0 只</span><span class="muted small" style="margin-left:10px">拖动行或点击 ↑↓ 排序（手机长按行拖动）</span></div><button class="text-link" id="exportWatch">导出 JSON</button></div>
+        <div id="watchTable"></div>
+      </article>
+
+      <div class="strategy-2col">
+        <article class="panel" id="alertsPanel"><div class="empty">加载中…</div></article>
+        <article class="panel" id="watchTips"><div class="empty">加载中…</div></article>
+      </div>
+    </section>
+
+    <!-- ===================== 模拟交易（v2.13.0 从「自选股票」独立出来） ===================== -->
+    <section class="view" id="view-paper">
+      <div class="view-head">
+        <div>
+          <div class="eyebrow">PAPER TRADING</div>
+          <h1>模拟交易</h1>
+          <p>模拟账户、委托与挂单、自动交易、盈亏日历、交易复盘与全用户排行榜（仅模拟盘，不涉及真实资金）</p>
+        </div>
+        <div class="head-actions">
+          <button class="text-link" data-goto="stockwatch" title="模拟买入的标的来自自选股与搜索">自选股票 →</button>
         </div>
       </div>
 
@@ -1601,16 +1630,6 @@
         <div class="paper-pnl-chart" id="paperReviewChart"></div>
         <p class="muted small mt12" id="paperReviewNote">口径：胜率 = 盈利的卖出笔数 / 全部卖出笔数。</p>
       </article>
-
-      <article class="panel">
-        <div class="panel-head"><div><h3>我的自选</h3><span class="muted small" id="watchCount">0 只</span><span class="muted small" style="margin-left:10px">拖动行或点击 ↑↓ 排序（手机长按行拖动）</span></div><button class="text-link" id="exportWatch">导出 JSON</button></div>
-        <div id="watchTable"></div>
-      </article>
-
-      <div class="strategy-2col">
-        <article class="panel" id="alertsPanel"><div class="empty">加载中…</div></article>
-        <article class="panel" id="watchTips"><div class="empty">加载中…</div></article>
-      </div>
     </section>
   </main>
 
@@ -1629,7 +1648,7 @@
   <div id="toastRoot" class="toasts" aria-live="polite"></div>
 
   <script src="/vendor/echarts.min.js"></script>
-  <script type="module" src="/js/app.js?v=2.12.0"></script>
+  <script type="module" src="/js/app.js?v=2.13.0"></script>
   <script>
     // PWA：注册「网络优先」的 Service Worker（发版后刷新即拿到新版本，离线时回退缓存壳）
     // file:// 打开时跳过，避免在本地直接双击 HTML 时报错。

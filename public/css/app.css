@@ -3389,3 +3389,23 @@ tr.is-dim td { opacity: .62; }
   .paper-auto-grid { grid-template-columns: minmax(0, 1fr); }
   .paper-auto-form .input-wrap { flex: 1 1 140px; }
 }
+
+/* =========================================================
+   v2.13.0：模拟交易独立成第 12 个导航项
+   ---------------------------------------------------------
+   导航项变多后，1280~1440 的屏幕会放不下：统一让导航条横向滚动，
+   标签不压缩（否则「模拟交易」会被挤成两行）。
+   ========================================================= */
+.nav-tab { flex: none; white-space: nowrap; }
+@media (max-width: 1560px) {
+  .nav-inner {
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .nav-inner::-webkit-scrollbar { display: none; }
+}
+@media (max-width: 1560px) and (min-width: 901px) {
+  .nav-meta { flex: none; }
+}

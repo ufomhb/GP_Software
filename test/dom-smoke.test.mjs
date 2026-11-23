@@ -1079,23 +1079,45 @@ test('DOM：龙虎榜席位明细区块按日期分组并标出机构与股通',
 
 /* ---------------- v2.8.0：自选基金 / 自选股票 / 盈亏 / 排行榜 ---------------- */
 
-test('DOM：导航拆成自选基金与自选股票，基金页不再有自选子页', () => {
+test('DOM：导航拆成自选基金 / 自选股票 / 模拟交易，基金页不再有自选子页', () => {
   const tabs = [...document.querySelectorAll('.nav-tab')].map((b) => b.dataset.view);
   assert.ok(tabs.includes('fundwatch'), '缺少自选基金导航');
   assert.ok(tabs.includes('stockwatch'), '缺少自选股票导航');
+  assert.ok(tabs.includes('paper'), '缺少模拟交易导航');
   assert.ok(!tabs.includes('watchlist'), '旧「自选·预警」导航应移除');
 
   assert.ok(document.querySelector('#view-fundwatch #fundWatchTable'), '自选基金板块要有自选表');
   assert.ok(document.querySelector('#view-fundwatch #fundPnlKpis'), '自选基金板块要有盈亏 KPI');
   assert.ok(document.querySelector('#view-fundwatch #fundPnlChart'), '自选基金板块要有市值曲线');
   assert.ok(document.querySelector('#view-fundwatch #fundPnlBars'), '自选基金板块要有月度盈亏');
-  assert.ok(document.querySelector('#view-stockwatch #paperPanel'), '模拟交易应在自选股票');
+
+  // v2.13.0：模拟交易独立成板块，自选股票只剩自选与预警
+  assert.ok(document.querySelector('#view-paper #paperPanel'), '模拟交易应在自己的板块');
+  assert.equal(document.querySelector('#view-stockwatch #paperPanel'), null, '自选股票里不应再有模拟账户');
   assert.ok(document.querySelector('#view-stockwatch #watchTable'), '我的自选应在自选股票');
   assert.ok(document.querySelector('#view-stockwatch #alertsPanel'), '条件预警跟着自选股票');
 
   assert.equal(document.querySelector('#fundWatchView'), null, '基金页不再有自选基金子页');
   assert.equal(document.querySelector('[data-fund-view="watch"]'), null, '基金子页导航不再有自选基金');
   assert.ok(document.querySelector('[data-goto="fundwatch"]'), '基金页要有跳到自选基金的入口');
+});
+
+test('DOM：v2.13.0 模拟交易板块包含全部模拟盘面板，两个板块互相有入口', () => {
+  const paperView = document.querySelector('#view-paper');
+  assert.ok(paperView, '缺少 #view-paper');
+  for (const id of ['paperPanel', 'paperPnlCalendarPanel', 'paperRealizedPanel', 'paperOrderPanel', 'paperAutoPanel', 'paperReviewPanel']) {
+    assert.ok(paperView.querySelector(`#${id}`), `模拟交易板块缺少 #${id}`);
+  }
+  // 自选股票那边连盈亏日历 / 委托 / 自动交易 / 复盘都不该留下
+  for (const id of ['paperPnlCalendarPanel', 'paperOrderPanel', 'paperAutoPanel', 'paperReviewPanel']) {
+    assert.equal(document.querySelector(`#view-stockwatch #${id}`), null, `自选股票里不该有 #${id}`);
+  }
+  assert.ok(document.querySelector('#view-paper [data-goto="stockwatch"]'), '模拟交易页要有回自选股票的入口');
+  assert.ok(document.querySelector('#view-stockwatch [data-goto="paper"]'), '自选股票页要有去模拟交易的入口');
+  // 视图 hash 认识新板块
+  location.hash = '#paper';
+  assert.equal(app.parseHashRoute().view, 'paper');
+  location.hash = '';
 });
 
 test('DOM：旧 #watchlist 书签落到自选股票，新视图 hash 正常', () => {
