@@ -42,6 +42,8 @@ const {
 const dataStore = require('./lib/store');
 // 模拟交易账本（v2.11.0）：费用/整手/已实现累计/增量资金/逐日盈亏的纯逻辑
 const paperLedger = require('./src/services/paper-ledger');
+// 模拟盘自动化（v2.12.0）：委托/条件单/网格/定投/分红除权/周期收益/复盘
+const paperAuto = require('./src/services/paper-automation');
 const portfolioTransfer = require('./src/lib/portfolio-transfer');
 const { createLogFiles } = require('./src/lib/log-files');
 
@@ -71,7 +73,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.11.0';
+const VERSION = '2.12.0';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -9251,12 +9253,46 @@ const PAPER_TAX_RATE = 0.0005;  // 卖出印花税万 5
 const PAPER_CONFIG_FILE = path.join(__dirname, 'data', 'paper-config.json');
 const PAPER_INITIAL_MIN = 10000;
 const PAPER_INITIAL_MAX = 100000000;
+// v2.12.0：费率与交易规则都做成后台可配（默认值 = 之前写死的口径）
+const PAPER_FEES_DEFAULT = { rate: 0.00025, min: 5, taxRate: 0.0005, slippageBps: 0 };
+const PAPER_TRADING_DEFAULT = { t1: true, limitCheck: true, suspend: true };
 let paperConfigCache = { at: 0, val: null };
 
 function sanitizePaperInitial(v) {
   const n = Math.round(Number(v));
   if (!Number.isFinite(n)) return PAPER_INITIAL;
   return Math.min(PAPER_INITIAL_MAX, Math.max(PAPER_INITIAL_MIN, n));
+}
+
+/** 费率夹取：佣金率 0~1%、最低佣金 0~100 元、印花税 0~2%、滑点 0~100 个万分点 */
+function sanitizePaperFees(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const pick = (v, def, min, max) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return def;
+    return Math.min(max, Math.max(min, n));
+  };
+  return {
+    rate: pick(src.rate, PAPER_FEES_DEFAULT.rate, 0, 0.01),
+    min: pick(src.min, PAPER_FEES_DEFAULT.min, 0, 100),
+    taxRate: pick(src.taxRate, PAPER_FEES_DEFAULT.taxRate, 0, 0.02),
+    slippageBps: Math.round(pick(src.slippageBps, PAPER_FEES_DEFAULT.slippageBps, 0, 100)),
+  };
+}
+
+function sanitizePaperTrading(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return {
+    t1: src.t1 === undefined ? PAPER_TRADING_DEFAULT.t1 : src.t1 !== false,
+    limitCheck: src.limitCheck === undefined ? PAPER_TRADING_DEFAULT.limitCheck : src.limitCheck !== false,
+    suspend: src.suspend === undefined ? PAPER_TRADING_DEFAULT.suspend : src.suspend !== false,
+  };
+}
+
+function sanitizePaperOrderRule(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const validDays = Math.floor(Number(src.validDays));
+  return { validDays: Number.isFinite(validDays) ? Math.min(30, Math.max(1, validDays)) : 1 };
 }
 
 function normalizePaperConfig(raw) {
@@ -9282,6 +9318,10 @@ function normalizePaperConfig(raw) {
     initial: sanitizePaperInitial(src.initial),
     hiddenUserIds: hidden,
     capitalBatches: batches,
+    // v2.12.0：费率 / 交易规则开关 / 委托有效期
+    fees: sanitizePaperFees(src.fees),
+    trading: sanitizePaperTrading(src.trading),
+    order: sanitizePaperOrderRule(src.order),
     updatedAt: Number(src.updatedAt) || 0,
   };
 }
@@ -9297,15 +9337,65 @@ function loadPaperConfig(force = false) {
 
 function savePaperConfig(patch = {}) {
   const cur = loadPaperConfig(true);
-  const next = normalizePaperConfig({
+  const merged = {
     initial: patch.initial === undefined ? cur.initial : patch.initial,
     hiddenUserIds: patch.hiddenUserIds === undefined ? cur.hiddenUserIds : patch.hiddenUserIds,
     capitalBatches: patch.capitalBatches === undefined ? cur.capitalBatches : patch.capitalBatches,
-  });
+    fees: patch.fees === undefined ? cur.fees : { ...cur.fees, ...patch.fees },
+    trading: patch.trading === undefined ? cur.trading : { ...cur.trading, ...patch.trading },
+    order: patch.order === undefined ? cur.order : { ...cur.order, ...patch.order },
+  };
+  const next = normalizePaperConfig(merged);
   next.updatedAt = Date.now();
   writeJsonSafe(PAPER_CONFIG_FILE, next);
   paperConfigCache = { at: Date.now(), val: next };
   return next;
+}
+
+/* ---------------------------------------------------------
+   分红除权事件（v2.12.0，data/paper-dividends.json）
+   ---------------------------------------------------------
+   模拟盘不接实时分红源（公开接口口径不稳），改由管理员录入事件：
+   - exDate：除权除息日；cashPerShare：每股现金分红（元）；
+   - shareRatio：每 10 股送转 N 股（1 = 10 送 1）；
+   - 除权日当天给持仓账户入账（现金分红进现金、送转股增加股数、每股成本摊薄），
+     已入账的事件按「事件 id + 标的」幂等，不会重复入账。
+   --------------------------------------------------------- */
+const PAPER_DIVIDENDS_FILE = path.join(__dirname, 'data', 'paper-dividends.json');
+let paperDividendCache = { at: 0, val: null };
+
+function loadCorporateEvents(force = false) {
+  const now = Date.now();
+  if (!force && paperDividendCache.val && now - paperDividendCache.at < 5000) return paperDividendCache.val;
+  const val = paperAuto.sanitizeCorporateEvents(
+    readJsonSafe(PAPER_DIVIDENDS_FILE, []),
+  );
+  paperDividendCache = { at: now, val };
+  return val;
+}
+
+function saveCorporateEvents(list) {
+  const val = paperAuto.sanitizeCorporateEvents(list);
+  writeJsonSafe(PAPER_DIVIDENDS_FILE, val);
+  paperDividendCache = { at: Date.now(), val };
+  return val;
+}
+
+function addCorporateEvent(payload = {}) {
+  const ev = paperAuto.sanitizeCorporateEvent(payload);
+  if (!ev) throw Object.assign(new Error('分红事件不合法：需要标的、除权日，且分红/送转至少一项大于 0'), { status: 400 });
+  const list = loadCorporateEvents(true);
+  const dup = list.find((x) => x.secid === ev.secid && x.exDate === ev.exDate);
+  if (dup) throw Object.assign(new Error('该标的在同一天已经有分红事件'), { status: 409 });
+  return saveCorporateEvents([...list, ev]);
+}
+
+function removeCorporateEvent(id) {
+  const key = String(id || '');
+  const list = loadCorporateEvents(true);
+  const next = list.filter((x) => String(x.id) !== key);
+  if (next.length === list.length) throw Object.assign(new Error('分红事件不存在'), { status: 404 });
+  return saveCorporateEvents(next);
 }
 
 /* ---------------------------------------------------------
@@ -9374,16 +9464,24 @@ function saveUiConfig(patch = {}) {
   return next;
 }
 
-function getPaperAccount(user) {
-  const baseInitial = loadPaperConfig().initial;
-  if (!user) return paperLedger.normalizeAccount(null, { globalInitial: baseInitial });
-  const raw = dataStore.loadUserExtra(user.id, 'paper', null);
-  // v2.11.0：归一化统一走 paper-ledger（老账户缺 realized / capital 时回退或回填）
-  return paperLedger.normalizeAccount(raw, { globalInitial: baseInitial });
+/** 账本字段 + 自动化字段（委托/条件单/网格/定投/分红/权益快照/跟单）合成一份账户视图 */
+function withPaperAutomation(account, raw) {
+  const extra = paperAuto.normalizeAutomationFields(raw || account || {});
+  return { ...account, ...extra };
 }
 
-function savePaperAccount(user, account) {
+function getPaperAccount(user) {
+  const baseInitial = loadPaperConfig().initial;
+  if (!user) return withPaperAutomation(paperLedger.normalizeAccount(null, { globalInitial: baseInitial }), null);
+  const raw = dataStore.loadUserExtra(user.id, 'paper', null);
+  // v2.11.0：归一化统一走 paper-ledger（老账户缺 realized / capital 时回退或回填）
+  // v2.12.0：再加上委托 / 条件单 / 网格定投 / 分红入账 / 权益快照 / 跟单关系
+  return withPaperAutomation(paperLedger.normalizeAccount(raw, { globalInitial: baseInitial }), raw);
+}
+
+function savePaperAccount(user, account, { touch = true } = {}) {
   if (!user) return null;
+  const prevUpdatedAt = Number(account.updatedAt) || 0;
   const payload = {
     initial: Number(account.initial) || loadPaperConfig().initial,
     // 资金下限归零 + 2 位小数，避免浮点容差把 cash 写成 -0
@@ -9392,7 +9490,16 @@ function savePaperAccount(user, account) {
     trades: (account.trades || []).slice(-paperLedger.PAPER_TRADES_KEEP),
     realized: account.realized || {},
     capital: account.capital || { injected: 0, events: [] },
-    updatedAt: Date.now(),
+    // v2.12.0 自动化部分
+    orders: paperAuto.sanitizeOrders(account.orders),
+    conditions: paperAuto.sanitizeConditions(account.conditions),
+    plans: paperAuto.sanitizePlans(account.plans),
+    corporate: paperAuto.sanitizeCorporateApplied(account.corporate),
+    equity: paperAuto.sanitizeEquity(account.equity),
+    following: paperAuto.sanitizeFollows(account.following),
+    followers: paperAuto.sanitizeFollowers(account.followers),
+    allowFollow: account.allowFollow !== false,
+    updatedAt: touch ? Date.now() : prevUpdatedAt,
   };
   dataStore.saveUserExtra(user.id, 'paper', payload);
   return payload;
@@ -9414,9 +9521,63 @@ function paperPriceOf(q, cost) {
   return { price: 0, priceMode: 'missing' };
 }
 
-/** 模拟交易看板：账户 + 持仓（带现价/当日盈亏/已实现）+ 最近成交 */
+/** 模拟盘规则快照：v2.11.0 的三个旧字段（feeRate/feeMin/taxRate）保持兼容，
+ *  v2.12.0 追加 fees（含滑点）/ trading（T+1、涨跌停、停牌开关）/ order（委托有效期）。 */
+function paperRules(cfg = loadPaperConfig()) {
+  return {
+    feeRate: cfg.fees.rate,
+    feeMin: cfg.fees.min,
+    taxRate: cfg.fees.taxRate,
+    fees: { ...cfg.fees },
+    trading: { ...cfg.trading },
+    order: { ...cfg.order },
+  };
+}
+
+/** 单标的涨跌停比例（复用行情里的板块判断：主板 10% / 创业科创 20% / 北交所 30% / ST 5%） */
+function paperLimitRatio(quote) {
+  const ratio = limitRatioOf(quote && quote.code, quote && quote.name);
+  const n = Number(ratio);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function paperLimitPrices(quote) {
+  const prevClose = Number(quote && quote.prevClose);
+  const ratio = paperLimitRatio(quote);
+  if (!(prevClose > 0) || !(ratio > 0)) return { ratio: 0, limitUp: null, limitDown: null };
+  return {
+    ratio,
+    limitUp: paperLedger.round2(prevClose * (1 + ratio)),
+    limitDown: paperLedger.round2(prevClose * (1 - ratio)),
+  };
+}
+
+/** 下单 / 撮合上下文：费率 + T+1 + 涨跌停/停牌开关 + 该标的的涨跌幅限制 */
+function paperCtxFor(quote, cfg = loadPaperConfig(), now = Date.now()) {
+  const lim = paperLimitPrices(quote);
+  return {
+    now,
+    todayKey: shanghaiToday(),
+    fees: cfg.fees,
+    t1: cfg.trading.t1 !== false,
+    limitCheck: cfg.trading.limitCheck !== false,
+    suspend: cfg.trading.suspend !== false,
+    limitRatio: lim.ratio,
+  };
+}
+
+/** 这个账户有没有需要 tick 在跑的东西（没有就完全不取行情） */
+function paperWorkState(account) {
+  const hasOrders = (account.orders || []).some((o) => o.status === 'pending' || o.status === 'partial');
+  const hasCond = (account.conditions || []).some((c) => c.status === 'active');
+  const hasPlan = (account.plans || []).some((p) => p.status === 'active');
+  return { hasOrders, hasCond, hasPlan, any: hasOrders || hasCond || hasPlan };
+}
+
+/** 模拟交易看板：账户 + 持仓（带现价/当日盈亏/已实现/可卖）+ 委托 + 条件单 + 网格定投 + 跟单 */
 async function getPaper(user) {
   const account = getPaperAccount(user);
+  const cfg = loadPaperConfig();
   const secids = Object.keys(account.positions);
   let quotes = [];
   if (secids.length) {
@@ -9430,6 +9591,32 @@ async function getPaper(user) {
   const totals = paperLedger.accountTotals(account, qmap);
   const realized = paperLedger.realizedRows(account, qmap);
   const capital = account.capital || { injected: 0, events: [] };
+  const today = shanghaiToday();
+  const t1 = cfg.trading.t1 !== false;
+  // v2.12.0：T+1 可卖股数（当日买入的部分）+ 涨跌停价位，一并给前端提示
+  const positions = totals.positions.map((p) => {
+    const pos = account.positions[p.secid] || {};
+    const available = t1 ? paperLedger.availableShares(account, p.secid, today) : Number(p.shares);
+    const lim = paperLimitPrices(qmap.get(p.secid));
+    return {
+      ...p,
+      available: Math.max(0, Math.floor(available)),
+      locked: Math.max(0, Math.floor(Number(p.shares) - available)),
+      limitUp: lim.limitUp,
+      limitDown: lim.limitDown,
+    };
+  });
+  const activeOrders = (account.orders || []).filter((o) => o.status === 'pending' || o.status === 'partial');
+  const settledOrders = (account.orders || []).filter((o) => !(o.status === 'pending' || o.status === 'partial'));
+  const orders = [
+    ...activeOrders.map((o) => paperAuto.orderView(o, { todayKey: today })),
+    ...settledOrders.slice(-20).reverse().map((o) => paperAuto.orderView(o, { todayKey: today })),
+  ];
+  const conditions = [
+    ...(account.conditions || []).filter((c) => c.status === 'active'),
+    ...(account.conditions || []).filter((c) => c.status !== 'active').slice(-10).reverse(),
+  ];
+  const period = paperAuto.periodStats({ account, totalNow: totals.total, todayKey: today });
   return {
     initial: totals.initial,
     // v2.11.0：增量资金不计入初始资金；本金 = initial + injected
@@ -9452,23 +9639,39 @@ async function getPaper(user) {
     pricesAsOf: Date.now(),
     anyPrevClose: totals.anyPrevClose,
     prevCloseCount: totals.prevCloseCount,
-    positions: totals.positions,
+    positions,
     trades: account.trades.slice(-50).reverse(),
     updatedAt: account.updatedAt,
-    rules: { feeRate: PAPER_FEE_RATE, feeMin: PAPER_FEE_MIN, taxRate: PAPER_TAX_RATE },
+    // v2.12.0：委托 / 条件单 / 网格定投 / 跟单 / 分红入账 / 周期收益
+    orders,
+    conditions,
+    plans: (account.plans || []).map((p) => ({
+      ...p,
+      levels: p.kind === 'grid' ? paperAuto.gridLevels(p) : undefined,
+    })),
+    followers: account.followers || [],
+    following: account.following || [],
+    allowFollow: account.allowFollow !== false,
+    corporate: Object.values(account.corporate || {}).slice(-10).reverse(),
+    periods: period,
+    rules: paperRules(cfg),
   };
 }
 
-/** 下单：buy / sell，按最新价成交；股数可用 shares，也可用 ratio（0~1，按可用资金/持仓比例）
- *  v2.11.0：行情/信号在锁外取，账户读-算-写在 withPaperLock 内串行；
- *  clientOrderId 幂等（超时重试不会重复成交）；资金不足直接给「最多可买 N 股」。 */
+/**
+ * 下单：市价立即成交 / 限价挂单（可部分成交，剩余留到到期或撤单）。
+ * v2.11.0：行情/信号在锁外取，账户读-算-写在 withPaperLock 内串行；clientOrderId 幂等。
+ * v2.12.0：涨跌停、停牌、T+1 强校验（后台可关）、滑点、委托记录、跟单分发。
+ */
 async function paperTrade(user, payload = {}) {
   const bad = (m) => Object.assign(new Error(m), { status: 400 });
   if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
   const secid = String(payload.secid || '');
   if (!/^\d+\.[0-9A-Za-z]+$/.test(secid)) throw bad('标的不合法');
   const side = payload.side === 'sell' ? 'sell' : 'buy';
-  // v2.9.0：比例下单（1/4、1/3、1/2、全部）与股数二选一；比例必须落在 (0,1]
+  const orderType = payload.orderType === 'limit' ? 'limit' : 'market';
+  const cfg = loadPaperConfig();
+  // 比例下单（1/4、1/3、1/2、全部）与股数二选一；比例必须落在 (0,1]
   const ratioRaw = payload.ratio === undefined || payload.ratio === null || payload.ratio === ''
     ? null
     : Number(payload.ratio);
@@ -9479,6 +9682,11 @@ async function paperTrade(user, payload = {}) {
     if (!Number.isFinite(sharesInput) || sharesInput <= 0) throw bad('股数必须是正整数');
     if (sharesInput > 1000000) throw bad('单笔股数过大');
   }
+  const limitPriceInput = Number(payload.limitPrice);
+  if (orderType === 'limit' && !(limitPriceInput > 0)) throw bad('限价必须大于 0');
+  const validDays = Number.isFinite(Number(payload.validDays))
+    ? Math.min(30, Math.max(1, Math.floor(Number(payload.validDays))))
+    : cfg.order.validDays;
   const lot = paperLedger.lotOf(secid);
   const clientOrderId = typeof payload.clientOrderId === 'string'
     ? payload.clientOrderId.trim().slice(0, 64) : '';
@@ -9488,11 +9696,21 @@ async function paperTrade(user, payload = {}) {
   if (!quote || !Number.isFinite(Number(quote.price)) || Number(quote.price) <= 0) {
     throw bad('取不到最新价，稍后再试');
   }
-  // v2.9.2：开盘前 / 停牌只有昨收价，不能按昨收成交（会凭空产生一笔假成交）。
-  if (quote.priceMode && quote.priceMode !== 'live') {
-    throw bad('开盘前暂无成交价，交易时间 9:30–15:00 再下单');
+  // 市价单必须有实时成交价（开盘前 / 停牌的昨收价不能成交）；限价单允许挂上去等开盘
+  if (orderType === 'market' && quote.priceMode && quote.priceMode !== 'live') {
+    throw bad('开盘前 / 停牌暂无成交价；可以改用「限价委托」挂到开盘后');
   }
   const price = Number(quote.price);
+  const lim = paperLimitPrices(quote);
+  // 限价单的价位先按涨跌停带校验（明显越界直接拒绝，避免挂出一个永远不可能成交的价）
+  if (orderType === 'limit' && cfg.trading.limitCheck !== false && lim.limitUp) {
+    if (side === 'buy' && limitPriceInput > lim.limitUp) {
+      throw bad(`限价不能高于涨停价 ${lim.limitUp} 元（昨收 ${Number(quote.prevClose)} 元，涨跌幅 ${(lim.ratio * 100).toFixed(0)}%）`);
+    }
+    if (side === 'sell' && limitPriceInput < lim.limitDown) {
+      throw bad(`限价不能低于跌停价 ${lim.limitDown} 元（昨收 ${Number(quote.prevClose)} 元，涨跌幅 ${(lim.ratio * 100).toFixed(0)}%）`);
+    }
+  }
   // 当日大盘评分留痕：成交时的评分/评级一起存进记录（锁外取，避免占锁）
   let signal = null;
   try {
@@ -9501,36 +9719,50 @@ async function paperTrade(user, payload = {}) {
   } catch {
     signal = null;
   }
+  const today = shanghaiToday();
 
   const applied = await withPaperLock(() => {
     const account = getPaperAccount(user);
-    // 幂等：同一 clientOrderId 已经成交过，直接返回那笔（重试/双击不再买第二次）
+    // 幂等：同一 clientOrderId 已经下过单，直接返回原委托/原成交（重试不再买第二次）
     if (clientOrderId) {
-      const dup = account.trades.find((t) => t && t.clientOrderId === clientOrderId);
-      if (dup) {
-        // 幂等键被另一笔委托复用时不能静默返回旧成交，必须让前端重新生成
-        if (String(dup.secid) !== secid || String(dup.side) !== side) {
+      const dupOrder = (account.orders || []).find((o) => o && o.clientOrderId === clientOrderId);
+      const dupTrade = account.trades.find((t) => t && t.clientOrderId === clientOrderId);
+      if (dupOrder) {
+        if (String(dupOrder.secid) !== secid || String(dupOrder.side) !== side) {
           throw bad('这次委托的幂等标识已用于另一笔标的/方向，请关闭弹窗重新下单');
         }
-        return { trade: dup, duplicate: true };
+        return { order: paperAuto.orderView(dupOrder, { todayKey: today }), trade: null, duplicate: true };
+      }
+      if (dupTrade) {
+        if (String(dupTrade.secid) !== secid || String(dupTrade.side) !== side) {
+          throw bad('这次委托的幂等标识已用于另一笔标的/方向，请关闭弹窗重新下单');
+        }
+        return { trade: dupTrade, order: null, duplicate: true };
       }
     }
     let shares = sharesInput;
+    const tradePrice = paperLedger.slippagePrice(price, side, cfg.fees);
     if (useRatio) {
       if (side === 'buy') {
         // 留出佣金后再按整手向下取整，宁可少买一手也不让「全部」因为价格抖动而失败
-        const max = paperLedger.maxBuyShares({ price, cash: account.cash, lot });
-        let want = Math.floor((Number(account.cash) * ratioRaw) / (price * (1 + PAPER_FEE_RATE)) / lot) * lot;
+        const max = paperLedger.maxBuyShares({ price: tradePrice, cash: account.cash, lot, fees: cfg.fees });
+        let want = Math.floor((Number(account.cash) * ratioRaw) / (tradePrice * (1 + cfg.fees.rate)) / lot) * lot;
         if (want > max.shares) want = max.shares;
         if (want <= 0) {
           throw bad(max.shares > 0
-            ? `可用资金不足（现价 ${nf(price, 3)} 元，最多可买 ${max.shares} 股）`
-            : `可用资金不足一手（现价 ${nf(price, 3)} 元，每手约 ${nf(price * lot, 0)} 元）`);
+            ? `可用资金不足（现价 ${nf(tradePrice, 3)} 元，最多可买 ${max.shares} 股）`
+            : `可用资金不足一手（现价 ${nf(tradePrice, 3)} 元，每手约 ${nf(tradePrice * lot, 0)} 元）`);
         }
         shares = want;
       } else {
-        const held = Number((account.positions[secid] || {}).shares) || 0;
-        if (held <= 0) throw bad('当前没有该标的的持仓');
+        const held = cfg.trading.t1 !== false
+          ? paperLedger.availableShares(account, secid, today)
+          : Number((account.positions[secid] || {}).shares) || 0;
+        if (held <= 0) {
+          throw bad(cfg.trading.t1 !== false
+            ? 'T+1：今天没有可卖持仓（当日买入的股数要隔日才能卖）'
+            : '当前没有该标的的持仓');
+        }
         const want = ratioRaw >= 1 ? held : Math.floor((held * ratioRaw) / lot) * lot;
         if (want <= 0) throw bad('持仓不足一手，可直接点「全部」卖出');
         shares = Math.min(want, held);
@@ -9541,20 +9773,109 @@ async function paperTrade(user, payload = {}) {
       const heldNow = account.positions[secid];
       if (!heldNow || Number(heldNow.shares) !== shares) throw bad('A 股卖出必须是 100 股的整数倍');
     }
+    const pendingCount = paperAuto.activeOrderCount(account.orders);
+    if (orderType === 'limit' && pendingCount >= paperAuto.PAPER_ORDER_ACTIVE_MAX) {
+      throw bad(`未结委托最多 ${paperAuto.PAPER_ORDER_ACTIVE_MAX} 笔，请先撤掉一部分再挂新单`);
+    }
+    if (orderType === 'limit') {
+      const order = paperAuto.newOrder({
+        secid, code: quote.code, name: quote.name, side, type: 'limit',
+        limitPrice: limitPriceInput, shares, note: payload.note,
+        source: 'manual', validDays, at: Date.now(), todayKey: today, clientOrderId,
+      });
+      // 下完立刻撮合一次：价已到就马上成交（可能部分成交），否则挂着等 tick
+      const ctx = paperCtxFor(quote, cfg);
+      const matched = paperAuto.matchOrder({ account, order, quote, ctx });
+      let nextAccount = matched.account;
+      nextAccount.orders = paperAuto.pushOrder(nextAccount.orders, matched.order);
+      savePaperAccount(user, nextAccount);
+      if (matched.trade) mirrorPaperFills(user, nextAccount, matched.trade);
+      return {
+        order: paperAuto.orderView(matched.order, { todayKey: today }),
+        trade: matched.trade || null,
+        duplicate: false,
+        pending: !matched.trade,
+      };
+    }
+    const ctx = paperCtxFor(quote, cfg);
+    const guard = paperAuto.tradeGuard({ quote, side, ctx });
+    if (guard.blocked) throw bad(guard.message);
+    const fillQuote = { ...quote, secid, price: paperLedger.round3(tradePrice) };
     const res = side === 'buy'
       ? paperLedger.applyBuy(account, {
-        quote: { ...quote, secid }, shares, note: payload.note, signal,
-        ratio: useRatio ? ratioRaw : undefined, clientOrderId,
+        quote: fillQuote, shares, note: payload.note, signal, fees: cfg.fees,
+        ratio: useRatio ? ratioRaw : undefined, clientOrderId, at: ctx.now, today,
       })
       : paperLedger.applySell(account, {
-        quote: { ...quote, secid }, shares, note: payload.note, signal,
-        ratio: useRatio ? ratioRaw : undefined, clientOrderId,
+        quote: fillQuote, shares, note: payload.note, signal, fees: cfg.fees,
+        ratio: useRatio ? ratioRaw : undefined, clientOrderId, at: ctx.now, today,
+        t1: cfg.trading.t1 !== false,
       });
     if (res.error) throw bad(res.error.message);
-    savePaperAccount(user, res.account);
-    return { trade: res.trade, duplicate: false };
+    const nextAccount = res.account;
+    const order = paperAuto.orderFromTrade(res.trade, { type: 'market', note: payload.note, source: 'manual' });
+    nextAccount.orders = paperAuto.pushOrder(nextAccount.orders, order);
+    savePaperAccount(user, nextAccount);
+    mirrorPaperFills(user, nextAccount, res.trade);
+    return {
+      trade: res.trade,
+      order: paperAuto.orderView(order, { todayKey: today }),
+      duplicate: false,
+    };
   });
   return { ...applied, account: await getPaper(user) };
+}
+
+/**
+ * 跟单分发（v2.12.0）：被跟单人成交后，按订阅比例给跟单人复制一笔（只复制一层）。
+ * 只读被跟单人账户里的 followers 名单，跟单人账户逐个写入；比例取整手，
+ * 资金/持仓/T+1 不够就跳过那一笔（不报错、不阻塞被跟单人）。
+ */
+function mirrorPaperFills(targetUser, targetAccount, trade) {
+  if (!trade || !targetAccount) return 0;
+  const followers = targetAccount.followers || [];
+  if (!followers.length) return 0;
+  const users = loadUsers().users || [];
+  const byName = new Map(users.map((u) => [String(u.username || '').toLowerCase(), u]));
+  const cfg = loadPaperConfig();
+  const today = shanghaiToday();
+  let copied = 0;
+  for (const f of followers) {
+    const follower = byName.get(String(f.target || '').toLowerCase());
+    if (!follower || follower.id === targetUser.id) continue;
+    const fac = getPaperAccount(follower);
+    const lot = paperLedger.lotOf(trade.secid);
+    const shares = paperAuto.followShares({
+      trade,
+      ratio: f.ratio,
+      lot,
+      cash: fac.cash,
+      price: trade.price,
+      fees: cfg.fees,
+      held: cfg.trading.t1 !== false
+        ? paperLedger.availableShares(fac, trade.secid, today)
+        : Number((fac.positions[trade.secid] || {}).shares) || 0,
+      maxShares: f.maxShares,
+    });
+    if (!(shares > 0)) continue;
+    const quote = { secid: trade.secid, code: trade.code, name: trade.name, price: trade.price, priceMode: 'live' };
+    const res = trade.side === 'buy'
+      ? paperLedger.applyBuy(fac, {
+        quote, shares, note: `跟单 ${targetUser.username}`, fees: cfg.fees, at: Date.now(), today, source: 'follow',
+      })
+      : paperLedger.applySell(fac, {
+        quote, shares, note: `跟单 ${targetUser.username}`, fees: cfg.fees, at: Date.now(), today,
+        t1: cfg.trading.t1 !== false, source: 'follow',
+      });
+    if (res.error) continue;
+    res.account.orders = paperAuto.pushOrder(
+      res.account.orders,
+      paperAuto.orderFromTrade(res.trade, { note: `跟单 ${targetUser.username}`, source: 'follow' }),
+    );
+    savePaperAccount(follower, res.account);
+    copied += 1;
+  }
+  return copied;
 }
 
 /** 模拟盘写操作串行队列：单进程部署下保证同一账户「读-算-写」不丢更新（并发下单 / 双标签页） */

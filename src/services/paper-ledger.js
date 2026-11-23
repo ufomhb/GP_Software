@@ -905,6 +905,7 @@ module.exports = {
   normalizeFees,
   slippagePrice,
   availableShares,
+  num,
   lotOf,
   feeOf,
   taxOf,
