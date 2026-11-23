@@ -4321,6 +4321,13 @@ function paperValidateShares({ side = 'buy', shares, secid = '', price = 0, cash
     }
   }
   if (side === 'sell' && n > Math.floor(Number(held) || 0)) {
+    const total = paperTotalShares(secid);
+    if (total > Math.floor(Number(held) || 0)) {
+      return {
+        ok: false,
+        message: `T+1：今天最多可卖 ${nf(held, 0)} 股（持仓 ${nf(total, 0)} 股，其中 ${nf(total - Number(held || 0), 0)} 股是当日买入、要隔日才能卖）`,
+      };
+    }
     return { ok: false, message: `持仓不足：当前 ${nf(held, 0)} 股，不能卖出 ${n} 股` };
   }
   return { ok: true, message: '' };

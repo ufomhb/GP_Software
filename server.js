@@ -10035,7 +10035,13 @@ async function paperSweepAccount(user, { now = Date.now(), force = false } = {})
   const today = shanghaiToday();
   const corporateEvents = loadCorporateEvents();
   const corporateDue = corporateEvents.some((ev) => ev && ev.exDate <= today && snapshot.positions[ev.secid]);
-  if (!work.any && !corporateDue) {
+  // v2.12.0：即使没有挂单 / 条件单 / 计划，也要给有过交易的账户记一笔「今天的日终权益」，
+  // 否则排行榜的今日 / 本周 / 本月 / 今年收益率与回撤永远只有一天数据。
+  const hasHistory0 = (snapshot.trades || []).length
+    || Object.keys(snapshot.positions || {}).length
+    || paperLedger.num(snapshot.capital && snapshot.capital.injected) > 0;
+  const needEquity = hasHistory0 && !(snapshot.equity && snapshot.equity[today]);
+  if (!work.any && !corporateDue && !needEquity) {
     paperSweepAt.set(user.id, now);
     return { changed: false, trades: 0 };
   }
@@ -11139,6 +11145,7 @@ const httpRoutes = createHttpRoutes({
   resetPaper,
   // v2.12.0：模拟盘自动化（委托/条件单/网格定投/跟单/复盘/分红除权）
   paperSweepAccount,
+  paperSeedEquityFor,
   cancelPaperOrder,
   createPaperCondition,
   cancelPaperCondition,
