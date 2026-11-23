@@ -290,3 +290,22 @@ test('逐日盈亏与账户汇总一致：累计盈亏 = 逐日盈亏之和（�
 function equalNear(actual, expected, eps, msg) {
   assert.ok(Math.abs(Number(actual) - Number(expected)) <= eps, `${msg || ''}：${actual} ≉ ${expected}`);
 }
+
+
+test('逐日盈亏：已清仓标的取不到日线时按成交成本估值，不把持仓算成 0', () => {
+  const a = L.normalizeAccount({
+    initial: 10000,
+    cash: 10189.4,
+    positions: {},
+    trades: [
+      { ts: TS('2026-11-19'), secid: '1.600519', side: 'buy', price: 10, shares: 100, amount: 1000, fee: 5 },
+      { ts: TS('2026-11-20'), secid: '1.600519', side: 'sell', price: 12, shares: 100, amount: 1200, fee: 5.6 },
+    ],
+  }, { globalInitial: 10000 });
+  const out = L.reconstructDailyPnl({ account: a, barsBySecid: { '1.600519': [] }, today: '2026-11-20' });
+  assert.equal(out.estimated, true);
+  assert.deepEqual(out.missing, ['1.600519']);
+  assert.equal(out.rows.length, 2);
+  equalNear(out.rows[0].pnl, 0, 0.01, '成本估值下买入日只体现现金与成本对齐');
+  equalNear(out.rows[1].pnl, 189.4, 0.02, '卖出日盈亏不能被 0 市值污染');
+});

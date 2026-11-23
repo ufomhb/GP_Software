@@ -657,7 +657,8 @@ function reconstructDailyPnl({ account, barsBySecid, days = 800, today } = {}) {
     const bars = normalizeBars(list);
     if (bars.length) {
       barMaps[secid] = new Map(bars.map((b) => [b.d, b.c]));
-    } else if (acc.positions && acc.positions[secid]) {
+    } else {
+      // 没有日线的标的（新股 / 停牌 / 上游失败 / 已清仓）：按成本估值，并标记出来
       missing.push(secid);
       estimated = true;
     }
@@ -743,8 +744,12 @@ function reconstructDailyPnl({ account, barsBySecid, days = 800, today } = {}) {
       const qty = Math.floor(num(t.shares));
       const amount = price * qty;
       if (t.side === 'buy') {
-        cash -= amount + Math.max(5, amount * FEES.rate);
-        shares[secid] = (shares[secid] || 0) + qty;
+        const fee = Math.max(5, amount * FEES.rate);
+        cash -= amount + fee;
+        const oldQty = shares[secid] || 0;
+        const newQty = oldQty + qty;
+        avgCost[secid] = (num(avgCost[secid]) * oldQty + amount + fee) / newQty;
+        shares[secid] = newQty;
       } else {
         cash += amount - Math.max(5, amount * FEES.rate) - amount * FEES.taxRate;
         shares[secid] = (shares[secid] || 0) - qty;
