@@ -385,6 +385,50 @@
         </article>
         <article class="admin-card">
           <div class="admin-card-head">
+            <h2>费率（佣金 / 最低佣金 / 印花税 / 滑点）</h2>
+            <span class="muted small">改完对所有账户的新成交生效；历史成交按当时的费用记账，不会重算。</span>
+          </div>
+          <div class="admin-actions">
+            <label class="admin-inline-field"><span>佣金率（‰ 万分）</span><input type="number" id="paperFeeRate" min="0" max="100" step="0.01" placeholder="2.5 = 万 2.5"></label>
+            <label class="admin-inline-field"><span>最低佣金（元）</span><input type="number" id="paperFeeMin" min="0" max="100" step="1"></label>
+            <label class="admin-inline-field"><span>印花税（‰ 万分，卖出）</span><input type="number" id="paperTaxRate" min="0" max="200" step="0.01" placeholder="5 = 万 5"></label>
+            <label class="admin-inline-field"><span>滑点（bp，万分点）</span><input type="number" id="paperSlippage" min="0" max="100" step="1" placeholder="0 = 不模拟"></label>
+            <button type="button" class="admin-btn primary" id="paperSaveFees">保存费率</button>
+          </div>
+          <p class="admin-note" id="paperFeesHint">滑点只影响市价单：买入成交价往上让、卖出往下让；限价单按委托价兜住，不会滑点。</p>
+        </article>
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>交易规则开关（T+1 / 涨跌停 / 停牌）</h2>
+            <span class="muted small">关掉后模拟盘按更宽松的口径撮合（例如允许当日买入当日卖出）。</span>
+          </div>
+          <div class="admin-actions">
+            <label class="admin-inline-field"><span>T+1</span><input type="checkbox" id="paperTradingT1"> 当日买入不能当日卖出</label>
+            <label class="admin-inline-field"><span>涨跌停</span><input type="checkbox" id="paperTradingLimit"> 涨停不买 / 跌停不卖</label>
+            <label class="admin-inline-field"><span>停牌</span><input type="checkbox" id="paperTradingSuspend"> 停牌不成交</label>
+            <label class="admin-inline-field"><span>限价单默认有效期（交易日）</span><input type="number" id="paperOrderValidDays" min="1" max="30" step="1"></label>
+            <button type="button" class="admin-btn primary" id="paperSaveTrading">保存规则</button>
+          </div>
+          <p class="admin-note" id="paperTradingHint">当前：--</p>
+        </article>
+        <article class="admin-card">
+          <div class="admin-card-head">
+            <h2>分红除权记账</h2>
+            <span class="muted small">模拟盘不接实时分红源，除权日按这里录入的事件给持仓账户入账（现金分红进现金、送转股增加股数、每股成本摊薄）。</span>
+          </div>
+          <div class="admin-actions">
+            <label class="admin-inline-field"><span>标的（代码）</span><input type="text" id="paperDivCode" maxlength="32" placeholder="如 600519 或 1.600519"></label>
+            <label class="admin-inline-field"><span>名称（可选）</span><input type="text" id="paperDivName" maxlength="40"></label>
+            <label class="admin-inline-field"><span>除权除息日</span><input type="date" id="paperDivExDate"></label>
+            <label class="admin-inline-field"><span>每股现金分红（元）</span><input type="number" id="paperDivCash" min="0" step="0.001" placeholder="如 2.5"></label>
+            <label class="admin-inline-field"><span>每 10 股送转股</span><input type="number" id="paperDivRatio" min="0" step="0.1" placeholder="1 = 10 送 1"></label>
+            <button type="button" class="admin-btn primary" id="paperDivAdd">新增除权事件</button>
+          </div>
+          <p class="admin-note" id="paperDivHint">只在除权日之后、账户仍持有该标的时入账；中途已卖出的不补记。</p>
+          <div id="paperDivList" class="admin-table-wrap"></div>
+        </article>
+        <article class="admin-card">
+          <div class="admin-card-head">
             <h2>用户模拟盘</h2>
             <span class="muted small" id="paperMeta">—</span>
           </div>

@@ -259,6 +259,12 @@ const state = {
   paperCalendarYear: '',
   paperDetail: null,
   paperDetailAt: 0,
+  // v2.12.0：模拟盘自动化 —— 委托 / 条件单 / 网格定投 / 跟单 / 持仓预警 / 复盘
+  paperAutoTab: 'condition',
+  paperReview: null,
+  paperReviewAt: 0,
+  paperReviewKey: '',
+  paperReload: null,
   // v2.9.0：模拟买卖弹窗的当前标的与报价（打开弹窗时重置）
   paperTrade: null,
   tl: { events: [], playing: false, speed: 120, pos: 565, raf: null, last: 0, lastChart: 0 },

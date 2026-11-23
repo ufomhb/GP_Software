@@ -3178,12 +3178,18 @@ button[hidden] { display: none !important; }
   .fund-subnav-jump { margin-left: 0; }
 }
 
-/* 模拟账户排行榜：当前用户高亮，手机端只留关键列 */
+/* 模拟账户排行榜：当前用户高亮，手机端只留关键列
+   v2.12.0：加了今日/本周/本月/今年/回撤五列，窄屏把这五列都收起来（列序号已变） */
 .paper-rank-table tr.is-me td { background: rgba(56, 189, 248, .07); }
 .paper-rank-table td .badge { margin-left: 4px; }
 @media (max-width: 720px) {
-  .paper-rank-table th:nth-child(7), .paper-rank-table td:nth-child(7) { display: none; }
-  .paper-rank-table th:nth-child(6), .paper-rank-table td:nth-child(6) { max-width: 128px; overflow: hidden; text-overflow: ellipsis; }
+  .paper-rank-table th:nth-child(6), .paper-rank-table td:nth-child(6),
+  .paper-rank-table th:nth-child(7), .paper-rank-table td:nth-child(7),
+  .paper-rank-table th:nth-child(8), .paper-rank-table td:nth-child(8),
+  .paper-rank-table th:nth-child(9), .paper-rank-table td:nth-child(9),
+  .paper-rank-table th:nth-child(10), .paper-rank-table td:nth-child(10),
+  .paper-rank-table th:nth-child(12), .paper-rank-table td:nth-child(12) { display: none; }
+  .paper-rank-table th:nth-child(11), .paper-rank-table td:nth-child(11) { max-width: 128px; overflow: hidden; text-overflow: ellipsis; }
 }
 
 /* =========================================================
@@ -3337,4 +3343,49 @@ button[hidden] { display: none !important; }
   .fund-mover-row { grid-template-columns: 16px minmax(0,1fr) 76px; }
   .fund-mover-row .fund-mover-name-cell + .fund-mover-val { display: none; }
   .vs-index-chart { height: 200px; }
+}
+
+/* =========================================================
+   v2.12.0：委托 / 自动交易（条件单 / 网格 / 定投 / 跟单 / 持仓预警）/ 复盘
+   ========================================================= */
+.paper-order-type { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 6px; }
+.paper-order-type .seg { flex: none; }
+.paper-order-type .input-wrap { flex: 0 1 190px; min-width: 150px; }
+.paper-order-type #paperLimitWrap,
+.paper-order-type #paperValidWrap { display: inline-flex; }
+.paper-order-type #paperLimitWrap[hidden],
+.paper-order-type #paperValidWrap[hidden] { display: none; }
+.paper-order-table, .paper-cond-table, .paper-plan-table, .paper-review-table { min-width: 620px; }
+.paper-order-table td, .paper-cond-table td, .paper-plan-table td { vertical-align: middle; }
+.paper-order-table .badge, .paper-cond-table .badge, .paper-plan-table .badge { font-size: 9px; padding: 1px 6px; }
+.paper-order-active td { background: rgba(56, 189, 248, .04); }
+tr.is-dim td { opacity: .62; }
+.paper-auto-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.paper-auto-form {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px;
+  padding: 10px 12px; border: 1px solid rgba(148, 163, 184, .12); border-radius: 10px;
+  background: rgba(255, 255, 255, .015);
+}
+.paper-auto-form .input-wrap { flex: 1 1 170px; min-width: 140px; }
+.paper-auto-form .modal-section-title { flex: 1 0 100%; margin: 0 0 2px; }
+.paper-auto-form .btn.small { flex: none; }
+.paper-follow-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 10px; border: 1px solid rgba(148, 163, 184, .1); border-radius: 8px;
+  background: rgba(255, 255, 255, .012); margin-top: 6px; font-size: 12px;
+}
+.paper-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: #c9d7e8; margin: 6px 0; }
+.paper-toggle input { accent-color: #38bdf8; width: 15px; height: 15px; }
+.paper-period-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+  padding: 8px 10px; border: 1px solid rgba(148, 163, 184, .1); border-radius: 8px;
+  background: rgba(255, 255, 255, .012); font-size: 11px; color: #9fb2c9;
+}
+.paper-preview-line { display: block; margin-top: 6px; }
+.paper-rank-sort { flex-wrap: wrap; }
+.paper-review-table td:first-child { white-space: nowrap; }
+#paperReviewChart .empty { padding: 28px 0; text-align: center; }
+@media (max-width: 900px) {
+  .paper-auto-grid { grid-template-columns: minmax(0, 1fr); }
+  .paper-auto-form .input-wrap { flex: 1 1 140px; }
 }

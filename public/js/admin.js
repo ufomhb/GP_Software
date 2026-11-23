@@ -818,16 +818,23 @@ async function copyText(text) {
   toast(text, 'ok', 5000);
 }
 
-/* ---------------- 更新履历 ---------------- */
+/* ---------------- 更新履历 ----------------
+   v2.12.0：客户端只显示「用户能感知」的功能点，后台保留完整明细。
+   这里把两套都列出来：上面是完整明细（实现 / 口径 / 测试 / 部署），
+   下面是同一版本在客户端展示的那几条，方便确认对外口径。 */
 
 async function loadChangelog() {
   try {
     const data = await api('/api/changelog', 15000);
     const versions = data.versions || [];
     $('#changelogList').innerHTML = versions.length
-      ? versions.map((v) => `<div class="admin-version">
+      ? `<p class="admin-note">客户端更新履历只显示「用户能感知的 UI / 功能点」，实现细节（接口、字段、测试、部署）只在后台这份明细里。下面每个版本都带一份「客户端展示」预览。</p>`
+        + versions.map((v) => `<div class="admin-version">
           <div class="admin-version-head"><b>v${esc(v.version)}</b><span>${esc(v.date || '')}</span><strong>${esc(v.title || '')}</strong></div>
+          <div class="admin-version-tag">完整明细（后台）</div>
           <ul>${(v.items || []).map((item) => `<li>${esc(item)}</li>`).join('')}</ul>
+          <div class="admin-version-tag">客户端展示（用户看到的版本）</div>
+          <ul class="admin-version-client">${(v.clientItems || []).map((item) => `<li>${esc(item)}</li>`).join('') || '<li class="muted">（这条版本没有可展示的功能点）</li>'}</ul>
         </div>`).join('')
       : '<div class="admin-empty">暂无记录</div>';
   } catch (err) {
@@ -2065,15 +2072,47 @@ function renderPaperAdmin(data) {
       { label: '排行榜隐藏', value: n(totals.hidden), sub: '黑名单（仍可自己交易）' },
       { label: '全局初始资金', value: n(cfg.initial).toLocaleString('zh-CN'), sub: '新账号 / 重置用', tone: 'accent' },
       { label: '累计增量资金', value: n(totals.injected || 0).toLocaleString('zh-CN'), sub: '本金 = 初始 + 追加' },
+      { label: '未结委托', value: n(totals.activeOrders || 0), sub: '限价单等待成交' },
+      { label: '条件单 / 计划', value: `${n(totals.conditions || 0)} / ${n(totals.plans || 0)}`, sub: '止盈止损 + 网格定投' },
+      { label: '跟单关系', value: n(totals.followers || 0), sub: '被跟单人收到的订阅' },
+      { label: '除权事件', value: n(totals.corporate || 0), sub: '分红除权记账' },
     ]);
   }
   const initialInput = $('#paperInitial');
   if (initialInput && document.activeElement !== initialInput) initialInput.value = String(n(cfg.initial));
-  const meta = $('#paperMeta');
-  if (meta) {
-    meta.textContent = `${users.length} 个用户 · 隐藏 ${n(totals.hidden)} 个 · 初始资金 ${n(cfg.initial).toLocaleString('zh-CN')} 元 · 持仓取价：${data.estimated ? '部分按成本估算' : '实时'}`;
+  // v2.12.0：费率 / 规则 / 委托有效期回填（正在编辑的输入框不覆盖）
+  const fees = cfg.fees || {};
+  const feeFields = [
+    ['#paperFeeRate', Number(fees.rate || 0) * 10000, 2],
+    ['#paperFeeMin', Number(fees.min || 0), 0],
+    ['#paperTaxRate', Number(fees.taxRate || 0) * 10000, 2],
+    ['#paperSlippage', Number(fees.slippageBps || 0), 0],
+  ];
+  for (const [sel, val, digits] of feeFields) {
+    const el = $(sel);
+    if (el && document.activeElement !== el) el.value = String(Number(val.toFixed(digits)));
+  }
+  const trading = cfg.trading || {};
+  for (const [sel, val] of [['#paperTradingT1', trading.t1], ['#paperTradingLimit', trading.limitCheck], ['#paperTradingSuspend', trading.suspend]]) {
+    const el = $(sel);
+    if (el) el.checked = val !== false;
+  }
+  const validDays = $('#paperOrderValidDays');
+  if (validDays && document.activeElement !== validDays) validDays.value = String(n((cfg.order || {}).validDays || 1));
+  const tradingHint = $('#paperTradingHint');
+  if (tradingHint) {
+    tradingHint.textContent = `当前：T+1 ${trading.t1 === false ? '关' : '开'} · 涨跌停校验 ${trading.limitCheck === false ? '关' : '开'} · 停牌拦截 ${trading.suspend === false ? '关' : '开'} · 限价单默认 ${n((cfg.order || {}).validDays || 1)} 个交易日内有效`;
+  }
+  const feeHint = $('#paperFeesHint');
+  if (feeHint) {
+    feeHint.textContent = `当前：佣金 ${(Number(fees.rate || 0) * 10000).toFixed(2)} 万（最低 ${n(fees.min || 0)} 元）· 卖出印花税 ${(Number(fees.taxRate || 0) * 10000).toFixed(2)} 万 · 滑点 ${n(fees.slippageBps || 0)} bp（只影响市价单）`;
   }
   renderPaperCapitalBatches(cfg.capitalBatches || []);
+  renderPaperDividendList(data.corporateEvents || []);
+  const meta = $('#paperMeta');
+  if (meta) {
+    meta.textContent = `${users.length} 个用户 · 隐藏 ${n(totals.hidden)} 个 · 初始资金 ${n(cfg.initial).toLocaleString('zh-CN')} 元 · 未结委托 ${n(totals.activeOrders || 0)} 笔 · 持仓取价：${data.estimated ? '部分按成本估算' : '实时'}`;
+  }
   const rows = users.map((u) => {
     const profit = Number(u.profit) || 0;
     const tone = profit > 0 ? 'ok' : profit < 0 ? 'bad' : '';
@@ -2088,6 +2127,7 @@ function renderPaperAdmin(data) {
       <td class="num">${n(u.total).toLocaleString('zh-CN')}</td>
       <td class="num ${tone}">${profit > 0 ? '+' : ''}${n(profit).toLocaleString('zh-CN')}<br><small class="muted">${n(u.profitPct).toFixed(2)}%</small></td>
       <td class="num">${n(u.positionCount)}</td>
+      <td class="num muted">${n(u.orderCount || 0)} / ${(u.conditions || []).filter((c) => c.status === 'active').length} / ${(u.plans || []).filter((p) => p.status === 'active').length}<br><small class="muted">挂单 / 条件 / 计划${u.followers ? ` · 跟 ${n(u.followers)}` : ''}</small></td>
       <td class="nowrap muted">${u.updatedAt ? esc(fmtClock(u.updatedAt)) : '未交易'}</td>
       <td class="ops">
         <button type="button" class="admin-btn" data-paper-view="${esc(u.id)}">查看持仓</button>
@@ -2098,8 +2138,8 @@ function renderPaperAdmin(data) {
   const box = $('#paperUsers');
   if (box) {
     box.innerHTML = `<table class="admin-table"><thead><tr>
-      <th>用户</th><th>排行榜</th><th>初始资金</th><th>累计追加</th><th>本金</th><th>可用资金</th><th>持仓市值</th><th>总资产</th><th>累计盈亏</th><th>持仓数</th><th>最近操作</th><th>操作</th>
-    </tr></thead><tbody>${rows || '<tr><td colspan="12"><div class="admin-empty">还没有用户</div></td></tr>'}</tbody></table>`;
+      <th>用户</th><th>排行榜</th><th>初始资金</th><th>累计追加</th><th>本金</th><th>可用资金</th><th>持仓市值</th><th>总资产</th><th>累计盈亏</th><th>持仓数</th><th>自动化</th><th>最近操作</th><th>操作</th>
+    </tr></thead><tbody>${rows || '<tr><td colspan="13"><div class="admin-empty">还没有用户</div></td></tr>'}</tbody></table>`;
   }
   $$('[data-paper-hide]').forEach((btn) => btn.addEventListener('click', () => togglePaperHidden(btn.getAttribute('data-paper-hide'))));
   $$('[data-paper-view]').forEach((btn) => btn.addEventListener('click', () => showPaperDetail(btn.getAttribute('data-paper-view'))));
@@ -2150,6 +2190,121 @@ async function savePaperInitial() {
     toast(`保存失败：${err.message}`, 'err');
   } finally {
     btn.disabled = false;
+  }
+}
+
+/* ---------------- v2.12.0：费率 / 交易规则 / 分红除权 ---------------- */
+
+async function savePaperFees() {
+  const rate = Number($('#paperFeeRate') ? $('#paperFeeRate').value : 0) / 10000;
+  const min = Number($('#paperFeeMin') ? $('#paperFeeMin').value : 0);
+  const taxRate = Number($('#paperTaxRate') ? $('#paperTaxRate').value : 0) / 10000;
+  const slippageBps = Number($('#paperSlippage') ? $('#paperSlippage').value : 0);
+  if (!Number.isFinite(rate) || rate < 0 || rate > 0.01) { toast('佣金率需在 0 ~ 100（万分）之间', 'warn'); return; }
+  if (!Number.isFinite(min) || min < 0 || min > 100) { toast('最低佣金需在 0 ~ 100 元之间', 'warn'); return; }
+  if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 0.02) { toast('印花税需在 0 ~ 200（万分）之间', 'warn'); return; }
+  if (!Number.isFinite(slippageBps) || slippageBps < 0 || slippageBps > 100) { toast('滑点需在 0 ~ 100 bp 之间', 'warn'); return; }
+  const btn = $('#paperSaveFees');
+  if (btn) btn.disabled = true;
+  try {
+    await apiPost('/api/admin/paper/config', { fees: { rate, min, taxRate, slippageBps } }, 20000);
+    toast('费率已保存（对新的成交生效）', 'ok');
+    await loadPaper();
+  } catch (err) {
+    toast(`保存失败：${err.message}`, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function savePaperTrading() {
+  const t1 = $('#paperTradingT1') ? $('#paperTradingT1').checked : true;
+  const limitCheck = $('#paperTradingLimit') ? $('#paperTradingLimit').checked : true;
+  const suspend = $('#paperTradingSuspend') ? $('#paperTradingSuspend').checked : true;
+  const validDays = Number($('#paperOrderValidDays') ? $('#paperOrderValidDays').value : 1);
+  if (!Number.isFinite(validDays) || validDays < 1 || validDays > 30) { toast('有效期需在 1 ~ 30 个交易日之间', 'warn'); return; }
+  const btn = $('#paperSaveTrading');
+  if (btn) btn.disabled = true;
+  try {
+    await apiPost('/api/admin/paper/config', { trading: { t1, limitCheck, suspend }, order: { validDays } }, 20000);
+    toast(`交易规则已保存：T+1 ${t1 ? '开' : '关'} · 涨跌停 ${limitCheck ? '开' : '关'} · 停牌 ${suspend ? '开' : '关'}`, 'ok');
+    await loadPaper();
+  } catch (err) {
+    toast(`保存失败：${err.message}`, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function renderPaperDividendList(events) {
+  const box = $('#paperDivList');
+  if (!box) return;
+  const list = Array.isArray(events) ? events : [];
+  if (!list.length) {
+    box.innerHTML = '<div class="admin-empty">还没有分红除权事件</div>';
+    return;
+  }
+  const rows = list.slice().reverse().map((e) => `<tr>
+    <td><b>${esc(e.name || e.code || e.secid)}</b><br><small class="muted">${esc(e.secid)}</small></td>
+    <td class="nowrap">${esc(e.exDate || '')}</td>
+    <td class="num">${n(e.cashPerShare).toFixed(4)}</td>
+    <td class="num">${n(e.shareRatio).toFixed(2)}</td>
+    <td class="muted">${esc(e.note || '')}</td>
+    <td class="ops"><button type="button" class="admin-btn danger" data-paper-div-del="${esc(e.id)}">删除</button></td>
+  </tr>`).join('');
+  box.innerHTML = `<table class="admin-table"><thead><tr><th>标的</th><th>除权日</th><th>每股现金分红</th><th>每 10 股送转</th><th>备注</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+  $$('[data-paper-div-del]').forEach((btn) => btn.addEventListener('click', async () => {
+    if (!window.confirm('删除这条分红除权事件？已经入账的历史记录不会回滚。')) return;
+    btn.disabled = true;
+    try {
+      await apiPost('/api/admin/paper/dividends/remove', { id: btn.getAttribute('data-paper-div-del') }, 20000);
+      toast('已删除', 'ok');
+      await loadPaper();
+    } catch (err) {
+      toast(`删除失败：${err.message}`, 'err');
+      btn.disabled = false;
+    }
+  }));
+}
+
+async function addPaperDividend() {
+  const rawCode = String($('#paperDivCode') ? $('#paperDivCode').value : '').trim();
+  if (!rawCode) { toast('填标的代码（600519 或 1.600519）', 'warn'); return; }
+  // 只给 6 位代码时按沪深规则补 secid：6 开头沪市，其余深市
+  const secid = /^\d+\.[0-9A-Za-z]+$/.test(rawCode)
+    ? rawCode
+    : (/^[0-9]{6}$/.test(rawCode) ? `${/^(6|9|5)/.test(rawCode) ? '1' : '0'}.${rawCode}` : '');
+  if (!secid) { toast('标的不合法：填 6 位代码或带市场的 secid（如 1.600519）', 'warn'); return; }
+  const exDate = String($('#paperDivExDate') ? $('#paperDivExDate').value : '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(exDate)) { toast('选除权除息日', 'warn'); return; }
+  const cashPerShare = Number($('#paperDivCash') ? $('#paperDivCash').value : 0);
+  const shareRatio = Number($('#paperDivRatio') ? $('#paperDivRatio').value : 0);
+  if (!(cashPerShare >= 0) || !(shareRatio >= 0) || (cashPerShare === 0 && shareRatio === 0)) {
+    toast('每股现金分红和送转股至少填一项（可填 0）', 'warn');
+    return;
+  }
+  const btn = $('#paperDivAdd');
+  if (btn) btn.disabled = true;
+  try {
+    await apiPost('/api/admin/paper/dividends', {
+      secid,
+      code: secid.split('.')[1] || '',
+      name: String($('#paperDivName') ? $('#paperDivName').value : '').trim(),
+      exDate,
+      cashPerShare,
+      shareRatio,
+      note: `每 10 股送转 ${shareRatio} 股 / 每股派 ${cashPerShare} 元`,
+    }, 20000);
+    toast('已新增分红除权事件，除权日会按持仓自动入账', 'ok');
+    if ($('#paperDivCode')) $('#paperDivCode').value = '';
+    if ($('#paperDivName')) $('#paperDivName').value = '';
+    if ($('#paperDivCash')) $('#paperDivCash').value = '';
+    if ($('#paperDivRatio')) $('#paperDivRatio').value = '';
+    await loadPaper();
+  } catch (err) {
+    toast(`新增失败：${err.message}`, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -2249,13 +2404,27 @@ function showPaperDetail(id) {
     <td class="num">${p.profitPct === null || p.profitPct === undefined ? '--' : `${n(p.profitPct).toFixed(2)}%`}</td>
     <td class="num ${p.realizedAmount > 0 ? 'ok' : p.realizedAmount < 0 ? 'bad' : ''}">${p.realizedAmount ? `${p.realizedAmount > 0 ? '+' : ''}${n(p.realizedAmount).toLocaleString('zh-CN')}` : '--'}</td>
   </tr>`).join('');
+  const orderRows = (user.orders || []).slice(0, 8).map((o) => `<tr>
+    <td class="nowrap muted">${o.createdAt ? esc(fmtClock(o.createdAt)) : '--'}</td>
+    <td>${esc(o.name || o.code || '')}<br><small class="muted">${esc(o.code || '')}</small></td>
+    <td>${o.side === 'buy' ? '买' : '卖'}</td>
+    <td>${o.type === 'limit' ? `限价 ${n(o.limitPrice).toFixed(3)}` : '市价'}</td>
+    <td class="num">${n(o.filledShares)} / ${n(o.shares)}</td>
+    <td>${esc(o.status || '')}${o.lastCheck && o.lastCheck.reason ? `<br><small class="muted">${esc(o.lastCheck.reason)}</small>` : ''}</td>
+  </tr>`).join('');
+  const condCount = (user.conditions || []).filter((c) => c.status === 'active').length;
+  const planCount = (user.plans || []).filter((p) => p.status === 'active').length;
   box.innerHTML = `<div class="admin-kv-list">
       <div class="admin-kv"><span>初始资金 / 累计追加 / 本金</span><b>${n(user.initial).toLocaleString('zh-CN')} / ${n(user.injected || 0).toLocaleString('zh-CN')} / ${n(user.principal || user.initial).toLocaleString('zh-CN')} 元</b></div>
       <div class="admin-kv"><span>可用资金</span><b>${n(user.cash).toLocaleString('zh-CN')} 元</b></div>
       <div class="admin-kv"><span>持仓市值 / 总资产</span><b>${n(user.marketValue).toLocaleString('zh-CN')} / ${n(user.total).toLocaleString('zh-CN')} 元</b></div>
       <div class="admin-kv"><span>累计盈亏</span><b>${user.profit > 0 ? '+' : ''}${n(user.profit).toLocaleString('zh-CN')} 元（${n(user.profitPct).toFixed(2)}%）</b></div>
+      <div class="admin-kv"><span>自动化</span><b>未结委托 ${n(user.orderCount || 0)} 笔 · 条件单 ${n(condCount)} 条 · 计划 ${n(planCount)} 个 · 跟单 ${n(user.followers || 0)} 人${user.allowFollow === false ? ' · 已关闭跟单' : ''}</b></div>
+      ${(user.periods && user.periods.todayPct !== null) ? `<div class="admin-kv"><span>今日 / 本月 / 今年</span><b>${user.periods.todayPct === null ? '--' : `${user.periods.todayPct.toFixed(2)}%`} / ${user.periods.monthPct === null ? '--' : `${user.periods.monthPct.toFixed(2)}%`} / ${user.periods.yearPct === null ? '--' : `${user.periods.yearPct.toFixed(2)}%`} · 最大回撤 ${user.periods.mdd === null ? '--' : `${user.periods.mdd.toFixed(2)}%`}</b></div>` : ''}
     </div>
-    ${rows ? `<table class="admin-table"><thead><tr><th>标的</th><th>份额</th><th>成本</th><th>现价</th><th>市值</th><th>浮盈</th><th>收益率</th><th>已实现</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="admin-empty">该账户当前空仓</div>'}`;
+    ${rows ? `<table class="admin-table"><thead><tr><th>标的</th><th>份额</th><th>成本</th><th>现价</th><th>市值</th><th>浮盈</th><th>收益率</th><th>已实现</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="admin-empty">该账户当前空仓</div>'}
+    ${orderRows ? `<h3 class="mt12">最近委托</h3><table class="admin-table"><thead><tr><th>时间</th><th>标的</th><th>方向</th><th>类型</th><th>成交 / 委托</th><th>状态</th></tr></thead><tbody>${orderRows}</tbody></table>` : ''}
+    ${(user.corporate || []).length ? `<h3 class="mt12">分红除权入账</h3><table class="admin-table"><thead><tr><th>除权日</th><th>现金</th><th>股数变化</th><th>备注</th></tr></thead><tbody>${user.corporate.map((c) => `<tr><td>${esc(c.exDate || '')}</td><td class="num">+${n(c.cash).toLocaleString('zh-CN')}</td><td class="num">${n(c.sharesBefore)} → ${n(c.sharesAfter)}</td><td class="muted">${esc(c.note || '')}</td></tr>`).join('')}</tbody></table>` : ''}`;
   wrap.hidden = false;
   wrap.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
@@ -2265,6 +2434,13 @@ function bindPaper() {
   if (save) save.addEventListener('click', savePaperInitial);
   const capital = $('#paperCapitalBtn');
   if (capital) capital.addEventListener('click', submitPaperCapital);
+  // v2.12.0：费率 / 交易规则 / 分红除权
+  const feeBtn = $('#paperSaveFees');
+  if (feeBtn) feeBtn.addEventListener('click', savePaperFees);
+  const ruleBtn = $('#paperSaveTrading');
+  if (ruleBtn) ruleBtn.addEventListener('click', savePaperTrading);
+  const divBtn = $('#paperDivAdd');
+  if (divBtn) divBtn.addEventListener('click', addPaperDividend);
   // 改了金额 / 范围 / 备注就当成新的批次，避免沿用上一次的 batchId 被幂等吞掉
   ['#paperCapitalAmount', '#paperCapitalNote', '#paperCapitalOnlyTraded'].forEach((sel) => {
     const el = $(sel);
