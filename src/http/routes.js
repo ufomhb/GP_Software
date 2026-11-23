@@ -40,10 +40,13 @@ function createHttpRoutes(deps) {
     saveAlertBox,
     getPaper,
     getPaperAdminOverview,
+    getPaperPnl,
     getPaperConfig,
     getUiConfig,
     saveUiConfig,
     getPaperRanking,
+    getPaperRankingDetail,
+    injectPaperCapital,
     getFundPnlSeries,
     paperTrade,
     resetPaper,
@@ -431,11 +434,31 @@ async function handleAdmin(req, res, url) {
     const id = String(body.id || '');
     const target = loadUsers().users.find((u) => u.id === id);
     if (!target) throw Object.assign(new Error('用户不存在'), { status: 404 });
-    const res = resetPaper(target, body.initial);
+    const res = await resetPaper(target, body.initial);
     recordLoginEvent(req, {
       user: actor, ok: true, action: 'paper', reason: `重置 ${target.username} 的模拟盘（初始 ${res.initial}）`,
     });
     return { ok: true, id: target.id, username: target.username, initial: res.initial };
+  }
+  // v2.11.0：增量资金（给全部 / 仅已有模拟记录的账户各加等额资金，不改变历史盈亏）
+  if (p === '/api/admin/paper/inject' && req.method === 'POST') {
+    const body = req.body || {};
+    const res = await injectPaperCapital({
+      amount: body.amount,
+      note: body.note,
+      onlyTraded: body.onlyTraded,
+      batchId: body.batchId,
+      by: actor.username,
+    });
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'paper',
+      reason: res.duplicate
+        ? `增量资金批次重复提交（${res.batchId}，未重复执行）`
+        : `增量资金：${res.users} 个账户各 +${res.amount} 元，共 ${res.total} 元（批次 ${res.batchId}）`,
+    });
+    return res;
   }
 
   /* ---------------------------------------------------------
@@ -1299,11 +1322,23 @@ async function handleApi(req, res, url) {
     if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
     return getPaper(user);
   }
+  // v2.11.0：模拟账户逐日盈亏（盈亏日历 / 资产曲线），days 夹取 60~1500 个交易日
+  if (p === '/api/paper/pnl') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return getPaperPnl(user, Number(q.get('days') || 800));
+  }
   // v2.8.0：全员模拟账户排行榜（所有登录用户可见彼此的模拟持仓与总资产）
   if (p === '/api/paper/ranking') {
     const user = currentUser(req);
     if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
     return getPaperRanking();
+  }
+  // v2.11.0：排行榜里点某个用户 → 看他的具体持仓（不透出 userId / 成交流水）
+  if (p === '/api/paper/ranking/detail') {
+    const user = currentUser(req);
+    if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    return getPaperRankingDetail(q.get('username') || '', user);
   }
   if (p === '/api/paper/trade' && req.method === 'POST') {
     const user = currentUser(req);

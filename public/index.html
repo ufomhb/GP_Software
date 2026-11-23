@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -13,7 +13,7 @@
   <meta name="description" content="寰球智投：A股、全球指数、期货、黄金白银实时行情，板块资金流向与规则化策略终端。">
   <title>寰球智投 · 全球行情与智能策略终端</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.10.7">
+  <link rel="stylesheet" href="/css/app.css?v=2.11.0">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icon.svg">
 </head>
@@ -1515,6 +1515,48 @@
 
       <article class="panel" id="paperPanel"><div class="empty">加载模拟交易账户…</div></article>
 
+      <!-- v2.11.0：模拟盘盈亏日历（日 / 月 / 年，和自选基金同一套日历组件） -->
+      <article class="panel" id="paperPnlCalendarPanel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">PAPER P&amp;L CALENDAR</div>
+            <h3>模拟账户盈亏日历 · 日 / 月 / 年</h3>
+            <span class="muted small" id="paperPnlCalendarMeta">--</span>
+          </div>
+          <div class="pnl-calendar-toolbar">
+            <div class="seg" id="paperCalendarUnitSeg">
+              <button class="is-active" data-calendar-unit="day">日</button>
+              <button data-calendar-unit="month">月</button>
+              <button data-calendar-unit="year">年</button>
+            </div>
+            <div class="seg" id="paperCalendarMetricSeg">
+              <button class="is-active" data-calendar-metric="amount">金额</button>
+              <button data-calendar-metric="rate">收益率</button>
+            </div>
+            <div class="pnl-calendar-nav" id="paperCalendarNav"></div>
+          </div>
+        </div>
+        <div class="fund-summary-grid paper-pnl-kpis" id="paperPnlKpis"></div>
+        <div id="paperPnlCalendar"><div class="empty small">成交后这里按日 / 月 / 年显示盈亏日历。</div></div>
+        <div class="paper-pnl-chart" id="paperPnlChart"></div>
+        <div id="paperPnlBars"></div>
+        <p class="muted small mt12" id="paperPnlCalendarNote">盈亏日历从第一笔模拟成交开始记录，入金不计入当日盈亏。</p>
+      </article>
+
+      <!-- v2.11.0：个股累计收益（卖出后累计已实现，清仓仍保留） -->
+      <article class="panel" id="paperRealizedPanel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">REALIZED P&amp;L</div>
+            <h3>个股累计收益 · 卖出后累计</h3>
+            <span class="muted small" id="paperRealizedMeta">--</span>
+          </div>
+          <span class="muted small">清仓的标的也会保留累计金额与收益率</span>
+        </div>
+        <div id="paperRealizedTable"></div>
+        <p class="muted small mt12" id="paperRealizedNote">--</p>
+      </article>
+
       <article class="panel">
         <div class="panel-head"><div><h3>我的自选</h3><span class="muted small" id="watchCount">0 只</span><span class="muted small" style="margin-left:10px">拖动行或点击 ↑↓ 排序（手机长按行拖动）</span></div><button class="text-link" id="exportWatch">导出 JSON</button></div>
         <div id="watchTable"></div>
@@ -1542,7 +1584,7 @@
   <div id="toastRoot" class="toasts" aria-live="polite"></div>
 
   <script src="/vendor/echarts.min.js"></script>
-  <script type="module" src="/js/app.js?v=2.10.7"></script>
+  <script type="module" src="/js/app.js?v=2.11.0"></script>
   <script>
     // PWA：注册「网络优先」的 Service Worker（发版后刷新即拿到新版本，离线时回退缓存壳）
     // file:// 打开时跳过，避免在本地直接双击 HTML 时报错。

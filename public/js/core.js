@@ -2,7 +2,11 @@
    版本号、本地存储键、账号命名空间、按账号读写的 localStorage、全局 state。
    视图模块可以 import { state } 与这些读写函数，不再依赖 app.js。 */
 
-const APP_VERSION = '2.10.7';
+const APP_VERSION = '2.11.0';
+
+// v2.11.0：模拟交易的逐日盈亏（盈亏日历 / 资产曲线）与个股累计已实现收益。
+// 服务端 /api/paper/pnl 给「首笔成交以来」的逐日行，前端只负责叠加今日实时点。
+const PAPER_PNL_DEFAULT_DAYS = 800;
 
 // v2.10.7：v2.10.0 之前的版本不记建仓日，老持仓统一按 2026-11-01 作为建仓日（用户 2026-11-22 要求）。
 // 与服务端 lib/store.js 的 LEGACY_ADDED_AT 保持一致；盈亏日历 / 统计都按它裁剪。
@@ -246,6 +250,15 @@ const state = {
   paperRankSort: 'total',
   // v2.9.0：排行榜默认收起（用户要求「默认不显示，点按钮再展开」）
   paperRankOpen: false,
+  // v2.11.0：模拟盘盈亏日历 / 资产曲线 / 个股累计收益 / 排行榜持仓详情
+  paperPnl: null,
+  paperPnlAt: 0,
+  paperCalendarUnit: 'day',
+  paperCalendarMetric: 'amount',
+  paperCalendarYearMonth: '',
+  paperCalendarYear: '',
+  paperDetail: null,
+  paperDetailAt: 0,
   // v2.9.0：模拟买卖弹窗的当前标的与报价（打开弹窗时重置）
   paperTrade: null,
   tl: { events: [], playing: false, speed: 120, pos: 565, raf: null, last: 0, lastChart: 0 },
