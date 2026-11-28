@@ -3655,13 +3655,14 @@ tr.is-dim td { opacity: .62; }
   .paper-rank-table th:nth-child(3), .paper-rank-table td:nth-child(3) { box-shadow: 6px 0 8px -6px rgba(0, 0, 0, .6); }
 }
 
-/* 自动交易子窗口：面板整体搬进弹窗，去掉原面板的边框与内边距 */
+/* 自动交易子窗口：条件单 / 网格 / 定投 / 跟单 / 持仓预警只在弹窗里渲染（v2.15.3） */
 .paper-auto-modal { width: min(860px, 100%); max-height: 88vh; overflow-y: auto; }
 .paper-auto-modal-note { margin: 0 0 8px; }
-.paper-auto-modal-host > .panel { margin: 0; padding: 0; border: 0; background: transparent; }
-.paper-auto-modal-host > .panel > .panel-head > div:first-child { display: none; }
+.paper-auto-modal-seg { display: flex; flex-wrap: wrap; margin: 0 0 10px; }
+.paper-auto-modal-body { min-height: 120px; }
 @media (max-width: 780px) {
   .paper-auto-modal { max-height: 92vh; }
+  .paper-auto-modal-seg button { padding: 8px 10px; }
 }
 
 /* 「?」气泡：JS 在展开时把它临时挂到 body 上并用 position:fixed 定位，

@@ -2,19 +2,19 @@
    ---------------------------------------------------------------
    只负责 DOM：多份持仓 TAB、今日盈亏 TOP5、盈亏日历、组合 vs 上证。
    取数仍在 app.js；纯计算在 views/fundpnl.js。 */
-import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.15.2';
-import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc, setNoteTip } from '../util.js?v=2.15.2';
-import { $, $$ } from '../dom.js?v=2.15.2';
-import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.15.2';
-import { fundDayBasis } from './funds.js?v=2.15.2';
+import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.15.3';
+import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc, setNoteTip } from '../util.js?v=2.15.3';
+import { $, $$ } from '../dom.js?v=2.15.3';
+import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.15.3';
+import { fundDayBasis } from './funds.js?v=2.15.3';
 import {
   computeFundDailyPnl,
   fundCalendarBuckets,
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './fundpnl.js?v=2.15.2';
-import { calendarGridHtml } from './pnlcalendar.js?v=2.15.2';
+} from './fundpnl.js?v=2.15.3';
+import { calendarGridHtml } from './pnlcalendar.js?v=2.15.3';
 
 export function activePortfolio() {
   const list = state.portfolios || [];

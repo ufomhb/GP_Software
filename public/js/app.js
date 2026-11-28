@@ -26,7 +26,7 @@ import {
   intradayCompareChart,
   compareTrendChart,
   COLORS,
-} from './charts.js?v=2.15.2';
+} from './charts.js?v=2.15.3';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -46,11 +46,11 @@ import {
   timeText,
   hintIcon,
   setNoteTip,
-} from './util.js?v=2.15.2';
+} from './util.js?v=2.15.3';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.15.2';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.15.2';
+import { $, $$, toast, debounce } from './dom.js?v=2.15.3';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.15.3';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -63,7 +63,7 @@ import {
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.15.2';
+} from './core.js?v=2.15.3';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -80,7 +80,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.15.2';
+} from './views/funds.js?v=2.15.3';
 
 // 基金页新增子页渲染（v2.10.0：涨跌分布 / 板块总览 / 场外基金四榜，见 views/fundpanes.js）
 import {
@@ -90,7 +90,7 @@ import {
   renderFundBoard,
   renderFundBoardCompareBar,
   sortFundThemes,
-} from './views/fundpanes.js?v=2.15.2';
+} from './views/fundpanes.js?v=2.15.3';
 
 // 自选基金：多组合 / 今日 TOP5 / 盈亏日历 / 组合 vs 上证（v2.10.0）
 import {
@@ -100,7 +100,7 @@ import {
   renderFundVsIndex,
   activePortfolio,
   activeHoldings,
-} from './views/fundwatch.js?v=2.15.2';
+} from './views/fundwatch.js?v=2.15.3';
 import {
   computeFundPnl,
   computeFundDailyPnl,
@@ -112,7 +112,7 @@ import {
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './views/fundpnl.js?v=2.15.2';
+} from './views/fundpnl.js?v=2.15.3';
 
 // 模拟盘盈亏日历 / 资产曲线 / 个股累计收益（v2.11.0，见 views/paperpnl.js）
 import {
@@ -122,7 +122,7 @@ import {
   paperCalendarBuckets,
   paperPnlSummary,
   paperMonthlyBars,
-} from './views/paperpnl.js?v=2.15.2';
+} from './views/paperpnl.js?v=2.15.3';
 
 // 模拟盘自动化：委托 / 条件单 / 网格定投 / 跟单 / 持仓预警 / 复盘（v2.12.0，见 views/paperauto.js）
 import {
@@ -131,7 +131,7 @@ import {
   renderPaperReview,
   paperOrderStatusLabel,
   conditionText,
-} from './views/paperauto.js?v=2.15.2';
+} from './views/paperauto.js?v=2.15.3';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -141,7 +141,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.15.2';
+} from './views/market.js?v=2.15.3';
 
 
 /* =========================================================
@@ -317,8 +317,6 @@ async function getKlineCached(secid, klt = 101, limit = 140, fqt = null) {
 
 function mountOverlay(html, className = '') {
   const root = $('#overlayRoot');
-  // 自动交易面板若正被搬在弹窗里，换弹窗前先搬回页面，避免随 innerHTML 一起被销毁
-  restorePaperAutoPanel(root);
   // 新建基座会顶掉之前的所有叠加层（例如多个弹窗互跳时），避免残留挡视线
   root.innerHTML = `<div class="overlay ${className}">${html}</div>`;
   document.body.style.overflow = 'hidden';
@@ -368,13 +366,11 @@ function closeOverlay() {
         });
       }
     } catch { /* 释放失败不影响关闭 */ }
-    // v2.15.2：自动交易面板在弹层里时先搬回页面再移除弹层
-    restorePaperAutoPanel(layer);
     layer.remove();
     // v2.14.0：叠层下单弹窗关闭后清掉临时标的；持仓详情关闭后清掉详情状态
     if (!root.querySelector('#paperForm')) state.paperTrade = null;
     if (!root.querySelector('.paper-holding-modal')) state.paperHolding = null;
-    // v2.15.2：如果移除的是最后一个弹层（没有 mountOverlay 基座，例如直接从页面打开
+    // v2.15.3：如果移除的是最后一个弹层（没有 mountOverlay 基座，例如直接从页面打开
     // 持仓详情再关闭），必须把 body 的滚动锁恢复，否则主画面纵向滚动条失效。
     if (!root.querySelector('.overlay')) {
       document.body.style.overflow = '';
@@ -386,8 +382,6 @@ function closeOverlay() {
     }
     return;
   }
-  // v2.15.2：基座弹窗关闭前把自动交易面板搬回页面
-  restorePaperAutoPanel(root);
   root.innerHTML = '';
   document.body.style.overflow = '';
   state.paperHolding = null;
@@ -4016,15 +4010,8 @@ function renderPaper() {
   renderPaperReview();
   if (d.trades && d.trades.length && !state.paperPnl && !state.loading.has('paperpnl')) loadPaperPnl();
   if (d.trades && d.trades.length && !state.paperReview && !state.loading.has('paperreview')) loadPaperReview();
-  const autoSeg = $('#paperAutoSeg');
-  if (autoSeg) {
-    autoSeg.addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-paper-auto-tab]');
-      if (!btn) return;
-      state.paperAutoTab = btn.dataset.paperAutoTab;
-      renderPaperAuto({ reload: () => loadPaper(true) });
-    });
-  }
+  // v2.15.3：自动交易面板只存在于「自动交易」子窗口里，主界面不再常驻；
+  // 子窗口里的 tab 切换监听由 openPaperAutoModal 里的 bindPaperAutoSeg() 负责。
   // v2.9.0：排行榜默认收起，点按钮才请求并显示（用户要求）
   const rankBtn = $('#paperRankToggle');
   if (rankBtn) {
@@ -4048,54 +4035,50 @@ function renderPaper() {
 }
 
 /* =========================================================
-   自动交易子窗口（v2.15.2）
+   自动交易子窗口（v2.15.3）
    ---------------------------------------------------------
-   把页面上的 #paperAutoPanel 临时搬进弹窗：同一份 DOM、同一批事件监听，
-   关闭时按注释锚点搬回原位。这样不用复制一套表单（id 不能重复）。
+   条件单 / 网格 / 定投 / 跟单 / 持仓预警整块只在子窗口里出现（主界面已移除，
+   用户要求）：打开时按需生成 #paperAutoSeg + #paperAutoBody，关闭随弹层销毁。
    ========================================================= */
-let paperAutoHomeAnchor = null;
+const PAPER_AUTO_TABS = [
+  ['condition', '条件单'],
+  ['plan', '网格 / 定投'],
+  ['follow', '跟单'],
+  ['alert', '持仓预警'],
+];
 
-function detachPaperAutoPanel(host) {
-  const panel = $('#paperAutoPanel');
-  if (!panel || !host || paperAutoHomeAnchor) return;
-  const anchor = document.createComment('paper-auto-panel-home');
-  panel.parentNode.insertBefore(anchor, panel);
-  paperAutoHomeAnchor = anchor;
-  panel.classList.add('in-modal');
-  host.appendChild(panel);
-}
-
-/** 把搬进弹窗的自动交易面板搬回页面；传 when 时只在面板位于它内部时搬 */
-function restorePaperAutoPanel(when) {
-  const panel = $('#paperAutoPanel');
-  if (!panel || !panel.classList.contains('in-modal')) return;
-  if (when && !when.contains(panel)) return;
-  panel.classList.remove('in-modal');
-  const anchor = paperAutoHomeAnchor;
-  if (anchor && anchor.isConnected) anchor.replaceWith(panel);
-  else {
-    const view = $('#view-paper') || document.body;
-    view.appendChild(panel);
-  }
-  paperAutoHomeAnchor = null;
+function bindPaperAutoSeg() {
+  const seg = $('#paperAutoSeg');
+  if (!seg || seg.dataset.bound === '1') return;
+  seg.dataset.bound = '1';
+  seg.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-paper-auto-tab]');
+    if (!btn) return;
+    state.paperAutoTab = btn.dataset.paperAutoTab;
+    renderPaperAuto({ reload: () => loadPaper(true) });
+  });
 }
 
 function openPaperAutoModal() {
-  if ($('#paperAutoModalHost')) return;
+  if ($('#paperAutoBody')) return; // 已经打开
   const root = $('#overlayRoot');
   if (!root) return;
+  const tab = PAPER_AUTO_TABS.some(([key]) => key === state.paperAutoTab) ? state.paperAutoTab : 'condition';
   const html = `<div class="modal modal-md paper-auto-modal">
     <div class="modal-head">
       <div class="modal-title"><h2>自动交易</h2><span class="code">条件单 / 网格 / 定投 / 跟单 / 持仓预警</span></div>
       <button class="modal-close" data-close>×</button>
     </div>
     <p class="muted small paper-auto-modal-note">服务端每分钟执行一次，关掉页面也生效；在这里改完直接关闭即可。</p>
-    <div id="paperAutoModalHost" class="paper-auto-modal-host"></div>
+    <div class="seg paper-auto-modal-seg" id="paperAutoSeg" role="tablist">
+      ${PAPER_AUTO_TABS.map(([key, label]) => `<button type="button" data-paper-auto-tab="${key}" class="${tab === key ? 'is-active' : ''}" role="tab" aria-selected="${tab === key ? 'true' : 'false'}">${label}</button>`).join('')}
+    </div>
+    <div id="paperAutoBody" class="paper-auto-modal-body"><div class="empty small">加载…</div></div>
   </div>`;
   const overlay = root.querySelector('.overlay') ? pushOverlay(html) : mountOverlay(html);
   if (!overlay) return;
-  detachPaperAutoPanel(overlay.querySelector('#paperAutoModalHost'));
-  // 打开时按最新账户重绘一次（列表与「标的」下拉都取自 state.paper）
+  bindPaperAutoSeg();
+  // 打开时按最新账户渲染一次（列表与「标的」下拉都取自 state.paper）
   renderPaperAuto({ reload: () => loadPaper(true) });
 }
 
@@ -4150,7 +4133,7 @@ function renderPaperRanking() {
   const me = state.auth && state.auth.username;
   const rankRows = items.map((item, i) => {
     const heldItems = (item.positions || []).slice(0, 3);
-    // v2.15.2：手机上「持仓」列只留第一只（否则一行里 3 只标的会把整行撑到 150px，
+    // v2.15.3：手机上「持仓」列只留第一只（否则一行里 3 只标的会把整行撑到 150px，
     // 固定的前三列跟着出现大片空白），其余数量用「共 N 只」提示，完整清单在悬浮 / 看持仓里。
     const held = heldItems.length
       ? `<div class="paper-rank-helds">${heldItems.map((p) => `<span class="paper-rank-held">${esc(cleanName(p.name) || p.code)} <span class="t-sub">${nf(p.shares, 0)} 股${p.priceMode === 'prevClose' ? ' · 昨收' : ''}</span>${(item.positionCount || 0) > 1 && p === heldItems[0] ? `<span class="paper-rank-more"> · 共 ${item.positionCount} 只</span>` : ''}</span>`).join('')}</div>`
@@ -5046,7 +5029,7 @@ async function renderPaperHoldingChart() {
     const candles = (k && k.candles) || [];
     if (candles.length < 2) { box.innerHTML = '<div class="empty small">暂无 K 线数据</div>'; return; }
     candleChart(box, k, {
-      // v2.15.2：五日默认铺满 5 个交易日（原来默认只显示后 40%，要手动缩小才看全）
+      // v2.15.3：五日默认铺满 5 个交易日（原来默认只显示后 40%，要手动缩小才看全）
       zoomStart: tab === 'five' ? 0 : 55,
       indicator: 'none',
       marks: paperHoldingMarks(h.secid, tab, candles),
@@ -5084,7 +5067,7 @@ function openPaperHolding(secid, name, code) {
       <div id="paperHoldingChart" class="modal-chart paper-holding-chart"></div>
       <p class="muted small paper-holding-legend"><span class="tag in">B</span> 买入点 <span class="tag out">S</span> 卖出点 · 分时只标注今日成交；五日 / 日K / 月K 标注历史成交。分时页可直接下单，成交后本页自动刷新。</p>
     </div>`;
-  // v2.15.2：从页面直接打开时没有下层弹窗，用 mountOverlay 做基座（关闭时会恢复滚动）；
+  // v2.15.3：从页面直接打开时没有下层弹窗，用 mountOverlay 做基座（关闭时会恢复滚动）；
   // 只有在别的弹窗之上打开才用叠加层，避免把下层弹窗顶掉。
   const root = $('#overlayRoot');
   const overlay = root && root.querySelector('.overlay') ? pushOverlay(holdingHtml) : mountOverlay(holdingHtml);
@@ -10648,8 +10631,8 @@ export {
   // v2.14.0：持仓个股详情（分时 / 五日 / 日K / 月K + 买卖点）与自选股直接买入
   openPaperHolding, paperHoldingMarks, paperHoldingKpisHtml, renderPaperHoldingChart,
   refreshPaperHoldingHeader, openPaperBuyFromWatch,
-  // v2.15.2：模拟买入旁边的「自动交易」子窗口
-  openPaperAutoModal, restorePaperAutoPanel,
+  // v2.15.3：模拟买入旁边的「自动交易」子窗口
+  openPaperAutoModal,
   // v2.7.0：叠层（个股详情之上再开 F10 / 资讯）与席位明细区块
   mountOverlay, pushOverlay, topLayer, closeOverlay, renderSeatsBlock, openStrategyInNewTab,
   // v2.10.0：基金页新增子页 + 自选基金多组合 / 盈亏日历 / 组合对比（供 dom-smoke 直接渲染与断言）

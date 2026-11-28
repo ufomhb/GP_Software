@@ -1,5 +1,17 @@
 [
   {
+    "version": "2.15.3",
+    "date": "2026-11-28",
+    "title": "主界面移除常驻的自动交易面板（已收进「自动交易」子窗口）",
+    "items": [
+      "用户要求：条件单 / 网格 / 定投 / 跟单 / 持仓预警整块已经从「自动交易」按钮的子窗口里提供了，主界面不再重复显示这一大块。",
+      "做法：从 index.html 删掉 article#paperAutoPanel；openPaperAutoModal 每次按需在子窗口里生成 #paperAutoSeg（4 个 TAB）与 #paperAutoBody，关闭随弹层销毁；tab 切换事件改由 bindPaperAutoSeg() 绑定，不再依赖主界面元素。",
+      "顺带移除 v2.15.0 的「把页面面板搬进弹窗 / 关闭再搬回」机制（detachPaperAutoPanel / restorePaperAutoPanel 及 mountOverlay、closeOverlay 里的恢复调用），逻辑更简单，也不再有面板搬动时的状态残留。",
+      "主界面仍保留「模拟买入」「自动交易」两个按钮与委托、盈亏日历、累计收益、复盘、排行榜等面板。",
+      "测试：dom-smoke 99 项（新增「主界面无自动交易面板 / 子窗口生成 / 切 TAB 出表单 / 关闭即销毁」断言），npm test 391 项（389 通过 / 2 跳过）全绿；线上 390×844 实测通过。"
+    ]
+  },
+  {
     "version": "2.15.2",
     "date": "2026-11-28",
     "title": "修复 26 处模板插值缺 $（提示语 / 板块资金 / 组合建议里出现花括号原文）",

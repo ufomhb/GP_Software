@@ -209,6 +209,15 @@ npm run selfcheck                         # 安全基线 39 项 + 存储层 23 �
 - 前端渲染约定：**外部文本进 `innerHTML` 前必须 `esc()`；进 `href`/`src` 前必须再过 `safeUrl()`**（`esc` 挡不住 `javascript:` 协议）。2026-11-15 审计了 225 处模板插值，35 处文本型全部安全，并补了 `safeUrl` 覆盖快讯链接等 2 处 href。
 - CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
 
+### v2.15.3 更新（2026-11-28）
+
+> 主界面移除常驻的「自动交易 · 条件单 / 网格 / 定投 / 跟单 / 持仓预警」面板——它已经在「自动交易」按钮的子窗口里。
+
+- `index.html` 删掉 `article#paperAutoPanel`；`openPaperAutoModal()` 每次按需在弹窗里生成 `#paperAutoSeg`（四个 TAB）与 `#paperAutoBody`，关闭随弹层销毁；TAB 切换改由 `bindPaperAutoSeg()` 绑定（不再依赖主界面元素）。
+- 移除 v2.15.0 的「把页面面板搬进弹窗、关闭再搬回」机制（`detachPaperAutoPanel` / `restorePaperAutoPanel` 及 `mountOverlay` / `closeOverlay` 里的恢复调用），少一套状态，不会出现面板搬动残留。
+- 主界面仍保留「模拟买入」「自动交易」按钮，以及持仓、最近成交、盈亏日历、个股累计收益、委托、复盘、排行榜。
+- 测试：`dom-smoke` 99 项（主界面无面板 / 子窗口生成 / 切 TAB 出表单 / 关闭即销毁），`npm test` 391 项全绿。
+
 ### v2.15.2 更新（2026-11-28）
 
 > 排查说明文字时发现一批早就存在的模板字符串 bug：该写 `${...}` 的地方写成了 `{...}`，页面上直接显示花括号原文。

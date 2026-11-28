@@ -1103,12 +1103,15 @@ test('DOM：导航拆成自选基金 / 自选股票 / 模拟交易，基金页�
   assert.ok(document.querySelector('[data-goto="fundwatch"]'), '基金页要有跳到自选基金的入口');
 });
 
-test('DOM：v2.13.0 模拟交易板块包含全部模拟盘面板，两个板块互相有入口', () => {
+test('DOM：v2.13.0 模拟交易板块包含常驻面板，自动交易只在子窗口里（v2.15.3）', () => {
   const paperView = document.querySelector('#view-paper');
   assert.ok(paperView, '缺少 #view-paper');
-  for (const id of ['paperPanel', 'paperPnlCalendarPanel', 'paperRealizedPanel', 'paperOrderPanel', 'paperAutoPanel', 'paperReviewPanel']) {
+  for (const id of ['paperPanel', 'paperPnlCalendarPanel', 'paperRealizedPanel', 'paperOrderPanel', 'paperReviewPanel']) {
     assert.ok(paperView.querySelector(`#${id}`), `模拟交易板块缺少 #${id}`);
   }
+  // v2.15.3：自动交易整块移进「自动交易」子窗口，主界面不再常驻
+  assert.equal(paperView.querySelector('#paperAutoPanel'), null, '主界面不该再有自动交易面板');
+  assert.equal(document.querySelector('#paperAutoSeg'), null, '主界面不该再有自动交易 TAB');
   // 自选股票那边连盈亏日历 / 委托 / 自动交易 / 复盘都不该留下
   for (const id of ['paperPnlCalendarPanel', 'paperOrderPanel', 'paperAutoPanel', 'paperReviewPanel']) {
     assert.equal(document.querySelector(`#view-stockwatch #${id}`), null, `自选股票里不该有 #${id}`);
@@ -2297,10 +2300,13 @@ test('DOM：v2.11.0 排行榜每行可点开持仓详情，详情含完整持仓
    v2.12.0：委托 / 自动交易 / 复盘 / 排行榜周期列
    ========================================================= */
 
-test('DOM：v2.12.0 index.html 有委托、自动交易、复盘三个新面板', () => {
-  for (const id of ['#paperOrderPanel', '#paperOrderBody', '#paperOrderMeta', '#paperAutoPanel', '#paperAutoSeg', '#paperAutoBody', '#paperReviewPanel', '#paperReviewBody', '#paperReviewChart']) {
+test('DOM：v2.12.0 委托与复盘面板常驻，自动交易改成子窗口（v2.15.3）', () => {
+  for (const id of ['#paperOrderPanel', '#paperOrderBody', '#paperOrderMeta', '#paperReviewPanel', '#paperReviewBody', '#paperReviewChart']) {
     assert.ok(document.querySelector(id), `缺少 ${id}`);
   }
+  assert.equal(document.querySelector('#paperAutoPanel'), null, '主页面的自动交易面板已移除');
+  assert.equal(document.querySelector('#paperAutoBody'), null, '主页面的自动交易内容已移除');
+  assert.equal(document.querySelector('#paperAutoSeg'), null, '主页面的自动交易 TAB 已移除');
 });
 
 test('DOM：v2.12.0 委托面板显示委托价 / 成交进度 / 撤单按钮，名称被转义', () => {
@@ -2347,9 +2353,12 @@ test('DOM：v2.12.0 自动交易四个 TAB 都能渲染（条件单 / 网格定�
   };
   app.state.paper = paper;
 
+  // v2.15.3：自动交易只在子窗口里，先打开子窗口再逐个 TAB 渲染
   app.state.paperAutoTab = 'condition';
+  app.openPaperAutoModal();
   app.renderPaperAuto();
   let box = document.querySelector('#paperAutoBody');
+  assert.ok(box && box.closest('.paper-auto-modal'), '自动交易内容要在子窗口里');
   assert.match(box.textContent, /浮亏 ≥ 5\.00%/);
   assert.ok(box.querySelector('[data-paper-cancel-cond]'), '监控中的条件单要能取消');
   assert.ok(box.querySelector('#paperCondForm'), '缺少条件单表单');
@@ -2376,6 +2385,7 @@ test('DOM：v2.12.0 自动交易四个 TAB 都能渲染（条件单 / 网格定�
   assert.match(box.textContent, /持仓收益率 高于 8\.00%/);
   assert.ok(box.querySelector('#paperAlertEnabled'));
 
+  app.closeOverlay();
   app.state.paper = prevPaper;
   app.state.paperAutoTab = prevTab;
   app.state.paperRankSort = prevSort;
@@ -2644,27 +2654,32 @@ test('v2.15.0 多日分时 K 线：只标日期 + 按交易日画竖向分割线
   el.remove();
 });
 
-test('DOM：v2.15.0 自动交易按钮在子窗口里打开同一份面板，关闭后归位', () => {
+test('DOM：v2.15.3 自动交易只在子窗口里出现，关闭后从页面移除', () => {
   const prev = app.state.paper;
+  const prevTab = app.state.paperAutoTab;
   app.state.paper = paperFixture(2);
   app.renderPaper();
   const btn = document.querySelector('#paperAutoBtn');
   assert.ok(btn, '模拟买入旁边要有「自动交易」按钮');
-  const panel = document.querySelector('#paperAutoPanel');
-  assert.ok(panel && panel.closest('#view-paper'), '面板默认在页面里');
+  assert.equal(document.querySelector('#paperAutoPanel'), null, '主界面不再常驻自动交易面板');
+  assert.equal(document.querySelector('#paperAutoBody'), null, '主界面不再渲染自动交易内容');
   btn.click();
   const modal = document.querySelector('.paper-auto-modal');
+  const body = document.querySelector('#paperAutoBody');
   assert.ok(modal, '点「自动交易」要打开子窗口');
-  const moved = document.querySelector('#paperAutoPanel');
-  assert.ok(modal.contains(moved), '面板要搬进子窗口');
-  assert.equal(document.querySelectorAll('#paperAutoPanel').length, 1, '页面里不能出现两份面板（id 不能重复）');
-  assert.ok(moved.querySelector('#paperAutoSeg'), '子窗口里保留条件单 / 网格 / 跟单 / 预警切换');
-  assert.ok(moved.querySelector('#paperAutoBody'), '子窗口里保留面板内容');
+  assert.ok(body && modal.contains(body), '自动交易内容要生成在子窗口里');
+  assert.equal(document.querySelectorAll('#paperAutoBody').length, 1, '页面里不能出现两份（id 不能重复）');
+  assert.ok(document.querySelector('#paperAutoSeg'), '子窗口里要有条件单 / 网格 / 跟单 / 预警切换');
+  // 子窗口里切换 TAB 仍然可用
+  document.querySelector('[data-paper-auto-tab="plan"]').click();
+  assert.ok(document.querySelector('#paperGridForm') && document.querySelector('#paperDcaForm'), '网格 / 定投表单要能切出来');
+  assert.ok(document.querySelector('[data-paper-auto-tab="plan"]').classList.contains('is-active'));
   app.closeOverlay();
-  assert.equal(document.querySelectorAll('#paperAutoPanel').length, 1, '关闭后仍只有一份面板');
-  assert.ok(document.querySelector('#paperAutoPanel').closest('#view-paper'), '关闭后搬回页面');
-  assert.equal(document.querySelector('.paper-auto-modal'), null);
+  assert.equal(document.querySelector('.paper-auto-modal'), null, '关闭后子窗口移除');
+  assert.equal(document.querySelector('#paperAutoBody'), null, '自动交易内容随子窗口一起移除');
+  assert.equal(document.querySelector('#paperAutoPanel'), null, '主界面依旧没有常驻面板');
   app.state.paper = prev;
+  app.state.paperAutoTab = prevTab;
 });
 
 test('DOM：v2.15.0 说明文字收进 ? 图标，悬停气泡定位到 body 且不超出屏幕', async () => {
