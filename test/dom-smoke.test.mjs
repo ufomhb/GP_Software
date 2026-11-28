@@ -2594,3 +2594,20 @@ test('DOM：v2.14.0 模拟买入弹窗直接列出自选股（超过 6 只也能
   app.state.paper = prevPaper;
   app.state.watchlist = prevWatch;
 });
+
+test('DOM：v2.14.0 自选股「买」在账户未加载时先拉账户，再打开预填好标的的下单弹窗', async () => {
+  const prevPaper = app.state.paper;
+  const prevWatch = app.state.watchlist;
+  const prevWatchData = app.state.watchData;
+  app.state.paper = null;
+  app.state.watchlist = [{ secid: '1.600519', code: '600519', name: '贵州茅台' }];
+  app.state.watchData = { items: [{ quote: { secid: '1.600519', code: '600519', name: '贵州茅台', price: 1500 } }] };
+  await app.openPaperBuyFromWatch('1.600519');
+  const form = document.querySelector('#paperForm');
+  assert.ok(form, '应打开模拟买入弹窗');
+  assert.match(document.querySelector('#paperSymbol').value, /贵州茅台/);
+  app.closeOverlay();
+  app.state.paper = prevPaper;
+  app.state.watchlist = prevWatch;
+  app.state.watchData = prevWatchData;
+});

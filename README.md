@@ -222,7 +222,7 @@ npm run selfcheck                         # 安全基线 39 项 + 存储层 23 �
 - **客户端移除重置**：删掉 `#paperResetBtn` 与前端调用；`POST /api/paper/reset` 对普通用户返回 403（「模拟账户只能由管理员在后台统一重置」），管理员继续用 `/api/admin/paper/reset`。
 - **说明收进 ? 图标**：`util.js` 新增 `hintIcon()` / `setNoteTip()`；交易规则、成交列表、排行榜、增量资金、条件单、网格定投、跟单、持仓预警、盈亏日历与复盘口径都改成「?」图标，桌面 hover、键盘 focus、手机点按都能展开，全文仍保留在 `aria-label`。
 - **手机端**：持仓详情弹窗全宽、图表 260px、tab 与买卖按钮加大触控区；排行周期标签、成交折叠、持仓买入/卖出并排都不再依赖横向滚动。
-- **测试**：`auth` 新增 SQLite 模式 remember 跨日回归（直接读库确认 `remember=1`，把 `created_at` 改到昨天后 `/api/auth/me` 仍有效）；`dom-smoke` 增至 **92 项**（买入按钮 / 成交折叠 / 详情四 tab / 买卖点映射 / 手机周期标签 / 自选股买入）；`npm test` 全绿。
+- **测试**：`auth` 新增 SQLite 模式 remember 跨日回归（直接读库确认 `remember=1`，把 `created_at` 改到昨天后 `/api/auth/me` 仍有效）；`dom-smoke` 增至 **93 项**（买入按钮 / 成交折叠 / 详情四 tab / 买卖点映射 / 手机周期标签 / 自选股买入）；`npm test` 全绿。
 
 ### v2.13.1 更新（2026-11-23）
 

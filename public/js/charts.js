@@ -169,6 +169,9 @@ export function candleChart(el, kline, options = {}) {
   const zoomState = options.zoomStartValue && options.zoomEndValue
     ? { startValue: options.zoomStartValue, endValue: options.zoomEndValue }
     : { start: options.zoomStart ?? 30, end: options.zoomEnd ?? 100 };
+  // v2.14.0：手机弹窗里的 K 线高度只有 ~260px，量能副图高度 ~30px；
+  // 默认 5 条刻度会叠在一起，窄高度改成 2 条。
+  const compactHeight = (Number(el.clientHeight) || 400) < 340;
 
   /*
    * 副图指标：macd / kdj / boll / none（默认 macd）。
@@ -358,6 +361,7 @@ export function candleChart(el, kline, options = {}) {
       if (i === volIndex) {
         return {
           ...axis,
+          splitNumber: compactHeight ? 2 : 3,
           axisLabel: {
             color: C.muted,
             fontSize: 8,

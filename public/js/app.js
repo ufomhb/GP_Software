@@ -357,6 +357,15 @@ function closeOverlay() {
   // 叠加层：只关最上面那层，下面那层（个股详情等）继续留着
   const layer = topLayer();
   if (layer) {
+    // v2.14.0：移除持仓详情叠层前释放 ECharts 实例，避免每次开合都留一份挂在已删除 DOM 上的实例
+    try {
+      if (typeof window !== 'undefined' && window.echarts && window.echarts.getInstanceByDom) {
+        layer.querySelectorAll('.paper-holding-chart').forEach((el) => {
+          const inst = window.echarts.getInstanceByDom(el);
+          if (inst && typeof inst.dispose === 'function') inst.dispose();
+        });
+      }
+    } catch { /* 释放失败不影响关闭 */ }
     layer.remove();
     // v2.14.0：叠层下单弹窗关闭后清掉临时标的；持仓详情关闭后清掉详情状态
     if (!root.querySelector('#paperForm')) state.paperTrade = null;
@@ -4905,6 +4914,18 @@ function refreshPaperHoldingHeader() {
   if (sellBtn) sellBtn.disabled = !paperHoldingPosition(h.secid);
 }
 
+/** 清空图表容器前先 dispose 旧 ECharts 实例：只清 innerHTML 会让实例挂在已消失的 canvas 上，
+ *  下一次 setOption 找不到 DOM，表现为一直停在「正在加载图表…」（v2.14.0 修）。 */
+function resetPaperHoldingChart(box, text) {
+  if (!box) return;
+  try {
+    const inst = typeof window !== 'undefined' && window.echarts && window.echarts.getInstanceByDom
+      ? window.echarts.getInstanceByDom(box)
+      : null;
+    if (inst && typeof inst.dispose === 'function') inst.dispose();
+  } catch { /* 实例已释放等情况忽略 */ }
+  box.innerHTML = text;
+}
 async function renderPaperHoldingChart() {
   const h = state.paperHolding;
   const box = $('#paperHoldingChart');
@@ -4912,7 +4933,7 @@ async function renderPaperHoldingChart() {
   const tab = PAPER_HOLDING_TABS.some((x) => x.key === state.paperHoldingTab) ? state.paperHoldingTab : 'minute';
   const noteEl = $('#paperHoldingChartNote');
   if (noteEl) noteEl.textContent = '';
-  box.innerHTML = '<div class="empty small">正在加载图表…</div>';
+  resetPaperHoldingChart(box, '<div class="empty small">正在加载图表…</div>');
   try {
     if (tab === 'minute') {
       const todayKey = shanghaiTodayKey();
