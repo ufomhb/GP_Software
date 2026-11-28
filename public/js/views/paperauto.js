@@ -3,13 +3,13 @@
    委托单 / 条件单（止盈止损）/ 网格 / 定投 / 跟单 / 持仓预警 / 复盘报告。
    只负责 state → DOM 与少量按钮回调（小操作直接走 apiPost，成功后调 opts.reload），
    账本与撮合口径全部在服务端 src/services/paper-*.js。 */
-import { state } from '../core.js?v=2.15.3';
+import { state } from '../core.js?v=2.15.4';
 import {
   isNum, nf, signedFmt, toneClass, cleanName, esc, timeText, pctFmt, hintIcon, setNoteTip,
-} from '../util.js?v=2.15.3';
-import { $, $$, toast } from '../dom.js?v=2.15.3';
-import { apiPost } from '../api.js?v=2.15.3';
-import { fundPnlAreaChart } from '../charts.js?v=2.15.3';
+} from '../util.js?v=2.15.4';
+import { $, $$, toast } from '../dom.js?v=2.15.4';
+import { apiPost } from '../api.js?v=2.15.4';
+import { fundPnlAreaChart } from '../charts.js?v=2.15.4';
 
 const ORDER_STATUS_LABEL = {
   pending: '挂单中',

@@ -852,7 +852,12 @@ function periodStats({ account, totalNow, todayKey } = {}) {
     const injectedSince = round2(injectedUpTo(account, tk) - injectedUpTo(account, base.d));
     const baseValue = num(base.v);
     if (!(baseValue > 0)) return null;
-    return roundPct(((total - injectedSince - baseValue) / baseValue) * 100);
+    // v2.15.4：区间内追加的资金既要从分子里剔掉，也要摊进分母。
+    // 只剔分子会把收益率仍按「追加前的本金」放大：本金 100 万、中途加 200 万后
+    // 变成 330 万，按旧口径是 +30%（0.3/1），按资金加权口径应是 +10%（0.3/3）。
+    const invested = baseValue + injectedSince;
+    if (!(invested > 0)) return null;
+    return roundPct(((total - injectedSince - baseValue) / invested) * 100);
   };
   // 最大回撤：剔除入金后的净值曲线
   let peak = 0;

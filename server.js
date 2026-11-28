@@ -73,7 +73,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.15.3';
+const VERSION = '2.15.4';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -10040,7 +10040,11 @@ async function paperSweepAccount(user, { now = Date.now(), force = false } = {})
   const hasHistory0 = (snapshot.trades || []).length
     || Object.keys(snapshot.positions || {}).length
     || paperLedger.num(snapshot.capital && snapshot.capital.injected) > 0;
-  const needEquity = hasHistory0 && !(snapshot.equity && snapshot.equity[today]);
+  // v2.15.4：日终快照只在收盘后写。旧逻辑在 00:00 就给「当天」写一笔（当时拿到的还是
+  // 昨天的收盘价），而收盘后的更新又被 needEquity=false 提前 return 掉，导致整条权益曲线
+  // 比真实收盘晚一天——「今日收益率」会把一整个交易日的涨幅算到休市日上（如 +14.3%）。
+  const afterClose = now >= Date.parse(`${today}T15:00:00+08:00`);
+  const needEquity = hasHistory0 && afterClose && !(snapshot.equity && snapshot.equity[today]);
   if (!work.any && !corporateDue && !needEquity) {
     paperSweepAt.set(user.id, now);
     return { changed: false, trades: 0 };
@@ -10065,7 +10069,6 @@ async function paperSweepAccount(user, { now = Date.now(), force = false } = {})
   paperSweepAt.set(user.id, now);
   const cfg = loadPaperConfig();
   const t1 = cfg.trading.t1 !== false;
-  const afterClose = now >= Date.parse(`${today}T15:00:00+08:00`);
 
   return withPaperLock(() => {
     const account = getPaperAccount(user);
@@ -10245,7 +10248,8 @@ async function paperSweepAccount(user, { now = Date.now(), force = false } = {})
       const totals = paperLedger.accountTotals(account, qmap);
       const todayKey = today;
       const existing = (account.equity || {})[todayKey];
-      const need = existing === undefined || (afterClose && Math.abs(Number(existing) - totals.total) > 0.01);
+      // v2.15.4：只在收盘后写当日快照（盘中写入会把「昨天的收盘价」当成今天的日终值）
+      const need = afterClose && (existing === undefined || Math.abs(Number(existing) - totals.total) > 0.01);
       if (need) {
         account.equity = paperAuto.recordEquity(account, todayKey, totals.total).equity;
         changed = true;
@@ -10305,7 +10309,12 @@ async function paperSeedEquityFor(user) {
   const account = getPaperAccount(user);
   const hasTrades = (account.trades || []).length > 0 || Object.keys(account.positions || {}).length > 0;
   if (!hasTrades) return 0;
-  if (paperAuto.equitySeries(account).length >= PAPER_EQUITY_SEED_MIN_DAYS) return 0;
+  const series = paperAuto.equitySeries(account);
+  const lastSnap = series.length ? series[series.length - 1].d : '';
+  // v2.15.4：历史不足 20 天要补齐；已经很长但最近一次快照停在「前天及更早」也要补
+  // （例如 15:00 收盘那一刻服务正好没跑，第二天用逐日盈亏重建把缺的那天写回来）。
+  const staleGap = Boolean(lastSnap) && lastSnap < paperAuto.dateAddDays(today, -1);
+  if (series.length >= PAPER_EQUITY_SEED_MIN_DAYS && !staleGap) return 0;
   paperSeedTried.set(id, today);
   try {
     const pnl = await getPaperPnl(user, 400);
@@ -10339,6 +10348,64 @@ async function paperEquityBackfill(byId) {
     if (await paperSeedEquityFor(user)) seeded += 1;
   }
   return seeded;
+}
+
+/**
+ * v2.15.4：按成交流水 + 日线收盘价重建日终权益快照。
+ * - 修历史：旧逻辑在 00:00 写入「当天」（值还是昨天的收盘），收盘后又被提前 return 拦住，
+ *   导致整条曲线晚一天，「今日收益率」会把一个交易日的涨幅算到休市日；
+ * - 增量资金后：重建一次，让本周 / 本月 / 今年 / 回撤按新本金重新算。
+ * 今天不写重建值（盘中是估算）：收盘后由 60 秒 tick 写入；非交易日的今天用最近一个收盘值。
+ */
+async function rebuildPaperEquity(user, { days = 800 } = {}) {
+  if (!user) return 0;
+  const account = getPaperAccount(user);
+  if (!(account.trades || []).length) return 0;
+  const today = shanghaiToday();
+  const afterClose = Date.now() >= Date.parse(`${today}T15:00:00+08:00`);
+  const pnl = await getPaperPnl(user, days);
+  const rows = (pnl && pnl.rows) || [];
+  if (!rows.length) return 0;
+  const equity = {};
+  for (const row of rows) {
+    const d = String((row && row.d) || '').slice(0, 10);
+    const v = paperLedger.num(row && row.mv);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !(v > 0)) continue;
+    if (d === today) continue;
+    equity[d] = paperLedger.round2(v);
+  }
+  if (afterClose) {
+    const last = rows[rows.length - 1];
+    const v = paperLedger.num(last && last.mv);
+    if (v > 0) equity[today] = paperLedger.round2(v);
+  }
+  if (!Object.keys(equity).length) return 0;
+  const fresh = getPaperAccount(user);
+  savePaperAccount(user, { ...fresh, equity }, { touch: false });
+  return Object.keys(equity).length;
+}
+
+/** 重建所有（有模拟成交的）账户的日终权益；管理端「重算排行榜」与增量资金后调用 */
+async function rebuildAllPaperEquity({ onlyTraded = true } = {}) {
+  const owners = dataStore.listUserExtraOwners('paper').slice(0, 60);
+  const users = loadUsers().users || [];
+  const byId = new Map(users.map((u) => [String(u.id), u]));
+  let rebuilt = 0;
+  let skipped = 0;
+  let failed = 0;
+  for (const id of owners) {
+    const user = byId.get(String(id));
+    if (!user) { skipped += 1; continue; }
+    const acc = getPaperAccount(user);
+    if (onlyTraded && !(acc.trades || []).length) { skipped += 1; continue; }
+    try {
+      if (await rebuildPaperEquity(user)) rebuilt += 1;
+      else skipped += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  return { ok: true, rebuilt, skipped, failed, scanned: owners.length };
 }
 
 /* ---------------- 用户侧自动化接口 ---------------- */
@@ -10941,7 +11008,7 @@ async function injectPaperCapital(payload = {}) {
   const by = String(payload.by || '').slice(0, 40);
   const requestedId = String(payload.batchId || '').trim().slice(0, 64);
   const batchId = requestedId || `cap-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-  return withPaperLock(() => {
+  const result = withPaperLock(() => {
     const config = loadPaperConfig(true);
     const existed = (config.capitalBatches || []).find((b) => b.batchId === batchId);
     if (existed) return { ok: true, duplicate: true, ...existed };
@@ -10953,6 +11020,7 @@ async function injectPaperCapital(payload = {}) {
         || Object.keys(raw.positions || {}).length > 0;
     }) : users;
     let applied = 0;
+    const appliedUsers = [];
     const at = Date.now();
     for (const u of targets) {
       const account = getPaperAccount(u);
@@ -10960,13 +11028,28 @@ async function injectPaperCapital(payload = {}) {
       if (res.error) continue;
       savePaperAccount(u, res.account);
       applied += 1;
+      appliedUsers.push(u);
     }
     const batch = {
       batchId, at, amount, users: applied, total: paperLedger.round2(amount * applied), note, by, onlyTraded,
     };
     savePaperConfig({ capitalBatches: [...(config.capitalBatches || []), batch].slice(-20) });
-    return { ok: true, duplicate: false, ...batch };
+    return { ok: true, duplicate: false, ...batch, _appliedUsers: appliedUsers };
   });
+  const affected = result._appliedUsers || [];
+  delete result._appliedUsers;
+  // v2.15.4：增量资金后异步重建受影响账户的日终权益，
+  // 让本周 / 本月 / 今年与最大回撤按「新本金」重新计算（不阻塞接口响应）
+  if (!result.duplicate && affected.length) {
+    (async () => {
+      for (const u of affected.slice(0, 60)) {
+        try {
+          await rebuildPaperEquity(u);
+        } catch { /* 单个账户失败不影响其它账户 */ }
+      }
+    })().catch(() => {});
+  }
+  return result;
 }
 
 /* =========================================================
@@ -11146,6 +11229,8 @@ const httpRoutes = createHttpRoutes({
   // v2.12.0：模拟盘自动化（委托/条件单/网格定投/跟单/复盘/分红除权）
   paperSweepAccount,
   paperSeedEquityFor,
+  rebuildPaperEquity,
+  rebuildAllPaperEquity,
   cancelPaperOrder,
   createPaperCondition,
   cancelPaperCondition,

@@ -55,6 +55,7 @@ function createHttpRoutes(deps) {
     // v2.12.0：模拟盘自动化（委托/条件单/网格定投/跟单/复盘/分红除权）
     paperSweepAccount,
     paperSeedEquityFor,
+    rebuildAllPaperEquity,
     cancelPaperOrder,
     createPaperCondition,
     cancelPaperCondition,
@@ -504,6 +505,18 @@ async function handleAdmin(req, res, url) {
       reason: res.duplicate
         ? `增量资金批次重复提交（${res.batchId}，未重复执行）`
         : `增量资金：${res.users} 个账户各 +${res.amount} 元，共 ${res.total} 元（批次 ${res.batchId}）`,
+    });
+    return res;
+  }
+  // v2.15.4：按成交流水 + 日线收盘价重算日终权益（排行榜的本周 / 本月 / 今年 / 回撤）
+  if (p === '/api/admin/paper/rebuild-equity' && req.method === 'POST') {
+    const body = req.body || {};
+    const res = await rebuildAllPaperEquity({ onlyTraded: body.onlyTraded !== false });
+    recordLoginEvent(req, {
+      user: actor,
+      ok: true,
+      action: 'paper',
+      reason: `重算模拟盘日终权益：重建 ${res.rebuilt} 个账户，跳过 ${res.skipped}，失败 ${res.failed}`,
     });
     return res;
   }
