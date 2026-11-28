@@ -4842,7 +4842,7 @@ function paperHoldingPosition(secid) {
  * mode: minute（今日分钟）/ five（5 分钟）/ day（日）/ month（月）
  * 返回 [{ at, price, side }]，at 必须与 ECharts category 轴的值完全一致。
  */
-function paperHoldingMarks(secid, mode, candles) {
+function paperHoldingMarks(secid, mode, candles, dayKey) {
   const rows = (candles || []).map((c) => String(c.d));
   if (!rows.length) return [];
   const trades = ((state.paper && state.paper.trades) || [])
@@ -4852,7 +4852,7 @@ function paperHoldingMarks(secid, mode, candles) {
   if (!trades.length) return [];
   const keyOf = (text) => (mode === 'month' ? text.slice(0, 7) : mode === 'day' ? text.slice(0, 10) : text.slice(0, 16));
   const seriesKeys = rows.map(keyOf);
-  const today = shanghaiTodayKey();
+  const today = dayKey || shanghaiTodayKey();
   const marks = [];
   for (const t of trades) {
     const date = shanghaiDateKey(t.ts);
@@ -4910,22 +4910,41 @@ async function renderPaperHoldingChart() {
   const box = $('#paperHoldingChart');
   if (!h || !box) return;
   const tab = PAPER_HOLDING_TABS.some((x) => x.key === state.paperHoldingTab) ? state.paperHoldingTab : 'minute';
+  const noteEl = $('#paperHoldingChartNote');
+  if (noteEl) noteEl.textContent = '';
   box.innerHTML = '<div class="empty small">正在加载图表…</div>';
   try {
     if (tab === 'minute') {
-      const date = shanghaiTodayKey();
-      const data = await api(`/api/intraday?secid=${encodeURIComponent(h.secid)}&date=${encodeURIComponent(date)}`, 20000);
+      const todayKey = shanghaiTodayKey();
+      let dayKey = todayKey;
+      let data = null;
+      try {
+        data = await api(`/api/intraday?secid=${encodeURIComponent(h.secid)}&date=${encodeURIComponent(dayKey)}`, 20000);
+      } catch { data = null; }
+      if (!data || !((data.candles || []).length >= 2)) {
+        // 休市 / 当日无分时：退回最近一个交易日的分时，别只给一句「加载失败」
+        try {
+          const k = await getKlineCached(h.secid, 101, 10);
+          const candles = (k && k.candles) || [];
+          const last = candles.length ? String(candles[candles.length - 1].d).slice(0, 10) : '';
+          if (last && last !== dayKey) {
+            dayKey = last;
+            data = await api(`/api/intraday?secid=${encodeURIComponent(h.secid)}&date=${encodeURIComponent(dayKey)}`, 20000);
+          }
+        } catch { /* 退回失败时仍显示下面的空态 */ }
+      }
       if (!document.body.contains(box) || state.paperHolding !== h || state.paperHoldingTab !== 'minute') return;
+      if (noteEl && dayKey !== todayKey) noteEl.textContent = `今日休市 / 暂无今日分时，展示最近交易日 ${dayKey} 的分时`;
       const candles = (data && data.candles) || [];
       if (candles.length < 2) {
-        box.innerHTML = `<div class="empty small">暂无今日分时（可能未开盘或休市）${data && data.periodLabel ? ` · ${esc(data.periodLabel)}` : ''}</div>`;
+        box.innerHTML = `<div class="empty small">暂无分时（可能未开盘或休市）。切到「日K」可看历史走势。</div>`;
         return;
       }
       intradayChart(box, {
         candles,
         preClose: Number(data.preClose),
         fullSession: true,
-        marks: paperHoldingMarks(h.secid, 'minute', candles),
+        marks: paperHoldingMarks(h.secid, 'minute', candles, dayKey),
       });
       return;
     }
@@ -4968,6 +4987,7 @@ function openPaperHolding(secid, name, code) {
           <button class="btn small" type="button" id="paperHoldingSell" ${pos ? '' : 'disabled'} title="${pos ? '卖出这只持仓' : '当前没有可卖持仓'}">卖出</button>
         </div>
       </div>
+      <div class="paper-holding-chart-note muted small" id="paperHoldingChartNote"></div>
       <div id="paperHoldingChart" class="modal-chart paper-holding-chart"></div>
       <p class="muted small paper-holding-legend"><span class="tag in">B</span> 买入点 <span class="tag out">S</span> 卖出点 · 分时只标注今日成交；五日 / 日K / 月K 标注历史成交。分时页可直接下单，成交后本页自动刷新。</p>
     </div>`);

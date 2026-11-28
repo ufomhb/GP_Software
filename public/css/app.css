@@ -3606,10 +3606,6 @@ tr.is-dim td { opacity: .62; }
 .paper-rank-periods { display: none; }
 
 @media (max-width: 780px) {
-  .paper-rank-periods { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 4px; }
-  .paper-rank-periods .prp { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: #7f8fa8; }
-  .paper-rank-periods .prp i { font-style: normal; }
-
   .paper-pos-actions { gap: 8px; }
   .paper-pos-actions .text-link { padding: 4px 2px; min-height: 26px; }
 
@@ -3621,7 +3617,18 @@ tr.is-dim td { opacity: .62; }
   .paper-picks { max-height: 118px; }
 }
 
+/* 排行榜：周期列在 ≤720px 被隐藏，同一断点用标签补上（721–780 表格列可见，不重复） */
+@media (max-width: 720px) {
+  .paper-rank-periods { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 4px; }
+  .paper-rank-periods .prp { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: #7f8fa8; }
+  .paper-rank-periods .prp i { font-style: normal; }
+}
+
 /* v2.14.0：持仓行整行可点开图表详情（按钮仍优先） */
 .paper-pos-table tbody tr.is-clickable { cursor: pointer; }
 .paper-pos-table tbody tr.is-clickable:hover td { background: rgba(56, 189, 248, .05); }
 .paper-pos-table tbody tr.is-clickable .paper-pos-actions { cursor: default; }
+
+/* v2.14.0：休市时展示最近交易日分时的提示 */
+.paper-holding-chart-note { margin: 6px 0 2px; }
+.paper-holding-chart-note:empty { display: none; }

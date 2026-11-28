@@ -82,14 +82,20 @@ test('security：邀请码比较（空=放行，等值通过，不等拒绝，�
   assert.equal(security.inviteMatches(undefined, 'sesame'), false);
 });
 
-test('security：会话 Cookie（HTTPS 才加 Secure）', () => {
+test('security：会话 Cookie（HTTPS 才加 Secure，同时下发 Expires）', () => {
   const http = security.sessionCookie({ name: 'gp_sid', token: 't', maxAgeSec: 100, secure: false });
-  assert.match(http, /^gp_sid=t; Path=\/; HttpOnly; SameSite=Lax; Max-Age=100$/);
+  assert.match(http, /^gp_sid=t; Path=\/; HttpOnly; SameSite=Lax; Max-Age=100; Expires=.+GMT$/);
   assert.doesNotMatch(http, /Secure/);
+  // Expires 应约等于 100 秒后（个别 iOS PWA 只认 Expires）
+  const expires = http.match(/Expires=([^;]+)$/)[1];
+  const delta = new Date(expires).getTime() - Date.now();
+  assert.ok(delta > 90000 && delta <= 101000, `Expires 应约为 100 秒后，实际 ${delta}ms`);
   const https = security.sessionCookie({ name: 'gp_sid', token: 't', maxAgeSec: 100, secure: true });
   assert.match(https, /; Secure$/);
   const cleared = security.sessionCookie({ name: 'gp_sid', token: '', maxAgeSec: 0, secure: true });
   assert.match(cleared, /Max-Age=0/);
+  // 删除 Cookie 时 Expires 要落在过去，否则浏览器可能不删
+  assert.ok(new Date(cleared.match(/Expires=([^;]+)/)[1]).getTime() < Date.now());
   assert.equal(security.sessionCookie({ name: 'x', token: 'y', secure: false }), 'x=y; Path=/; HttpOnly; SameSite=Lax');
 });
 
