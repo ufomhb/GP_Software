@@ -13,7 +13,7 @@
   <meta name="description" content="寰球智投：A股、全球指数、期货、黄金白银实时行情，板块资金流向与规则化策略终端。">
   <title>寰球智投 · 全球行情与智能策略终端</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1320'/%3E%3Cpath d='M14 42 26 26l9 10 15-18' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=2.14.1">
+  <link rel="stylesheet" href="/css/app.css?v=2.15.0">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icon.svg">
 </head>
@@ -331,7 +331,7 @@
           <div id="csi300RatioLine" class="csi300-ratio-line"></div>
           <div id="csi300RatioFunds" class="csi300-fund-list"></div>
         </div>
-        <p class="muted small mt12">统计名称匹配的纯沪深300 ETF 规模合计占沪深300流通市值的比例；基金规模为最新披露的资产净值，不是盘中实时规模。</p>
+        <p class="muted small mt12" data-hint-note data-hint-label="规模占比口径">统计名称匹配的纯沪深300 ETF 规模合计占沪深300流通市值的比例；基金规模为最新披露的资产净值，不是盘中实时规模。</p>
       </article>
 
       <div class="rank-grid">
@@ -421,7 +421,7 @@
             <button class="text-link" data-goto="data">数据中心 →</button>
           </div>
           <div id="hkList" class="hk-list"></div>
-          <p class="muted small mt8">点任意一行查看分时与日 K；港股为延时行情，交易时段 09:30–16:00（香港时间）。</p>
+          <p class="muted small mt8" data-hint-note data-hint-label="港股说明">点任意一行查看分时与日 K；港股为延时行情，交易时段 09:30–16:00（香港时间）。</p>
         </article>
         <article class="panel">
           <div class="panel-head"><h3>全球交易时段</h3><span class="muted small">LOCAL</span></div>
@@ -507,7 +507,7 @@
           <div class="us-sector-chart" id="usSectorChart"></div>
           <div class="us-sector-list" id="usSectorList"></div>
         </div>
-        <p class="muted small mt12">资金流估算 = Σ(个股成交额 × 涨跌幅)，用价格变动 × 成交额刻画板块资金方向；ETF、ETN 与杠杆产品已剔除。该指标不是交易所披露的真实净流入，仅用于横向比较板块强弱。</p>
+        <p class="muted small mt12" data-hint-note data-hint-label="资金流口径">资金流估算 = Σ(个股成交额 × 涨跌幅)，用价格变动 × 成交额刻画板块资金方向；ETF、ETN 与杠杆产品已剔除。该指标不是交易所披露的真实净流入，仅用于横向比较板块强弱。</p>
       </article>
 
       <article class="panel">
@@ -516,7 +516,7 @@
           <span class="badge">按成交额排序</span>
         </div>
         <div id="usHotColumns" class="us-hot-columns"><div class="empty">正在拉取美股热度…</div></div>
-        <p class="muted small mt12">热度按最近交易日成交额排序，成交额越高视为市场关注度越高；盘前 04:00–09:30、盘后 16:00–20:00（美东）展示最近一次延时交易时段的价格与涨跌幅，盘中为最近正式交易日；不含 ETF、ETN 与杠杆产品。</p>
+        <p class="muted small mt12" data-hint-note data-hint-label="热度口径">热度按最近交易日成交额排序，成交额越高视为市场关注度越高；盘前 04:00–09:30、盘后 16:00–20:00（美东）展示最近一次延时交易时段的价格与涨跌幅，盘中为最近正式交易日；不含 ETF、ETN 与杠杆产品。</p>
       </article>
     </section>
 
@@ -597,7 +597,7 @@
           <label class="field-label" for="convRate">USD/CNH</label>
           <div class="input-wrap"><input id="convRate" type="number" step="0.0001" value="6.6533"><span>CNH</span></div>
           <div class="conv-result"><span>折合人民币</span><strong id="convResult">--</strong><small>元/克</small></div>
-          <p class="muted small">公式：美元/盎司 × USD/CNH ÷ 31.1035。国内价格含税费与溢价，二者不完全一致。</p>
+          <p class="muted small" data-hint-note data-hint-label="换算说明">公式：美元/盎司 × USD/CNH ÷ 31.1035。国内价格含税费与溢价，二者不完全一致。</p>
         </article>
       </div>
     </section>
@@ -788,7 +788,7 @@
         <div class="fund-summary-grid" id="fundThemeSummary"></div>
         <article class="panel">
           <div class="panel-head">
-            <div><div class="eyebrow">FUND THEME ROTATION</div><h3>基金主题板块总览</h3><span class="muted small">点表头（当日涨跌 / 连涨天数 / 近5日 / 近1月）排序，再点一次切换升降序；点任意一行看当日涨跌图与历史走势</span></div>
+            <div><div class="eyebrow">FUND THEME ROTATION</div><h3>基金主题板块总览</h3><span class="muted small" data-hint-note data-hint-label="主题表说明">点表头（当日涨跌 / 连涨天数 / 近5日 / 近1月）排序，再点一次切换升降序；点任意一行看当日涨跌图与历史走势</span></div>
             <span class="badge">主题口径</span>
           </div>
           <div class="table-scroll tall-table">
@@ -859,7 +859,7 @@
             <div class="table-scroll tall-table"><table class="table openflow-table" id="openFlowOutTable"></table></div>
           </article>
         </div>
-        <p class="muted small mt12" id="openFlowNote">数据来自基金定期报告披露的「期间申购 / 期间赎回」，净额 =（申购 − 赎回）× 期末单位净值，为季报口径估算，不是实时申赎数据；已剔除场内 ETF / LOF，保留 ETF 联接基金。货币基金申赎频繁，绝对额天然较大，跨类型比较需谨慎；场外基金通常按季披露，最新报告期以页面显示为准。</p>
+        <p class="muted small mt12" id="openFlowNote" data-hint-note data-hint-label="申赎口径">数据来自基金定期报告披露的「期间申购 / 期间赎回」，净额 =（申购 − 赎回）× 期末单位净值，为季报口径估算，不是实时申赎数据；已剔除场内 ETF / LOF，保留 ETF 联接基金。货币基金申赎频繁，绝对额天然较大，跨类型比较需谨慎；场外基金通常按季披露，最新报告期以页面显示为准。</p>
       </div>
 
       <!-- 场外基金每日代理 -->
@@ -974,7 +974,7 @@
             <span class="badge">净值 T+1</span>
           </div>
           <div class="table-scroll tall-table"><table class="table" id="bondFundTable"></table></div>
-          <p class="muted small mt12">债基波动通常小于权益基金，但仍存在久期、信用与可转债权益敞口风险；近1日涨幅为最新净值日变动，不是实时交易价格。</p>
+          <p class="muted small mt12" data-hint-note data-hint-label="债基风险">债基波动通常小于权益基金，但仍存在久期、信用与可转债权益敞口风险；近1日涨幅为最新净值日变动，不是实时交易价格。</p>
         </article>
       </div>
 
@@ -1312,7 +1312,7 @@
           <div class="table-scroll tall-table">
             <table class="table cb-table" id="cbTable"></table>
           </div>
-          <p class="muted small mt12">价格为腾讯行情补全的现价；报表不提供实时行情，取不到时显示「--」而不是拿发行价冒充现价。</p>
+          <p class="muted small mt12" data-hint-note data-hint-label="现价口径">价格为腾讯行情补全的现价；报表不提供实时行情，取不到时显示「--」而不是拿发行价冒充现价。</p>
         </article>
       </div>
 
@@ -1391,7 +1391,7 @@
           <div>
             <div class="eyebrow">MY PORTFOLIO</div>
             <h3>我的持仓 · 收益与结构</h3>
-            <span class="muted small">录入份额与成本净值后自动计算持有收益、当日涨跌 / 当日估值与仓位占比（保存在你的账号里，换设备自动恢复；批量改份额用上方「持仓调整」）</span>
+            <span class="muted small" data-hint-note data-hint-label="持仓说明">录入份额与成本净值后自动计算持有收益、当日涨跌 / 当日估值与仓位占比（保存在你的账号里，换设备自动恢复；批量改份额用上方「持仓调整」）</span>
             <div class="muted small" id="fundHoldBasis" style="margin-top:4px">口径：9:00 前（含开盘前）按前日净值 · 9:00–15:00 按当日估值（重仓/ETF 穿透） · 15:00 后估值冻结 · 今日净值公布后按今日净值</div>
             <div style="margin-top:6px"><span class="badge" id="fundSyncState" title="持仓以服务端为准">同步状态读取中…</span></div>
           </div>
@@ -1468,7 +1468,7 @@
           <div>
             <div class="eyebrow">PROFIT &amp; LOSS</div>
             <h3>盈亏统计 · 日 / 月 / 年</h3>
-            <span class="muted small">与下方「我的持仓」同一口径：今日按实时 / 估算净值，区间按净值序列（不含申赎费）</span>
+            <span class="muted small" data-hint-note data-hint-label="口径说明">与下方「我的持仓」同一口径：今日按实时 / 估算净值，区间按净值序列（不含申赎费）</span>
             <div class="muted small" id="fundPnlBasis" style="margin-top:4px">口径：9:00 前（含开盘前）按前日净值 · 9:00–15:00 按当日估值（重仓/ETF 穿透） · 15:00 后估值冻结 · 今日净值公布后按今日净值</div>
           </div>
           <div class="seg" id="fundPnlRangeSeg">
@@ -1580,7 +1580,7 @@
             <h3>个股累计收益 · 卖出后累计</h3>
             <span class="muted small" id="paperRealizedMeta">--</span>
           </div>
-          <span class="muted small">清仓的标的也会保留累计金额与收益率</span>
+          <span class="muted small" data-hint-note data-hint-label="清仓说明">清仓的标的也会保留累计金额与收益率</span>
         </div>
         <div id="paperRealizedTable"></div>
         <p class="muted small mt12" id="paperRealizedNote">--</p>
@@ -1594,7 +1594,7 @@
             <h3>委托与挂单 · 限价 / 撤单 / 部分成交</h3>
             <span class="muted small" id="paperOrderMeta">--</span>
           </div>
-          <span class="muted small">限价单挂上后每 60 秒撮合一次；当日有效单 15:00 未成交自动失效</span>
+          <span class="muted small" data-hint-note data-hint-label="委托说明">限价单挂上后每 60 秒撮合一次；当日有效单 15:00 未成交自动失效</span>
         </div>
         <div id="paperOrderBody"><div class="empty small">加载委托…</div></div>
       </article>
@@ -1605,7 +1605,7 @@
           <div>
             <div class="eyebrow">AUTO TRADING</div>
             <h3>自动交易 · 条件单 / 网格 / 定投 / 跟单 / 持仓预警</h3>
-            <span class="muted small">服务端每分钟执行一次，关掉页面也生效</span>
+            <span class="muted small" data-hint-note data-hint-label="自动交易说明">服务端每分钟执行一次，关掉页面也生效</span>
           </div>
           <div class="seg" id="paperAutoSeg">
             <button class="is-active" data-paper-auto-tab="condition">条件单</button>
@@ -1648,7 +1648,7 @@
   <div id="toastRoot" class="toasts" aria-live="polite"></div>
 
   <script src="/vendor/echarts.min.js"></script>
-  <script type="module" src="/js/app.js?v=2.14.1"></script>
+  <script type="module" src="/js/app.js?v=2.15.0"></script>
   <script>
     // PWA：注册「网络优先」的 Service Worker（发版后刷新即拿到新版本，离线时回退缓存壳）
     // file:// 打开时跳过，避免在本地直接双击 HTML 时报错。

@@ -443,6 +443,12 @@
       "at": "",
       "nav": null,
       "kind": "etf"
+    },
+    "000001": {
+      "pct": 14.84,
+      "at": "",
+      "nav": null,
+      "kind": "holdings"
     }
   }
 }

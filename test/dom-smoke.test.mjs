@@ -51,7 +51,8 @@ window.echarts = {
   graphic: { LinearGradient: class { constructor() { this.type = 'linear'; } } },
   init: (el) => {
     const inst = {
-      setOption() {}, on() {}, off() {}, resize() {}, dispose() {},
+      lastOption: null,
+      setOption(option) { this.lastOption = option; }, on() {}, off() {}, resize() {}, dispose() {},
       getWidth: () => 600, getHeight: () => 200,
       getOption: () => ({}), convertFromPixel: () => 0,
     };
@@ -2556,7 +2557,7 @@ test('v2.14.0 历史买卖点能映射到分时 / 五日 / 日K / 月K 的 X 轴
   app.state.paper = prev;
 });
 
-test('DOM：v2.14.0 手机排行榜在用户名下带今日/本周/本月/今年收益标签', () => {
+test('DOM：v2.15.0 手机排行榜保留周期列，整表横向滑动、前三列固定', () => {
   const prevRank = app.state.paperRank;
   const prevOpen = app.state.paperRankOpen;
   const prevSort = app.state.paperRankSort;
@@ -2568,16 +2569,89 @@ test('DOM：v2.14.0 手机排行榜在用户名下带今日/本周/本月/今年
   }], updatedAt: Date.now() };
   app.state.paperRankSort = 'total';
   app.renderPaperRanking();
-  const chips = document.querySelector('#paperRankBody .paper-rank-periods');
-  assert.ok(chips, '手机端用户名下要有周期收益标签');
-  assert.match(chips.textContent, /今日/);
-  assert.match(chips.textContent, /本周/);
-  assert.match(chips.textContent, /本月/);
-  assert.match(chips.textContent, /今年/);
-  assert.match(chips.textContent, /1\.20%/);
+  const wrap = document.querySelector('#paperRankBody .paper-rank-scroll');
+  assert.ok(wrap, '排行榜要包在可横向滚动的容器里');
+  assert.equal(document.querySelectorAll('#paperRankBody .paper-rank-periods').length, 0, '不再用用户名下的小标签代替列');
+  const headers = [...wrap.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+  assert.equal(headers.length, 13, '13 列表头都要在（不能被 CSS 隐藏）');
+  assert.deepEqual(headers.slice(0, 3), ['排名', '用户', '总资产']);
+  ['今日', '本周', '本月', '今年'].forEach((label) => assert.ok(headers.includes(label), `缺少 ${label} 列头`));
+  const cells = wrap.querySelectorAll('tbody tr:first-child td');
+  assert.equal(cells.length, 13, '每行 13 个单元格');
+  assert.match(cells[5].textContent, /1\.20%/);
+  assert.match(cells[8].textContent, /4\.50%/);
+  assert.ok(document.querySelector('#paperRankBody .paper-rank-scroll-hint'), '手机上要有「左右滑动」提示');
   app.state.paperRank = prevRank;
   app.state.paperRankOpen = prevOpen;
   app.state.paperRankSort = prevSort;
+});
+
+test('v2.15.0 多日分时 K 线：只标日期 + 按交易日画竖向分割线', async () => {
+  const charts = await import(pathToFileURL(join(ROOT, 'public', 'js', 'charts.js')).href);
+  assert.deepEqual(charts.dayStartIndexes(['2026-11-24 09:35', '2026-11-24 09:40', '2026-11-25 09:35']), [0, 2]);
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const candles = [];
+  ['2026-11-24', '2026-11-25', '2026-11-26'].forEach((d) => {
+    ['09:35', '09:40', '09:45'].forEach((hm) => candles.push({ d: `${d} ${hm}`, o: 1, h: 2, l: 0.5, c: 1.5, v: 100, a: 1000, pct: 0.5 }));
+  });
+  const inst = charts.candleChart(el, { candles }, { zoomStart: 0, indicator: 'none' });
+  const opt = inst.lastOption;
+  assert.equal(opt.dataZoom[0].start, 0, '默认要显示全部区间');
+  assert.equal(opt.xAxis[0].axisLabel.formatter('2026-11-24 09:35'), '11-24', 'X 轴只留日期');
+  assert.equal(opt.xAxis[0].axisLabel.interval(0), true, '每个交易日的第一根要标日期');
+  assert.equal(opt.xAxis[0].axisLabel.interval(1), false, '同一天的其它 K 线不重复标日期');
+  const line = opt.series[0].markLine;
+  assert.ok(line, '要有按日的竖向分割线');
+  assert.equal(line.data.length, 2, '三个交易日 → 两条换天分割线');
+  assert.equal(line.data[0].xAxis, '2026-11-25 09:35');
+  el.remove();
+});
+
+test('DOM：v2.15.0 自动交易按钮在子窗口里打开同一份面板，关闭后归位', () => {
+  const prev = app.state.paper;
+  app.state.paper = paperFixture(2);
+  app.renderPaper();
+  const btn = document.querySelector('#paperAutoBtn');
+  assert.ok(btn, '模拟买入旁边要有「自动交易」按钮');
+  const panel = document.querySelector('#paperAutoPanel');
+  assert.ok(panel && panel.closest('#view-paper'), '面板默认在页面里');
+  btn.click();
+  const modal = document.querySelector('.paper-auto-modal');
+  assert.ok(modal, '点「自动交易」要打开子窗口');
+  const moved = document.querySelector('#paperAutoPanel');
+  assert.ok(modal.contains(moved), '面板要搬进子窗口');
+  assert.equal(document.querySelectorAll('#paperAutoPanel').length, 1, '页面里不能出现两份面板（id 不能重复）');
+  assert.ok(moved.querySelector('#paperAutoSeg'), '子窗口里保留条件单 / 网格 / 跟单 / 预警切换');
+  assert.ok(moved.querySelector('#paperAutoBody'), '子窗口里保留面板内容');
+  app.closeOverlay();
+  assert.equal(document.querySelectorAll('#paperAutoPanel').length, 1, '关闭后仍只有一份面板');
+  assert.ok(document.querySelector('#paperAutoPanel').closest('#view-paper'), '关闭后搬回页面');
+  assert.equal(document.querySelector('.paper-auto-modal'), null);
+  app.state.paper = prev;
+});
+
+test('DOM：v2.15.0 说明文字收进 ? 图标，悬停气泡定位到 body 且不超出屏幕', async () => {
+  const wrap = document.createElement('div');
+  wrap.innerHTML = '<p class="muted small" data-hint-note data-hint-label="测试口径">这是一段很长的说明文字，用来验证运行时会收进问号图标里，而不是铺满整行。</p>';
+  document.body.appendChild(wrap);
+  await new Promise((r) => setTimeout(r, 0));
+  const tip = wrap.querySelector('.hint-tip');
+  assert.ok(tip, 'data-hint-note 应生成 ? 图标');
+  assert.match(tip.getAttribute('aria-label'), /测试口径/);
+  assert.equal(wrap.querySelectorAll('.hint-tip').length, 1, '只转一次，不能重复套图标');
+  assert.equal(wrap.querySelector('.hint-label').textContent.trim(), '测试口径');
+  assert.equal(wrap.querySelector('.hint-bubble').textContent, '这是一段很长的说明文字，用来验证运行时会收进问号图标里，而不是铺满整行。', '原文进气泡');
+  assert.equal(wrap.querySelector('.hint-q').textContent, '?');
+
+  tip.dispatchEvent(new window.Event('focusin', { bubbles: true }));
+  const floating = document.querySelector('body > .hint-bubble.is-floating');
+  assert.ok(floating, '气泡展开时要挂到 body 上（避免被 overflow 容器裁切）');
+  assert.match(floating.textContent, /很长的说明文字/);
+  tip.dispatchEvent(new window.Event('focusout', { bubbles: true }));
+  assert.equal(document.querySelector('body > .hint-bubble.is-floating'), null, '收起后从 body 移除');
+  assert.ok(tip.querySelector('.hint-bubble'), '收起后气泡放回原位');
+  wrap.remove();
 });
 
 test('DOM：v2.14.0 模拟买入弹窗直接列出自选股（超过 6 只也能选）', () => {

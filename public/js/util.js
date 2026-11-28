@@ -201,9 +201,17 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined') {
   document.addEventListener('focusout', (e) => {
     if (tipOf(e.target)) hideHintBubble();
   });
-  // 滚动 / 旋转屏幕后气泡的 fixed 坐标会失效，直接收起
-  window.addEventListener('scroll', hideHintBubble, { capture: true, passive: true });
-  window.addEventListener('resize', hideHintBubble, { passive: true });
+  // 滚动 / 旋转屏幕后气泡要跟着锚点走：聚焦 ? 图标时浏览器会把它滚进视口，
+  // 这里如果直接收起，点按图标会「闪一下就没了」。
+  const followHintBubble = () => {
+    if (!floatingBubble || !floatingHome) return;
+    const r = floatingHome.getBoundingClientRect();
+    const vh = window.innerHeight || 0;
+    if (vh && (r.bottom < 0 || r.top > vh)) { hideHintBubble(); return; }
+    positionHintBubble(floatingBubble, floatingHome);
+  };
+  window.addEventListener('scroll', followHintBubble, { capture: true, passive: true });
+  window.addEventListener('resize', followHintBubble, { passive: true });
 
   const startHintNotes = () => {
     initHintNotes(document);

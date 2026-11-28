@@ -2,19 +2,19 @@
    ---------------------------------------------------------------
    只负责 DOM：多份持仓 TAB、今日盈亏 TOP5、盈亏日历、组合 vs 上证。
    取数仍在 app.js；纯计算在 views/fundpnl.js。 */
-import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.14.1';
-import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc } from '../util.js?v=2.14.1';
-import { $, $$ } from '../dom.js?v=2.14.1';
-import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.14.1';
-import { fundDayBasis } from './funds.js?v=2.14.1';
+import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.15.0';
+import { isNum, nf, pctFmt, signedFmt, toneClass, cleanName, esc, setNoteTip } from '../util.js?v=2.15.0';
+import { $, $$ } from '../dom.js?v=2.15.0';
+import { dualSeriesChart, intradayCompareChart } from '../charts.js?v=2.15.0';
+import { fundDayBasis } from './funds.js?v=2.15.0';
 import {
   computeFundDailyPnl,
   fundCalendarBuckets,
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './fundpnl.js?v=2.14.1';
-import { calendarGridHtml } from './pnlcalendar.js?v=2.14.1';
+} from './fundpnl.js?v=2.15.0';
+import { calendarGridHtml } from './pnlcalendar.js?v=2.15.0';
 
 export function activePortfolio() {
   const list = state.portfolios || [];
@@ -114,7 +114,7 @@ export function renderFundPnlCalendar() {
     box.innerHTML = '<div class="empty">录入持仓后，这里按日 / 月 / 年显示盈亏日历。</div>';
     if (meta) meta.textContent = '未录持仓';
     if (nav) nav.innerHTML = '';
-    if (note) note.textContent = '盈亏统计从「加入持仓」那天开始，不统计建仓之前的数据。';
+    if (note) setNoteTip(note, '盈亏统计从「加入持仓」那天开始，不统计建仓之前的数据。');
     return;
   }
   // v2.10.6：建仓日之后还没有已公布净值（后台恢复持仓写回原建仓日 / 当晚录入 / 周末 / QDII 滞后）。
@@ -135,7 +135,7 @@ export function renderFundPnlCalendar() {
       ].filter(Boolean).join(' · ');
     }
     if (note) {
-      note.textContent = `建仓日${daily.pendingStart ? `（${daily.pendingStart}）` : ''}之后还没有已公布净值${daily.lastNavDate ? `（最新 ${daily.lastNavDate}）` : ''}：这段时间没有可统计的净值变动，日历会在新净值公布后自动出现；建仓之前的涨跌不计入。`;
+      setNoteTip(note, `建仓日${daily.pendingStart ? `（${daily.pendingStart}）` : ''}之后还没有已公布净值${daily.lastNavDate ? `（最新 ${daily.lastNavDate}）` : ''}：这段时间没有可统计的净值变动，日历会在新净值公布后自动出现；建仓之前的涨跌不计入。`);
     }
     return;
   }
@@ -174,7 +174,7 @@ export function renderFundPnlCalendar() {
       : `按金额 / 元 · 统计区间 ${range}`;
   }
   if (note) {
-    note.textContent = `统计起点 = 各基金建仓日（v2.10.0 之前没记录建仓日的老持仓统一按 ${LEGACY_ADDED_DATE} 计）；逐日盈亏 = 份额 × 当日净值变动，不含申赎费；月/年按逐日盈亏累加，收益率 = 区间盈亏 ÷ 区间起点市值。`;
+    setNoteTip(note, `统计起点 = 各基金建仓日（v2.10.0 之前没记录建仓日的老持仓统一按 ${LEGACY_ADDED_DATE} 计）；逐日盈亏 = 份额 × 当日净值变动，不含申赎费；月/年按逐日盈亏累加，收益率 = 区间盈亏 ÷ 区间起点市值。`);
   }
 }
 
@@ -219,7 +219,7 @@ export function renderFundVsIndex() {
     });
     if (meta) meta.textContent = `当日 · 截至 ${calc.endTime || '--'} · 覆盖 ${calc.coverage}% 持仓`;
     if (note) {
-      note.textContent = `当日曲线为盘中估值序列：ETF/联接按目标 ETF 分时、重仓型按前十大重仓分时加权；${calc.uncovered ? `${calc.uncovered} 只（QDII / 未披露持仓）按 0% 处理；` : ''}不是官方净值，收盘后以真实净值为准。`;
+      setNoteTip(note, `当日曲线为盘中估值序列：ETF/联接按目标 ETF 分时、重仓型按前十大重仓分时加权；${calc.uncovered ? `${calc.uncovered} 只（QDII / 未披露持仓）按 0% 处理；` : ''}不是官方净值，收盘后以真实净值为准。`);
     }
     return;
   }
@@ -246,7 +246,7 @@ export function renderFundVsIndex() {
   });
   if (meta) meta.textContent = `${calc.rangeLabel} · 基准日 ${calc.baseDate}`;
   if (note) {
-    note.textContent = '组合收益率按「逐日盈亏率」链式复合（中途加仓不会把本金算成收益）；上证取同区间首尾收盘；不含申赎费，份额按当前录入值静态加权。';
+    setNoteTip(note, '组合收益率按「逐日盈亏率」链式复合（中途加仓不会把本金算成收益）；上证取同区间首尾收盘；不含申赎费，份额按当前录入值静态加权。');
   }
 }
 

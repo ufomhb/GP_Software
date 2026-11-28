@@ -26,7 +26,7 @@ import {
   intradayCompareChart,
   compareTrendChart,
   COLORS,
-} from './charts.js?v=2.14.1';
+} from './charts.js?v=2.15.0';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -46,11 +46,11 @@ import {
   timeText,
   hintIcon,
   setNoteTip,
-} from './util.js?v=2.14.1';
+} from './util.js?v=2.15.0';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.14.1';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.14.1';
+import { $, $$, toast, debounce } from './dom.js?v=2.15.0';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.15.0';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -63,7 +63,7 @@ import {
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.14.1';
+} from './core.js?v=2.15.0';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -80,7 +80,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.14.1';
+} from './views/funds.js?v=2.15.0';
 
 // 基金页新增子页渲染（v2.10.0：涨跌分布 / 板块总览 / 场外基金四榜，见 views/fundpanes.js）
 import {
@@ -90,7 +90,7 @@ import {
   renderFundBoard,
   renderFundBoardCompareBar,
   sortFundThemes,
-} from './views/fundpanes.js?v=2.14.1';
+} from './views/fundpanes.js?v=2.15.0';
 
 // 自选基金：多组合 / 今日 TOP5 / 盈亏日历 / 组合 vs 上证（v2.10.0）
 import {
@@ -100,7 +100,7 @@ import {
   renderFundVsIndex,
   activePortfolio,
   activeHoldings,
-} from './views/fundwatch.js?v=2.14.1';
+} from './views/fundwatch.js?v=2.15.0';
 import {
   computeFundPnl,
   computeFundDailyPnl,
@@ -112,7 +112,7 @@ import {
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './views/fundpnl.js?v=2.14.1';
+} from './views/fundpnl.js?v=2.15.0';
 
 // 模拟盘盈亏日历 / 资产曲线 / 个股累计收益（v2.11.0，见 views/paperpnl.js）
 import {
@@ -122,7 +122,7 @@ import {
   paperCalendarBuckets,
   paperPnlSummary,
   paperMonthlyBars,
-} from './views/paperpnl.js?v=2.14.1';
+} from './views/paperpnl.js?v=2.15.0';
 
 // 模拟盘自动化：委托 / 条件单 / 网格定投 / 跟单 / 持仓预警 / 复盘（v2.12.0，见 views/paperauto.js）
 import {
@@ -131,7 +131,7 @@ import {
   renderPaperReview,
   paperOrderStatusLabel,
   conditionText,
-} from './views/paperauto.js?v=2.14.1';
+} from './views/paperauto.js?v=2.15.0';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -141,7 +141,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.14.1';
+} from './views/market.js?v=2.15.0';
 
 
 /* =========================================================
@@ -374,7 +374,7 @@ function closeOverlay() {
     // v2.14.0：叠层下单弹窗关闭后清掉临时标的；持仓详情关闭后清掉详情状态
     if (!root.querySelector('#paperForm')) state.paperTrade = null;
     if (!root.querySelector('.paper-holding-modal')) state.paperHolding = null;
-    // v2.14.1：如果移除的是最后一个弹层（没有 mountOverlay 基座，例如直接从页面打开
+    // v2.15.0：如果移除的是最后一个弹层（没有 mountOverlay 基座，例如直接从页面打开
     // 持仓详情再关闭），必须把 body 的滚动锁恢复，否则主画面纵向滚动条失效。
     if (!root.querySelector('.overlay')) {
       document.body.style.overflow = '';
@@ -773,7 +773,7 @@ function renderChinaPeriods() {
     <tbody>${rows}</tbody>
   </table>
   <div class="cn-period-summary">${summary}</div>
-  <p class="muted small mt8">区间涨跌 = 最新收盘 ÷ N 个交易日前的收盘 −1，与行情软件的「阶段涨幅」口径一致；点击任意一行可把该指数切到上方主图。</p>`;
+  <p class="note-tip muted small mt8">${hintIcon('区间涨跌 = 最新收盘 ÷ N 个交易日前的收盘 −1，与行情软件的「阶段涨幅」口径一致；点击任意一行可把该指数切到上方主图。', '区间涨跌说明')}<span class="hint-label">区间涨跌说明</span></p>`;
   $$('[data-cn-period-secid]', el).forEach((row) => {
     row.onclick = () => {
       state.cnIndex = row.dataset.cnPeriodSecid;
@@ -938,13 +938,13 @@ function openIntradayChart(secid, date, name) {
           </div>
           <div class="ids-range"><div class="ids-track"><i style="left:${pos}%"></i></div><div class="ids-range-label"><span>低 ${stockFmt(low)}</span><span>收盘位置</span><span>高 ${stockFmt(high)}</span></div></div>`;
       }
-      if (note) note.textContent = '该日期超出免费分钟数据的回溯范围，改为展示当日日线摘要（开高低收、成交额与收盘位置），不会再报错。';
+      if (note) setNoteTip(note, '该日期超出免费分钟数据的回溯范围，改为展示当日日线摘要（开高低收、成交额与收盘位置），不会再报错。');
     } else {
       if (chartEl) chartEl.hidden = false;
       areaChart(chartEl, data.candles, change >= 0 ? COLORS.up : COLORS.down, { axes: true });
-      if (note) note.textContent = data.period === 1
+      if (note) setNoteTip(note, data.period === 1
         ? '1 分钟分时来自公开行情接口，可能有短暂延迟。'
-        : `${label}：该日期已超出 1 分钟数据保留期，系统按 5/15/30/60 分钟自动回退，仍可查看当天完整走势。`;
+        : `${label}：该日期已超出 1 分钟数据保留期，系统按 5/15/30/60 分钟自动回退，仍可查看当天完整走势。`);
     }
   }).catch((err) => {
     const loading = $('#intradayLoading');
@@ -1837,7 +1837,7 @@ function renderCommodityChart() {
   const note = $('#comChartNote');
   if (note) {
     const map = { 30: '近1 个月', 65: '近3 个月', 130: '近6 个月', 260: '近1 年' };
-    note.textContent = `当前区间：{map[state.comKlineDays] || '近1 年'}（{(k.candles || []).length} 根日线）。COMEX 黄金原始历史可回溯到 2016 年，如需更长区间可在数据源里切换。`;
+    setNoteTip(note, `当前区间：${map[state.comKlineDays] || '近1 年'}（${(k.candles || []).length} 根日线）。COMEX 黄金原始历史可回溯到 2016 年，如需更长区间可在数据源里切换。`);
   }
   renderCommoditySnapshot();
 }
@@ -1956,7 +1956,7 @@ function renderCommoditySnapshot() {
         <div class="snapshot-item"><span>支撑</span><b>${priceFmt(a.support)}</b></div>
         <div class="snapshot-item"><span>压力</span><b>${priceFmt(a.resistance)}</b></div>
       </div>
-      <p class="muted small mt8">技术位基于最近 20 个交易日计算；期货杠杆高、波动大，请独立控制风险。</p>` : ''}`;
+      <p class="note-tip muted small mt8">${hintIcon('技术位基于最近 20 个交易日计算；期货杠杆高、波动大，请独立控制风险。', '技术位说明')}<span class="hint-label">技术位说明</span></p>` : ''}`;
 }
 
 function updateConverterRates() {
@@ -2575,7 +2575,7 @@ function renderPortfolioAdvice() {
       <div><span class="ps-label">股票关注</span>${stockTop.length ? stockTop.map(({ quote, advice }) => `<span class="chip">${esc(cleanName(quote.name))} <b>${advice.score}</b></span>`).join('') : '<span class="muted small">暂无</span>'}</div>
       <div><span class="ps-label">基金关注</span>${fundTop.length ? fundTop.map((f) => `<span class="chip">${esc(f.name)} <b class="${toneClass(f.pctN)}">${pctFmt(f.pctN)}</b></span>`).join('') : '<span class="muted small">暂无</span>'}</div>
     </div>
-    <p class="muted small mt8">建议由规则组合生成，仅作观察与仓位管理参考，不构成个性化投资建议。</p>`;
+    <p class="note-tip muted small mt8">${hintIcon('建议由规则组合生成，仅作观察与仓位管理参考，不构成个性化投资建议。', '策略说明')}<span class="hint-label">策略说明</span></p>`;
   allocationPie($('#portfolioAllocPie'), allocSlices);
 }
 
@@ -3112,7 +3112,7 @@ async function openMoveDetail(secid) {
           <div class="modal-advice">
             <div class="ma-top"><span class="muted small">触发原因</span><span class="mv-tags">${(item.tags || []).map((t) => `<span class="mv-tag hot">${esc(t)}</span>`).join('')}</span></div>
             <div class="modal-reasons mt8">${(item.reasons || []).map((r) => `<div>${esc(r)}</div>`).join('') || '<div>暂无明细</div>'}</div>
-            <p class="muted small mt8">异动分级由主力增量、价格脉冲、量比、封板状态与尾盘时段综合打分，仅作盘中线索。</p>
+            <p class="note-tip muted small mt8">${hintIcon('异动分级由主力增量、价格脉冲、量比、封板状态与尾盘时段综合打分，仅作盘中线索。', '异动分级说明')}<span class="hint-label">异动分级说明</span></p>
           </div>
           <div class="modal-actions">
             <button class="btn primary" id="moveWatch">选<加入自选</button>
@@ -5081,7 +5081,7 @@ function openPaperHolding(secid, name, code) {
       <div id="paperHoldingChart" class="modal-chart paper-holding-chart"></div>
       <p class="muted small paper-holding-legend"><span class="tag in">B</span> 买入点 <span class="tag out">S</span> 卖出点 · 分时只标注今日成交；五日 / 日K / 月K 标注历史成交。分时页可直接下单，成交后本页自动刷新。</p>
     </div>`;
-  // v2.14.1：从页面直接打开时没有下层弹窗，用 mountOverlay 做基座（关闭时会恢复滚动）；
+  // v2.15.0：从页面直接打开时没有下层弹窗，用 mountOverlay 做基座（关闭时会恢复滚动）；
   // 只有在别的弹窗之上打开才用叠加层，避免把下层弹窗顶掉。
   const root = $('#overlayRoot');
   const overlay = root && root.querySelector('.overlay') ? pushOverlay(holdingHtml) : mountOverlay(holdingHtml);
@@ -5803,7 +5803,7 @@ function renderFundPnl() {
     if ($('#fundPnlChart')) $('#fundPnlChart').innerHTML = '<div class="empty small">先在下方「我的自选基金」表格点「仓」录入份额与成本</div>';
     if ($('#fundPnlBars')) $('#fundPnlBars').innerHTML = '<div class="empty small">还没有持仓，暂无月度盈亏</div>';
     if ($('#fundPnlChartMeta')) $('#fundPnlChartMeta').textContent = '';
-    if (note) note.textContent = '盈亏统计按已录入份额与成本计算；份额与成本保存在你的账号里（服务端），换设备自动恢复。';
+    if (note) setNoteTip(note, '盈亏统计按已录入份额与成本计算；份额与成本保存在你的账号里（服务端），换设备自动恢复。');
     return;
   }
   const calc = computeFundPnl(state.fundPnl);
@@ -5834,7 +5834,7 @@ function renderFundPnl() {
       if ($('#fundPnlBars')) $('#fundPnlBars').innerHTML = '<div class="empty small">还没有跨月的净值变动，暂无月度盈亏</div>';
       if ($('#fundPnlChartMeta')) $('#fundPnlChartMeta').textContent = '';
       if (note) {
-        note.textContent = `${waitText}：区间盈亏先不统计；今日盈亏 / 累计收益 / 组合市值 与上方「我的持仓」同一口径（含今日估算，按实时价）。净值公布后曲线会自动出现，建仓之前的涨跌不计入。`;
+        setNoteTip(note, `${waitText}：区间盈亏先不统计；今日盈亏 / 累计收益 / 组合市值 与上方「我的持仓」同一口径（含今日估算，按实时价）。净值公布后曲线会自动出现，建仓之前的涨跌不计入。`);
       }
       renderFundPnlCalendar();
       renderFundVsIndex();
@@ -6495,7 +6495,7 @@ async function openFundCompare(codes) {
           return `<tr><td>${label}</td>${vals.map((v, i) => `<td class="${kind === 'pct' ? toneClass(v) : ''} ${i === best ? 'best' : ''}">${kind === 'pct' ? pctFmt(v) : kind === 'num' ? (isNum(v) ? nf(v, 2) : '--') : esc(v)}</td>`).join('')}</tr>`;
         }).join('')}</tbody>
       </table></div>
-      <p class="muted small mt12">对比仅基于公开净值、阶段收益、规模、经理与最近一期重仓股；重仓重合以第一只基金为基准。历史业绩不代表未来。</p>
+      <p class="note-tip muted small mt12">${hintIcon('对比仅基于公开净值、阶段收益、规模、经理与最近一期重仓股；重仓重合以第一只基金为基准。历史业绩不代表未来。', '对比口径')}<span class="hint-label">对比口径</span></p>
     </div>`;
     compareTrendChart($('#compareTrendChart'), items.map((x) => ({ name: cleanName(x.name) || x.code, points: x.history || [] })));
   } catch (err) {
@@ -6830,7 +6830,7 @@ function openFundHoldEditor(code, name) {
         <button class="btn small" id="holdAddedToday">从今天起算</button>
         <span class="muted small" id="holdAddedHint">${addedAt ? `已记录：${esc(addedAt)}` : `未记录：统一按 ${esc(LEGACY_ADDED_DATE)} 计（旧版本数据）`}</span>
       </div>
-      <p class="muted small mt8">填 0 或清空份额即可删除该基金的持仓（服务端会留档，可在后台「持仓数据 → 持仓回收站」恢复原份额 / 成本 / 建仓日）；成本净值留空时只算市值与当日盈亏。每份组合的持仓互不影响。</p>
+      <p class="note-tip muted small mt8">${hintIcon('填 0 或清空份额即可删除该基金的持仓（服务端会留档，可在后台「持仓数据 → 持仓回收站」恢复原份额 / 成本 / 建仓日）；成本净值留空时只算市值与当日盈亏。每份组合的持仓互不影响。', '持仓说明')}<span class="hint-label">持仓说明</span></p>
     </div>
     <div class="modal-actions">
       <button class="btn primary" id="holdSave">保存</button>
@@ -7020,7 +7020,7 @@ function openPortfolioCreate() {
     <div class="hold-form">
       <label class="field-label" for="portfolioName">组合名称</label>
       <div class="input-wrap"><input id="portfolioName" type="text" maxlength="${PORTFOLIO_NAME_MAX}" placeholder="例如 结婚基金 / 父母养老"><span>名</span></div>
-      <p class="muted small mt8">最多保存 ${PORTFOLIO_GROUPS_MAX} 份组合（含主持仓）；建仓日、盈亏统计都按组合分别记录。</p>
+      <p class="note-tip muted small mt8">${hintIcon(`最多保存 ${PORTFOLIO_GROUPS_MAX} 份组合（含主持仓）；建仓日、盈亏统计都按组合分别记录。`, '组合说明')}<span class="hint-label">组合说明</span></p>
     </div>
     <div class="modal-actions">
       <button class="btn primary" id="portfolioCreateSave">创建</button>
@@ -7140,7 +7140,7 @@ function openPortfolioAdjust() {
           </tr>`;
         }).join('') || '<tr><td colspan="6"><div class="empty">这个组合还没有持仓，自选基金也还没加入。</div></td></tr>'}</tbody>
       </table></div>
-      <p class="muted small mt8">${totalValue > 0 ? `按最新价估算，当前组合市值 ${nf(totalValue, 2)} 元；` : ''}份额为 0 的行保存后会清仓（等同于删除，后台同样留档）。</p>
+      <p class="note-tip muted small mt8">${hintIcon('按最新价估算组合市值；份额为 0 的行保存后会清仓（等同于删除，后台同样留档）。', '清仓说明')}<span class="hint-label">清仓说明</span></p>
     </div>
     <div class="modal-actions">
       <button class="btn primary" id="holdAdjustSave">保存全部</button>
@@ -7643,7 +7643,7 @@ function renderFundModal(data, fallbackName) {
     <div class="fund-detail-grid">
       <div>
         <div id="fundNavChart" style="height:340px"></div>
-        <p class="muted small mt8">场外基金无交易所实时价格，图为最近 120 个交易日的单位净值走势。</p>
+        <p class="note-tip muted small mt8">${hintIcon('场外基金无交易所实时价格，图为最近 120 个交易日的单位净值走势。', '净值图说明')}<span class="hint-label">净值图说明</span></p>
       </div>
       <div class="modal-side">
         <div class="snapshot-grid">
@@ -8000,7 +8000,7 @@ function renderStockModal(data) {
             <div class="input-wrap grow"><input id="modalAlertValue" type="number" step="0.01" value="${Number(q.price).toFixed(2)}"><span id="modalAlertUnit">元</span></div>
           </div>
           <button class="btn primary block mt8" id="modalAlertAdd">添加预警</button>
-          <p class="muted small mt8">预警保存在本机浏览器，只在页面打开时监控；触发后会发浏览器通知（需授权）。云端推送见后台「定时推送」。</p>
+          <p class="note-tip muted small mt8">${hintIcon('预警保存在本机浏览器，只在页面打开时监控；触发后会发浏览器通知（需授权）。云端推送见后台「定时推送」。', '预警说明')}<span class="hint-label">预警说明</span></p>
         </div>
         <div class="disclaimer">${esc(a.disclaimer)}</div>
       </div>
@@ -8776,7 +8776,7 @@ function renderCalendar() {
       ? (d.type === 'bonus' ? `${d.count} 条 · 最新公告 ${(d.items[0] || {}).noticeDate || '--'}` : `${d.count} 条 · 自 ${d.since || '--'} 起`)
       : '--';
   }
-  if ($('#calendarNote') && d && d.note) $('#calendarNote').textContent = d.note;
+  if ($('#calendarNote') && d && d.note) setNoteTip($('#calendarNote'), d.note);
   if (!d || !(d.items || []).length) {
     const empty = d && d.type === 'ipo' ? '近期暂无新股申购' : d && d.type === 'cbapply' ? '近期暂无可转债申购' : '暂无数据';
     table.innerHTML = `<tbody><tr><td><div class="empty">${empty}</div></td></tr></tbody>`;
@@ -8947,7 +8947,7 @@ function renderScreener() {
       ? `样本 ${d.poolSize} 只 · 扫描 ${d.scannedPages} 页 · 命中 ${d.matched} 只`
       : '样本池 = 新浪全市场快照';
   }
-  if ($('#screenerNote') && d && d.note) $('#screenerNote').textContent = d.note;
+  if ($('#screenerNote') && d && d.note) setNoteTip($('#screenerNote'), d.note);
   if (!d || !(d.items || []).length) {
     table.innerHTML = `<tbody><tr><td><div class="empty">没有符合条件的股票，放宽条件再试</div></td></tr></tbody>`;
     return;
@@ -9185,7 +9185,7 @@ function renderFundamentalDrawer(f10, longhu, overlay, seats) {
     </div>
     <nav class="f10-tabs" id="f10Tabs">${tabs}</nav>
     ${F10_TABS.map(([k], i) => `<div class="f10-pane" data-f10-pane="${k}" ${i === 0 ? '' : 'hidden'}>${panes[k]}</div>`).join('')}
-    <p class="muted small mt12">F10 数据来自东财公开接口，财务指标为报告期口径；十大股东存在披露滞后，不代表当前持股。</p>`;
+    <p class="note-tip muted small mt12">${hintIcon('F10 数据来自东财公开接口，财务指标为报告期口径；十大股东存在披露滞后，不代表当前持股。', 'F10 口径')}<span class="hint-label">F10 口径</span></p>`;
 
   // 作用域限定在本抽屉内：F10 现在是叠加层，全局选择器可能命中下层元素
   const tabBtns = $$('#f10Tabs button', drawer);
@@ -10645,6 +10645,8 @@ export {
   // v2.14.0：持仓个股详情（分时 / 五日 / 日K / 月K + 买卖点）与自选股直接买入
   openPaperHolding, paperHoldingMarks, paperHoldingKpisHtml, renderPaperHoldingChart,
   refreshPaperHoldingHeader, openPaperBuyFromWatch,
+  // v2.15.0：模拟买入旁边的「自动交易」子窗口
+  openPaperAutoModal, restorePaperAutoPanel,
   // v2.7.0：叠层（个股详情之上再开 F10 / 资讯）与席位明细区块
   mountOverlay, pushOverlay, topLayer, closeOverlay, renderSeatsBlock, openStrategyInNewTab,
   // v2.10.0：基金页新增子页 + 自选基金多组合 / 盈亏日历 / 组合对比（供 dom-smoke 直接渲染与断言）

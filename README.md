@@ -209,7 +209,7 @@ npm run selfcheck                         # 安全基线 39 项 + 存储层 23 �
 - 前端渲染约定：**外部文本进 `innerHTML` 前必须 `esc()`；进 `href`/`src` 前必须再过 `safeUrl()`**（`esc` 挡不住 `javascript:` 协议）。2026-11-15 审计了 225 处模板插值，35 处文本型全部安全，并补了 `safeUrl` 覆盖快讯链接等 2 处 href。
 - CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
 
-### v2.14.1 更新（2026-11-28）
+### v2.15.0 更新（2026-11-28）
 
 > 修复：关闭持仓个股详情后，主画面纵向滚动条失效。
 

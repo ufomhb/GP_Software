@@ -5,10 +5,10 @@
    - fundCalendarBuckets：日 / 月 / 年分桶；
    - pnlcalendar.js 的 calendarGridHtml：日历网格 DOM；
    - fundPnlAreaChart / fundPnlMonthlyBars：资产曲线与月度柱。 */
-import { state } from '../core.js?v=2.14.1';
-import { isNum, nf, signedFmt, toneClass, cleanName, esc, timeText, setNoteTip } from '../util.js?v=2.14.1';
-import { $ } from '../dom.js?v=2.14.1';
-import { fundPnlAreaChart, fundPnlMonthlyBars } from '../charts.js?v=2.14.1';
+import { state } from '../core.js?v=2.15.0';
+import { isNum, nf, signedFmt, toneClass, cleanName, esc, timeText, setNoteTip } from '../util.js?v=2.15.0';
+import { $ } from '../dom.js?v=2.15.0';
+import { fundPnlAreaChart, fundPnlMonthlyBars } from '../charts.js?v=2.15.0';
 import {
   round2,
   shanghaiDateKey,
@@ -16,8 +16,8 @@ import {
   fundCalendarBuckets,
   rangeBaseDate,
   sumPnlAfter,
-} from './fundpnl.js?v=2.14.1';
-import { calendarGridHtml } from './pnlcalendar.js?v=2.14.1';
+} from './fundpnl.js?v=2.15.0';
+import { calendarGridHtml } from './pnlcalendar.js?v=2.15.0';
 
 const CALENDAR_UNITS = ['day', 'month', 'year'];
 
@@ -164,7 +164,7 @@ export function renderPaperPnlCalendar() {
     box.innerHTML = '<div class="empty">还没有模拟成交：买入第一笔后，这里按日 / 月 / 年记录账户盈亏。</div>';
     if (meta) meta.textContent = '未成交';
     if (nav) nav.innerHTML = '';
-    if (note) note.textContent = '盈亏日历从第一笔模拟成交开始记录；卖出与持仓浮盈都计入，入金不算盈亏。';
+    if (note) setNoteTip(note, '盈亏日历从第一笔模拟成交开始记录；卖出与持仓浮盈都计入，入金不算盈亏。');
     if (chart) chart.innerHTML = '<div class="empty small">成交后显示账户资产曲线</div>';
     if (bars) bars.innerHTML = '';
     return;
@@ -175,7 +175,7 @@ export function renderPaperPnlCalendar() {
     box.innerHTML = `<div class="empty">盈亏日历加载失败：${esc(data.error)}</div>`;
     if (meta) meta.textContent = '加载失败';
     if (nav) nav.innerHTML = '';
-    if (note) note.textContent = '稍后刷新页面重试；账户、持仓与成交记录不受影响。';
+    if (note) setNoteTip(note, '稍后刷新页面重试；账户、持仓与成交记录不受影响。');
     if (chart) chart.innerHTML = '';
     if (bars) bars.innerHTML = '';
     return;
@@ -185,7 +185,7 @@ export function renderPaperPnlCalendar() {
     box.innerHTML = '<div class="empty">正在计算盈亏日历：首次需要拉取日线历史（最多约 3 年），可能要 5~20 秒…</div>';
     if (meta) meta.textContent = '计算中';
     if (nav) nav.innerHTML = '';
-    if (note) note.textContent = '逐日盈亏按「当日收盘总资产 − 上一可用日总资产 − 当日入金」计算。';
+    if (note) setNoteTip(note, '逐日盈亏按「当日收盘总资产 − 上一可用日总资产 − 当日入金」计算。');
     if (chart) chart.innerHTML = '';
     if (bars) bars.innerHTML = '';
     return;
@@ -196,7 +196,7 @@ export function renderPaperPnlCalendar() {
     box.innerHTML = '<div class="empty">成交之后的交易日还没有收盘数据，明天开盘后这里会自动出现。</div>';
     if (meta) meta.textContent = '等待首个交易日收盘';
     if (nav) nav.innerHTML = '';
-    if (note) note.textContent = '日线取不到时按成本估值，不会把空数据算成盈亏。';
+    if (note) setNoteTip(note, '日线取不到时按成本估值，不会把空数据算成盈亏。');
     if (chart) chart.innerHTML = '';
     if (bars) bars.innerHTML = '';
     return;

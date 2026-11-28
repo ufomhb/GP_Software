@@ -8,10 +8,10 @@
    - 板块总览（#fundThemeView，基金主题口径）
    - 场外基金四个榜（#fundOpenFundView：涨幅/跌幅/热门/ETF）
    --------------------------------------------------------------- */
-import { state } from '../core.js?v=2.14.1';
-import { isNum, nf, priceFmt, pctFmt, toneClass, cleanName, esc } from '../util.js?v=2.14.1';
-import { $, $$ } from '../dom.js?v=2.14.1';
-import { distributionChart, themeHistoryChart, intradayChart } from '../charts.js?v=2.14.1';
+import { state } from '../core.js?v=2.15.0';
+import { isNum, nf, priceFmt, pctFmt, toneClass, cleanName, esc, setNoteTip } from '../util.js?v=2.15.0';
+import { $, $$ } from '../dom.js?v=2.15.0';
+import { distributionChart, themeHistoryChart, intradayChart } from '../charts.js?v=2.15.0';
 
 /* ---------------- 基金涨跌分布 ---------------- */
 
@@ -34,7 +34,7 @@ function renderFundDistribution() {
     chart.innerHTML = '<div class="empty">正在统计全市场基金当日涨跌…</div>';
     if (meta) meta.textContent = '加载中';
     if (dateNote) dateNote.textContent = '--';
-    if (note) note.textContent = '样本来自公开净值 / 场内行情，稍等几秒。';
+    if (note) setNoteTip(note, '样本来自公开净值 / 场内行情，稍等几秒。');
     return;
   }
   if (d.unavailable) {
@@ -62,8 +62,8 @@ function renderFundDistribution() {
   }
   distributionChart(chart, d.buckets || [], total);
   if (note) {
-    note.textContent = d.note
-      || '按每只基金「最新一期净值日涨跌幅」（ETF 为场内实时涨跌）分档统计；涨跌幅缺失或未更新净值的基金不计入。';
+    setNoteTip(note, d.note
+      || '按每只基金「最新一期净值日涨跌幅」（ETF 为场内实时涨跌）分档统计；涨跌幅缺失或未更新净值的基金不计入。');
   }
 }
 
