@@ -201,6 +201,13 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined') {
   document.addEventListener('focusout', (e) => {
     if (tipOf(e.target)) hideHintBubble();
   });
+  // 手机点按：焦点事件在部分浏览器 / 无头环境下不可靠，直接接 click。
+  // 点「?」展开，点别处收起（气泡本身 pointer-events:none，不会挡住点击）。
+  document.addEventListener('click', (e) => {
+    const tip = tipOf(e.target);
+    if (tip) { showHintBubble(tip); return; }
+    if (floatingBubble) hideHintBubble();
+  });
   // 滚动 / 旋转屏幕后气泡要跟着锚点走：聚焦 ? 图标时浏览器会把它滚进视口，
   // 这里如果直接收起，点按图标会「闪一下就没了」。
   const followHintBubble = () => {
