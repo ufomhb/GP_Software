@@ -108,6 +108,120 @@ function setNoteTip(el, text) {
   el.innerHTML = t ? `${hintIcon(t, '口径说明')}<span class="hint-label">口径说明</span>` : '';
 }
 
+/** 模板里直接拼一行「? 口径说明」（v2.15.0，app.js 生成的面板用） */
+function noteTipHtml(text, label = '说明') {
+  const t = String(text == null ? '' : text).trim();
+  if (!t) return '';
+  return `<p class="note-tip muted small">${hintIcon(t, label)}<span class="hint-label">${esc(label)}</span></p>`;
+}
+
+/* ---------------------------------------------------------
+   v2.15.0：「?」说明气泡定位
+   ---------------------------------------------------------
+   原来气泡是 .hint-tip 的绝对定位子元素（left:50%），窄屏上会超出屏幕，
+   也会被 .table-scroll / .modal 这类 overflow 容器裁掉。
+   现在展开时把气泡临时挂到 body，用 position:fixed 夹在视口内；收起时放回原位。
+   --------------------------------------------------------- */
+let floatingBubble = null;
+let floatingHome = null;
+
+function hideHintBubble() {
+  if (!floatingBubble) return;
+  const bubble = floatingBubble;
+  const home = floatingHome;
+  floatingBubble = null;
+  floatingHome = null;
+  bubble.classList.remove('is-floating');
+  bubble.removeAttribute('style');
+  if (home && home.isConnected) home.appendChild(bubble);
+  else bubble.remove();
+}
+
+function positionHintBubble(bubble, tip) {
+  const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+  const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+  bubble.style.maxWidth = `${Math.max(160, Math.min(320, vw - 16))}px`;
+  const bw = bubble.offsetWidth || 0;
+  const bh = bubble.offsetHeight || 0;
+  const r = tip.getBoundingClientRect ? tip.getBoundingClientRect() : { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 };
+  const pad = 8;
+  let left = r.left + r.width / 2 - bw / 2;
+  if (vw) left = Math.max(pad, Math.min(left, vw - bw - pad));
+  let top = r.bottom + pad;
+  if (vh && top + bh > vh - pad) top = Math.max(pad, r.top - pad - bh);
+  bubble.style.left = `${Math.round(left)}px`;
+  bubble.style.top = `${Math.round(top)}px`;
+}
+
+function showHintBubble(tip) {
+  if (!tip || typeof document === 'undefined') return;
+  const bubble = tip.querySelector('.hint-bubble');
+  if (!bubble) return;
+  if (floatingBubble === bubble) { positionHintBubble(bubble, tip); return; }
+  if (floatingBubble) hideHintBubble();
+  floatingHome = tip;
+  floatingBubble = bubble;
+  bubble.classList.add('is-floating');
+  document.body.appendChild(bubble);
+  positionHintBubble(bubble, tip);
+}
+
+/** 把 `[data-hint-note]` 元素里的说明文字换成 ? 图标（保留 label 与 aria） */
+function upgradeHintNote(el) {
+  if (!el || el.nodeType !== 1 || el.dataset.hintDone) return;
+  const text = (el.textContent || '').trim();
+  if (!text) return;
+  const label = el.dataset.hintLabel || '说明';
+  el.dataset.hintDone = '1';
+  el.classList.add('note-tip');
+  el.innerHTML = `${hintIcon(text, label)}<span class="hint-label">${esc(label)}</span>`;
+}
+
+function initHintNotes(root) {
+  const scope = root || (typeof document !== 'undefined' ? document : null);
+  if (!scope || !scope.querySelectorAll) return;
+  if (scope.matches && scope.matches('[data-hint-note]')) upgradeHintNote(scope);
+  scope.querySelectorAll('[data-hint-note]').forEach(upgradeHintNote);
+}
+
+if (typeof document !== 'undefined' && typeof window !== 'undefined') {
+  const tipOf = (target) => (target && target.closest ? target.closest('.hint-tip') : null);
+  document.addEventListener('mouseover', (e) => {
+    const tip = tipOf(e.target);
+    if (tip && !tip.contains(e.relatedTarget)) showHintBubble(tip);
+  });
+  document.addEventListener('mouseout', (e) => {
+    const tip = tipOf(e.target);
+    if (tip && !tip.contains(e.relatedTarget)) hideHintBubble();
+  });
+  document.addEventListener('focusin', (e) => {
+    const tip = tipOf(e.target);
+    if (tip) showHintBubble(tip);
+  });
+  document.addEventListener('focusout', (e) => {
+    if (tipOf(e.target)) hideHintBubble();
+  });
+  // 滚动 / 旋转屏幕后气泡的 fixed 坐标会失效，直接收起
+  window.addEventListener('scroll', hideHintBubble, { capture: true, passive: true });
+  window.addEventListener('resize', hideHintBubble, { passive: true });
+
+  const startHintNotes = () => {
+    initHintNotes(document);
+    if (typeof MutationObserver === 'undefined') return;
+    new MutationObserver((list) => {
+      list.forEach((m) => {
+        m.addedNodes.forEach((node) => {
+          if (!node || node.nodeType !== 1) return;
+          if (node.matches && node.matches('[data-hint-note]')) upgradeHintNote(node);
+          else if (node.querySelectorAll) node.querySelectorAll('[data-hint-note]').forEach(upgradeHintNote);
+        });
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startHintNotes);
+  else startHintNotes();
+}
+
 export {
   isNum,
   nf,
@@ -125,4 +239,6 @@ export {
   timeText,
   hintIcon,
   setNoteTip,
+  noteTipHtml,
+  initHintNotes,
 };

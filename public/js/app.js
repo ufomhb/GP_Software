@@ -317,6 +317,8 @@ async function getKlineCached(secid, klt = 101, limit = 140, fqt = null) {
 
 function mountOverlay(html, className = '') {
   const root = $('#overlayRoot');
+  // 自动交易面板若正被搬在弹窗里，换弹窗前先搬回页面，避免随 innerHTML 一起被销毁
+  restorePaperAutoPanel(root);
   // 新建基座会顶掉之前的所有叠加层（例如多个弹窗互跳时），避免残留挡视线
   root.innerHTML = `<div class="overlay ${className}">${html}</div>`;
   document.body.style.overflow = 'hidden';
@@ -366,6 +368,8 @@ function closeOverlay() {
         });
       }
     } catch { /* 释放失败不影响关闭 */ }
+    // v2.15.0：自动交易面板在弹层里时先搬回页面再移除弹层
+    restorePaperAutoPanel(layer);
     layer.remove();
     // v2.14.0：叠层下单弹窗关闭后清掉临时标的；持仓详情关闭后清掉详情状态
     if (!root.querySelector('#paperForm')) state.paperTrade = null;
@@ -382,6 +386,8 @@ function closeOverlay() {
     }
     return;
   }
+  // v2.15.0：基座弹窗关闭前把自动交易面板搬回页面
+  restorePaperAutoPanel(root);
   root.innerHTML = '';
   document.body.style.overflow = '';
   state.paperHolding = null;
@@ -3941,6 +3947,7 @@ function renderPaper() {
       </div>
       <div class="head-actions">
         <button class="btn primary small" id="paperBuyBtn">模拟买入</button>
+        <button class="btn small" id="paperAutoBtn" title="在子窗口里设置条件单 / 网格 / 定投 / 跟单 / 持仓预警">自动交易</button>
         <button class="text-link" id="paperExportBtn">导出成交 CSV</button>
       </div>
     </div>
@@ -3971,6 +3978,8 @@ function renderPaper() {
 
   const buyBtn = $('#paperBuyBtn');
   if (buyBtn) buyBtn.addEventListener('click', () => openPaperTrade('buy'));
+  const autoBtn = $('#paperAutoBtn');
+  if (autoBtn) autoBtn.addEventListener('click', () => openPaperAutoModal());
   const exportBtn = $('#paperExportBtn');
   if (exportBtn) exportBtn.addEventListener('click', exportPaperTradesCsv);
   const tradesToggle = $('#paperTradesToggle');
@@ -4039,6 +4048,58 @@ function renderPaper() {
 }
 
 /* =========================================================
+   自动交易子窗口（v2.15.0）
+   ---------------------------------------------------------
+   把页面上的 #paperAutoPanel 临时搬进弹窗：同一份 DOM、同一批事件监听，
+   关闭时按注释锚点搬回原位。这样不用复制一套表单（id 不能重复）。
+   ========================================================= */
+let paperAutoHomeAnchor = null;
+
+function detachPaperAutoPanel(host) {
+  const panel = $('#paperAutoPanel');
+  if (!panel || !host || paperAutoHomeAnchor) return;
+  const anchor = document.createComment('paper-auto-panel-home');
+  panel.parentNode.insertBefore(anchor, panel);
+  paperAutoHomeAnchor = anchor;
+  panel.classList.add('in-modal');
+  host.appendChild(panel);
+}
+
+/** 把搬进弹窗的自动交易面板搬回页面；传 when 时只在面板位于它内部时搬 */
+function restorePaperAutoPanel(when) {
+  const panel = $('#paperAutoPanel');
+  if (!panel || !panel.classList.contains('in-modal')) return;
+  if (when && !when.contains(panel)) return;
+  panel.classList.remove('in-modal');
+  const anchor = paperAutoHomeAnchor;
+  if (anchor && anchor.isConnected) anchor.replaceWith(panel);
+  else {
+    const view = $('#view-paper') || document.body;
+    view.appendChild(panel);
+  }
+  paperAutoHomeAnchor = null;
+}
+
+function openPaperAutoModal() {
+  if ($('#paperAutoModalHost')) return;
+  const root = $('#overlayRoot');
+  if (!root) return;
+  const html = `<div class="modal modal-md paper-auto-modal">
+    <div class="modal-head">
+      <div class="modal-title"><h2>自动交易</h2><span class="code">条件单 / 网格 / 定投 / 跟单 / 持仓预警</span></div>
+      <button class="modal-close" data-close>×</button>
+    </div>
+    <p class="muted small paper-auto-modal-note">服务端每分钟执行一次，关掉页面也生效；在这里改完直接关闭即可。</p>
+    <div id="paperAutoModalHost" class="paper-auto-modal-host"></div>
+  </div>`;
+  const overlay = root.querySelector('.overlay') ? pushOverlay(html) : mountOverlay(html);
+  if (!overlay) return;
+  detachPaperAutoPanel(overlay.querySelector('#paperAutoModalHost'));
+  // 打开时按最新账户重绘一次（列表与「标的」下拉都取自 state.paper）
+  renderPaperAuto({ reload: () => loadPaper(true) });
+}
+
+/* =========================================================
    模拟账户排行榜（v2.8.0）
    ---------------------------------------------------------
    用户明确要求：本系统所有登录用户都能看到彼此模拟账户的标的与总资产。
@@ -4099,13 +4160,9 @@ function renderPaperRanking() {
     // 0 收益不标正负号，避免 -0 显示成 +0.00%
     const pctVal = Number(item.profitPct) || 0;
     const pctText = Math.abs(pctVal) < 0.005 ? '0.00%' : `${pctVal > 0 ? '+' : ''}${pctVal.toFixed(2)}%`;
-    // v2.14.0：手机上原来的今日/本周/本月/今年列被 CSS 隐藏，改为在用户名下用紧凑标签展示
-    const periodChips = `<div class="paper-rank-periods only-mobile">${[
-      ['今日', item.todayPct], ['本周', item.weekPct], ['本月', item.monthPct], ['今年', item.yearPct],
-    ].map(([label, value]) => `<span class="prp"><i>${label}</i>${pctCellHtml(value)}</span>`).join('')}</div>`;
     return `<tr class="${item.username === me ? 'is-me' : ''}">
       <td class="num">${i + 1}</td>
-      <td><span class="t-name">${esc(item.username)}</span>${item.username === me ? ' <span class="badge">我</span>' : ''}${periodChips}</td>
+      <td><span class="t-name">${esc(item.username)}</span>${item.username === me ? ' <span class="badge">我</span>' : ''}</td>
       <td class="t-price">${nf(item.total, 2)}</td>
       <td class="t-chg ${toneClass(item.profit)}">${signedFmt(item.profit, 2)}</td>
       <td class="t-chg ${toneClass(pctVal)}">${pctText}</td>
@@ -4135,7 +4192,8 @@ function renderPaperRanking() {
       </div>
       <span class="muted small">${items.length} 个账号${d.estimated ? ' · 部分持仓按成本价估算' : ''}${d.truncated ? ' · 仅显示前 200 个账号' : ''}${d.updatedAt ? ` · 截至 ${esc(timeText(d.updatedAt))}` : ''}${items.some((x) => !x.equityDays || x.equityDays < 2) ? ' · 周期收益 / 回撤按日终快照累积，不足两天显示 --' : ''}</span>
     </div>
-    <div class="table-scroll tall-table mt8"><table class="table paper-rank-table">
+    <div class="paper-rank-scroll-hint only-mobile muted small">表格可左右滑动查看全部列；排名 / 用户 / 总资产 固定在最左侧。</div>
+    <div class="table-scroll tall-table paper-rank-scroll mt8"><table class="table paper-rank-table">
       <thead><tr><th>排名</th><th>用户</th><th>总资产</th><th>累计盈亏</th><th>累计收益率</th><th>今日</th><th>本周</th><th>本月</th><th>今年</th><th>回撤</th><th>持仓（前 3）</th><th>最近操作</th><th>详情</th></tr></thead>
       <tbody>${rankRows || '<tr><td colspan="13"><div class="empty">还没有账号</div></td></tr>'}</tbody>
     </table></div>`;
@@ -4838,7 +4896,7 @@ async function openPaperBuyFromWatch(secid) {
 
 const PAPER_HOLDING_TABS = [
   { key: 'minute', label: '分时', hint: '今日 1 分钟分时' },
-  { key: 'five', label: '五日', hint: '最近 5 个交易日的 5 分钟线' },
+  { key: 'five', label: '五日', hint: '最近 5 个交易日的 5 分钟线（默认显示全部 5 天，按日期分隔）' },
   { key: 'day', label: '日K', hint: '日 K 线' },
   { key: 'month', label: '月K', hint: '月 K 线' },
 ];
@@ -4985,7 +5043,8 @@ async function renderPaperHoldingChart() {
     const candles = (k && k.candles) || [];
     if (candles.length < 2) { box.innerHTML = '<div class="empty small">暂无 K 线数据</div>'; return; }
     candleChart(box, k, {
-      zoomStart: tab === 'five' ? 60 : 55,
+      // v2.15.0：五日默认铺满 5 个交易日（原来默认只显示后 40%，要手动缩小才看全）
+      zoomStart: tab === 'five' ? 0 : 55,
       indicator: 'none',
       marks: paperHoldingMarks(h.secid, tab, candles),
     });

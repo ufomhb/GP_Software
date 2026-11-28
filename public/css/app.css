@@ -3178,19 +3178,11 @@ button[hidden] { display: none !important; }
   .fund-subnav-jump { margin-left: 0; }
 }
 
-/* 模拟账户排行榜：当前用户高亮，手机端只留关键列
-   v2.12.0：加了今日/本周/本月/今年/回撤五列，窄屏把这五列都收起来（列序号已变） */
+/* 模拟账户排行榜：当前用户高亮。
+   v2.15.0：手机端不再隐藏「今日/本周/本月/今年」列，改为固定前三列 + 横向滑动
+   （规则见文件末尾 v2.15.0 段）。 */
 .paper-rank-table tr.is-me td { background: rgba(56, 189, 248, .07); }
 .paper-rank-table td .badge { margin-left: 4px; }
-@media (max-width: 720px) {
-  .paper-rank-table th:nth-child(6), .paper-rank-table td:nth-child(6),
-  .paper-rank-table th:nth-child(7), .paper-rank-table td:nth-child(7),
-  .paper-rank-table th:nth-child(8), .paper-rank-table td:nth-child(8),
-  .paper-rank-table th:nth-child(9), .paper-rank-table td:nth-child(9),
-  .paper-rank-table th:nth-child(10), .paper-rank-table td:nth-child(10),
-  .paper-rank-table th:nth-child(12), .paper-rank-table td:nth-child(12) { display: none; }
-  .paper-rank-table th:nth-child(11), .paper-rank-table td:nth-child(11) { max-width: 128px; overflow: hidden; text-overflow: ellipsis; }
-}
 
 /* =========================================================
    v2.9.0：模拟买卖弹窗（搜索标的 / 报价 / 分时 / 比例下单）
@@ -3464,11 +3456,8 @@ tr.is-dim td { opacity: .62; }
   /* 表头「累计卖出股数」这类 6 字标题换行，否则单列 76px，整表 434px 还是滑 */
   .paper-realized-table th { white-space: normal; }
 
-  /* 排行榜：「持仓（前 3）」列内容最长（约 200px），手机上让位给周期收益列 */
-  .paper-rank-table th:nth-child(11), .paper-rank-table td:nth-child(11),
-  .paper-rank-table th:nth-child(12), .paper-rank-table td:nth-child(12) { display: none; }
-  /* 排行榜：累计盈亏与累计收益率同源（盈亏 = 收益率 × 本金），手机只留收益率 */
-  .paper-rank-table th:nth-child(4), .paper-rank-table td:nth-child(4) { display: none; }
+  /* 排行榜：v2.15.0 起手机上保留全部列（横向滑动 + 前三列固定），不再裁剪 */
+  .paper-rank-table th:nth-child(11), .paper-rank-table td:nth-child(11) { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 
   /* 委托：状态已并入委托时间（含买/卖方向），成交均价省掉，撤单留在首屏 */
   .paper-order-table th:nth-child(3), .paper-order-table td:nth-child(3),
@@ -3602,9 +3591,6 @@ tr.is-dim td { opacity: .62; }
 .paper-holding-chart .empty { padding-top: 60px; }
 .paper-holding-legend .tag { margin-right: 2px; }
 
-/* 手机端：排行周期收益以标签形式显示在用户名下（原来的列会被 CSS 隐藏） */
-.paper-rank-periods { display: none; }
-
 @media (max-width: 780px) {
   .paper-pos-actions { gap: 8px; }
   .paper-pos-actions .text-link { padding: 4px 2px; min-height: 26px; }
@@ -3617,13 +3603,6 @@ tr.is-dim td { opacity: .62; }
   .paper-picks { max-height: 118px; }
 }
 
-/* 排行榜：周期列在 ≤720px 被隐藏，同一断点用标签补上（721–780 表格列可见，不重复） */
-@media (max-width: 720px) {
-  .paper-rank-periods { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 4px; }
-  .paper-rank-periods .prp { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: #7f8fa8; }
-  .paper-rank-periods .prp i { font-style: normal; }
-}
-
 /* v2.14.0：持仓行整行可点开图表详情（按钮仍优先） */
 .paper-pos-table tbody tr.is-clickable { cursor: pointer; }
 .paper-pos-table tbody tr.is-clickable:hover td { background: rgba(56, 189, 248, .05); }
@@ -3632,3 +3611,64 @@ tr.is-dim td { opacity: .62; }
 /* v2.14.0：休市时展示最近交易日分时的提示 */
 .paper-holding-chart-note { margin: 6px 0 2px; }
 .paper-holding-chart-note:empty { display: none; }
+
+/* =========================================================
+   v2.15.0
+   ---------------------------------------------------------
+   1) 手机端排行榜：固定「排名 / 用户 / 总资产」三列 + 其余列横向滑动
+      （原来直接隐藏今日/本周/本月/今年列，再用用户名下的小标签补，
+        标签会换行、也没有列标题——用户反馈「换行、看不到标题行」）
+   2) 自动交易子窗口（模拟买入旁边的「自动交易」按钮）
+   3) 「?」说明气泡改成 JS 定位到 body（不超出屏幕、不被 overflow 容器裁切）
+   ========================================================= */
+.paper-rank-scroll-hint { margin: 8px 0 0; }
+
+@media (max-width: 780px) {
+  .paper-rank-scroll {
+    overflow: auto;
+    max-height: 70vh;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* 整表不换行：放不下的列交给横向滚动条 */
+  .paper-rank-table { min-width: 1000px; }
+  .paper-rank-table th,
+  .paper-rank-table td { white-space: nowrap; }
+
+  /* 固定三列：宽度写死，left 偏移才能对齐 */
+  .paper-rank-table th:nth-child(1), .paper-rank-table td:nth-child(1) { position: sticky; left: 0; z-index: 2; width: 42px; min-width: 42px; max-width: 42px; }
+  .paper-rank-table th:nth-child(2), .paper-rank-table td:nth-child(2) { position: sticky; left: 42px; z-index: 2; width: 108px; min-width: 108px; max-width: 108px; }
+  .paper-rank-table th:nth-child(3), .paper-rank-table td:nth-child(3) { position: sticky; left: 150px; z-index: 2; width: 108px; min-width: 108px; max-width: 108px; }
+  .paper-rank-table th:nth-child(-n+3) { z-index: 3; }
+  .paper-rank-table th:nth-child(1), .paper-rank-table td:nth-child(1),
+  .paper-rank-table th:nth-child(2), .paper-rank-table td:nth-child(2),
+  .paper-rank-table th:nth-child(3), .paper-rank-table td:nth-child(3) { background: var(--panel); }
+  .paper-rank-table tr.is-me td:nth-child(-n+3) { background: #10202f; }
+  .paper-rank-table td:nth-child(2) .t-name { display: inline-block; max-width: 74px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+  /* 固定列右侧投影，暗示右边还能滑 */
+  .paper-rank-table th:nth-child(3), .paper-rank-table td:nth-child(3) { box-shadow: 6px 0 8px -6px rgba(0, 0, 0, .6); }
+}
+
+/* 自动交易子窗口：面板整体搬进弹窗，去掉原面板的边框与内边距 */
+.paper-auto-modal { width: min(860px, 100%); max-height: 88vh; overflow-y: auto; }
+.paper-auto-modal-note { margin: 0 0 8px; }
+.paper-auto-modal-host > .panel { margin: 0; padding: 0; border: 0; background: transparent; }
+.paper-auto-modal-host > .panel > .panel-head > div:first-child { display: none; }
+@media (max-width: 780px) {
+  .paper-auto-modal { max-height: 92vh; }
+}
+
+/* 「?」气泡：JS 在展开时把它临时挂到 body 上并用 position:fixed 定位，
+   这样既不会被 .table-scroll / .modal 的 overflow 裁切，也能夹在视口内。 */
+.hint-bubble.is-floating {
+  position: fixed;
+  left: 0;
+  top: 0;
+  margin: 0;
+  transform: none;
+  max-width: calc(100vw - 16px);
+  opacity: 1;
+  visibility: visible;
+  z-index: 9999;
+}
+

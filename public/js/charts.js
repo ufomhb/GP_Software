@@ -124,6 +124,20 @@ export function areaChart(el, candles, color = C.accent, options = {}) {
   });
 }
 
+/**
+ * v2.15.0：多日分时 K 线（五日 / 60 分等）里每个交易日的「第一根」下标。
+ * 只标这些位置就能得到「一天一个日期标签」，同时可作为日分割线的位置。
+ */
+export function dayStartIndexes(dates) {
+  const out = [];
+  let prev = null;
+  (dates || []).forEach((d, i) => {
+    const key = String(d == null ? '' : d).slice(0, 10);
+    if (key !== prev) { out.push(i); prev = key; }
+  });
+  return out;
+}
+
 export function candleChart(el, kline, options = {}) {
   const candles = kline && kline.candles;
   if (!candles || candles.length < 2) {
@@ -134,9 +148,18 @@ export function candleChart(el, kline, options = {}) {
   const dates = candles.map((c) => c.d);
   const ohlc = candles.map((c) => [c.o, c.c, c.l, c.h]);
   const intraday = options.intraday || dates[0].includes(' ');
+  // v2.15.0：五日这类跨多个交易日的分时 K 线，X 轴只显示日期（不显示时分），
+  // 并在每个交易日的第一根 K 线上画一条竖向分割线。默认自动开启，可用 options 关掉。
+  const dayStarts = dayStartIndexes(dates);
+  const multiDayIntraday = intraday && dayStarts.length > 1;
+  const daySplit = options.daySplit === undefined ? multiDayIntraday : !!options.daySplit;
+  const dateOnlyLabels = options.dateOnlyLabels === undefined ? daySplit : !!options.dateOnlyLabels;
+  const dayStartSet = new Set(dayStarts);
   const xLabel = (value) => {
-    if (!intraday) return value.slice(5);
-    return value.includes(' ') ? value.slice(5, 16) : value;
+    const text = String(value == null ? '' : value);
+    if (!intraday) return text.slice(5);
+    if (dateOnlyLabels) return text.slice(5, 10);
+    return text.includes(' ') ? text.slice(5, 16) : text;
   };
   const volumes = candles.map((c) => c.v);
   const amount = candles.map((c) => c.a);
@@ -169,6 +192,16 @@ export function candleChart(el, kline, options = {}) {
   const zoomState = options.zoomStartValue && options.zoomEndValue
     ? { startValue: options.zoomStartValue, endValue: options.zoomEndValue }
     : { start: options.zoomStart ?? 30, end: options.zoomEnd ?? 100 };
+  // v2.15.0：按交易日画竖向分割线（只画「换天」的那一根，不画每根 K 线）
+  const daySplitLine = daySplit ? {
+    silent: true,
+    symbol: 'none',
+    animation: false,
+    label: { show: false },
+    lineStyle: { color: 'rgba(148,163,184,.35)', width: 1, type: 'dashed' },
+    emphasis: { disabled: true },
+    data: dayStarts.slice(1).map((idx) => ({ xAxis: dates[idx] })),
+  } : null;
   // v2.14.0：手机弹窗里的 K 线高度只有 ~260px，量能副图高度 ~30px；
   // 默认 5 条刻度会叠在一起，窄高度改成 2 条。
   const compactHeight = (Number(el.clientHeight) || 400) < 340;
@@ -345,7 +378,13 @@ export function candleChart(el, kline, options = {}) {
       axisLine: { lineStyle: { color: C.line } },
       axisTick: { show: false },
       axisLabel: i === 0
-        ? { color: C.muted, fontSize: 9, formatter: xLabel, hideOverlap: true }
+        ? {
+            color: C.muted,
+            fontSize: 9,
+            formatter: xLabel,
+            hideOverlap: true,
+            ...(dateOnlyLabels ? { interval: (index) => dayStartSet.has(index) } : {}),
+          }
         : { show: false },
       splitLine: { show: false },
     })),
@@ -396,6 +435,7 @@ export function candleChart(el, kline, options = {}) {
         fillerColor: 'rgba(56,189,248,.1)',
         handleStyle: { color: '#38bdf8', borderColor: '#38bdf8' },
         textStyle: { color: C.muted, fontSize: 8 },
+        ...(dateOnlyLabels ? { labelFormatter: (v) => String(v == null ? '' : v).slice(5, 10) } : {}),
         dataBackground: { lineStyle: { color: 'rgba(148,163,184,.25)' }, areaStyle: { color: 'rgba(148,163,184,.08)' } },
       },
     ],
@@ -412,6 +452,7 @@ export function candleChart(el, kline, options = {}) {
         },
         emphasis: { itemStyle: { borderWidth: 1.5 } },
         markPoint: markPointOf(),
+        ...(daySplitLine ? { markLine: daySplitLine } : {}),
       },
       ...maSeries,
       ...bollSeries,
