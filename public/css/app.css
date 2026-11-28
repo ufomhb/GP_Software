@@ -3622,8 +3622,14 @@ tr.is-dim td { opacity: .62; }
    3) 「?」说明气泡改成 JS 定位到 body（不超出屏幕、不被 overflow 容器裁切）
    ========================================================= */
 .paper-rank-scroll-hint { margin: 8px 0 0; }
+/* 持仓列：桌面最多列 3 只；「共 N 只」只在手机端（只留第一只时）显示 */
+.paper-rank-held { display: block; }
+.paper-rank-more { display: none; color: #64748b; font-size: 10px; }
 
 @media (max-width: 780px) {
+  .paper-rank-table td:nth-child(11) .paper-rank-held:nth-child(n+2),
+  .paper-rank-table td:nth-child(11) .paper-rank-more-all { display: none; }
+  .paper-rank-more { display: inline; }
   .paper-rank-scroll {
     overflow: auto;
     max-height: 70vh;
