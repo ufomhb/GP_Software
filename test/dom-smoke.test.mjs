@@ -2611,3 +2611,22 @@ test('DOM：v2.14.0 自选股「买」在账户未加载时先拉账户，再打
   app.state.watchlist = prevWatch;
   app.state.watchData = prevWatchData;
 });
+
+test('DOM：v2.14.1 关闭持仓详情后恢复主画面滚动（body overflow 不能一直 hidden）', () => {
+  const prev = app.state.paper;
+  app.state.paper = paperFixture(1);
+  app.openPaperHolding('1.600519', '贵州茅台', '600519');
+  assert.equal(document.body.style.overflow, 'hidden', '打开弹窗时锁定背景滚动');
+  app.closeOverlay();
+  assert.equal(document.querySelector('.paper-holding-modal'), null, '弹窗应关闭');
+  assert.equal(document.body.style.overflow, '', '关闭后必须恢复纵向滚动');
+  app.state.paper = prev;
+});
+
+test('DOM：v2.14.1 只有叠加层、没有基座弹窗时，关闭最后一层也要恢复滚动', () => {
+  app.pushOverlay('<div class="modal" id="soloLayer">单独一层</div>');
+  assert.equal(document.body.style.overflow, 'hidden');
+  app.closeOverlay();
+  assert.equal(document.querySelector('#soloLayer'), null);
+  assert.equal(document.body.style.overflow, '', '最后一层关闭后滚动锁必须释放');
+});

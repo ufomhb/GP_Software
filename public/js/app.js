@@ -370,6 +370,16 @@ function closeOverlay() {
     // v2.14.0：叠层下单弹窗关闭后清掉临时标的；持仓详情关闭后清掉详情状态
     if (!root.querySelector('#paperForm')) state.paperTrade = null;
     if (!root.querySelector('.paper-holding-modal')) state.paperHolding = null;
+    // v2.14.1：如果移除的是最后一个弹层（没有 mountOverlay 基座，例如直接从页面打开
+    // 持仓详情再关闭），必须把 body 的滚动锁恢复，否则主画面纵向滚动条失效。
+    if (!root.querySelector('.overlay')) {
+      document.body.style.overflow = '';
+      state.stockModal = null;
+      state.usStockModal = null;
+      state.paperHoldingTab = 'minute';
+      const wasDetail = parseHashRoute().detail;
+      if (wasDetail) history.replaceState({ view: state.view }, '', `#${state.view}`);
+    }
     return;
   }
   root.innerHTML = '';
@@ -4992,7 +5002,7 @@ function openPaperHolding(secid, name, code) {
   const displayCode = code || (pos && pos.code) || '';
   state.paperHolding = { secid: String(secid), name: displayName, code: String(displayCode) };
   if (!PAPER_HOLDING_TABS.some((x) => x.key === state.paperHoldingTab)) state.paperHoldingTab = 'minute';
-  const overlay = pushOverlay(`
+  const holdingHtml = `
     <div class="modal modal-md paper-holding-modal">
       <div class="modal-head">
         <div class="modal-title"><h2>${esc(displayName)}</h2><span class="code">${esc(displayCode)} · ${esc(secid)}</span></div>
@@ -5011,7 +5021,11 @@ function openPaperHolding(secid, name, code) {
       <div class="paper-holding-chart-note muted small" id="paperHoldingChartNote"></div>
       <div id="paperHoldingChart" class="modal-chart paper-holding-chart"></div>
       <p class="muted small paper-holding-legend"><span class="tag in">B</span> 买入点 <span class="tag out">S</span> 卖出点 · 分时只标注今日成交；五日 / 日K / 月K 标注历史成交。分时页可直接下单，成交后本页自动刷新。</p>
-    </div>`);
+    </div>`;
+  // v2.14.1：从页面直接打开时没有下层弹窗，用 mountOverlay 做基座（关闭时会恢复滚动）；
+  // 只有在别的弹窗之上打开才用叠加层，避免把下层弹窗顶掉。
+  const root = $('#overlayRoot');
+  const overlay = root && root.querySelector('.overlay') ? pushOverlay(holdingHtml) : mountOverlay(holdingHtml);
   if (!overlay) return;
 
   const seg = overlay.querySelector('#paperHoldingSeg');
