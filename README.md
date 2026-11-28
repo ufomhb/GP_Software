@@ -209,6 +209,15 @@ npm run selfcheck                         # 安全基线 39 项 + 存储层 23 �
 - 前端渲染约定：**外部文本进 `innerHTML` 前必须 `esc()`；进 `href`/`src` 前必须再过 `safeUrl()`**（`esc` 挡不住 `javascript:` 协议）。2026-11-15 审计了 225 处模板插值，35 处文本型全部安全，并补了 `safeUrl` 覆盖快讯链接等 2 处 href。
 - CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
 
+### v2.14.1 更新（2026-11-28）
+
+> 修复：关闭持仓个股详情后，主画面纵向滚动条失效。
+
+- **现象**：模拟交易 →「账户与信号留痕」点持仓行打开个股详情，关闭后页面无法继续上下滑动（右侧滚动条拖动无反应）。
+- **根因**：详情用 `pushOverlay` 打开，但页面上没有 `mountOverlay` 基座；`closeOverlay()` 的叠加层分支只移除最上层就 `return`，没有恢复 `document.body.style.overflow = 'hidden'`，滚动锁一直留在 body 上。叠层下单等场景因为有基座，所以以前没暴露。
+- **修法**：① `openPaperHolding` 在无基座时改用 `mountOverlay`（详情上再开买卖弹窗仍用 `pushOverlay` 叠层）；② `closeOverlay` 在移除最后一层（`#overlayRoot` 里没有任何 `.overlay`）时统一恢复 `body` 滚动，并清理 `stockModal` / `paperHoldingTab` 与详情 hash。既覆盖本次入口，也兜住以后任何「只有叠加层、没有基座」的弹窗。
+- **测试**：`dom-smoke` 新增 2 项回归（关闭持仓详情后 `overflow` 恢复为空；只有叠加层时关闭最后一层也释放滚动锁），95 项全通过。
+
 ### v2.14.0 更新（2026-11-28）
 
 > 按 11/28 的 9 条功能优化落地：真正的 7 天免登录、持仓个股四周期图表与买卖点、成交折叠、排行榜周期收益手机可见、自选股直接买入、客户端移除重置、说明收进 ? 图标，并同步做手机端适配。

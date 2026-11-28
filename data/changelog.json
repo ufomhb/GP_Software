@@ -1,5 +1,15 @@
 [
   {
+    "version": "2.14.1",
+    "date": "2026-11-28",
+    "title": "修复：关闭持仓个股详情后主画面纵向滚动条失效",
+    "items": [
+      "修复：在「模拟交易 · 账户与信号留痕」点击持仓行打开个股详情，关闭后整页无法继续上下滑动。根因是详情用 pushOverlay 打开且没有 mountOverlay 基座，closeOverlay 只移除最上层就提前 return，body 的 overflow:hidden 一直没恢复。",
+      "修法：① 从页面直接打开详情时改用 mountOverlay 做基座；② closeOverlay 在移除最后一层（#overlayRoot 里已没有任何 .overlay）时统一恢复 document.body.style.overflow，并清理 stockModal / paperHoldingTab 与详情 hash。叠层下单（详情上再开买卖弹窗）行为不变。",
+      "测试：dom-smoke 新增 2 项回归（关闭持仓详情后 overflow 恢复为空；只有叠加层、没有基座时关闭最后一层也释放滚动锁），全套 95 项通过。"
+    ]
+  },
+  {
     "version": "2.14.0",
     "date": "2026-11-28",
     "title": "模拟交易体验优化：真正的 7 天免登录、持仓个股四周期图表与买卖点、成交折叠、自选股直接买入、说明图标",
