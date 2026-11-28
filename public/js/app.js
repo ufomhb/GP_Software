@@ -26,7 +26,7 @@ import {
   intradayCompareChart,
   compareTrendChart,
   COLORS,
-} from './charts.js?v=2.15.1';
+} from './charts.js?v=2.15.2';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -46,11 +46,11 @@ import {
   timeText,
   hintIcon,
   setNoteTip,
-} from './util.js?v=2.15.1';
+} from './util.js?v=2.15.2';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.15.1';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.15.1';
+import { $, $$, toast, debounce } from './dom.js?v=2.15.2';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.15.2';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -63,7 +63,7 @@ import {
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.15.1';
+} from './core.js?v=2.15.2';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -80,7 +80,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.15.1';
+} from './views/funds.js?v=2.15.2';
 
 // 基金页新增子页渲染（v2.10.0：涨跌分布 / 板块总览 / 场外基金四榜，见 views/fundpanes.js）
 import {
@@ -90,7 +90,7 @@ import {
   renderFundBoard,
   renderFundBoardCompareBar,
   sortFundThemes,
-} from './views/fundpanes.js?v=2.15.1';
+} from './views/fundpanes.js?v=2.15.2';
 
 // 自选基金：多组合 / 今日 TOP5 / 盈亏日历 / 组合 vs 上证（v2.10.0）
 import {
@@ -100,7 +100,7 @@ import {
   renderFundVsIndex,
   activePortfolio,
   activeHoldings,
-} from './views/fundwatch.js?v=2.15.1';
+} from './views/fundwatch.js?v=2.15.2';
 import {
   computeFundPnl,
   computeFundDailyPnl,
@@ -112,7 +112,7 @@ import {
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './views/fundpnl.js?v=2.15.1';
+} from './views/fundpnl.js?v=2.15.2';
 
 // 模拟盘盈亏日历 / 资产曲线 / 个股累计收益（v2.11.0，见 views/paperpnl.js）
 import {
@@ -122,7 +122,7 @@ import {
   paperCalendarBuckets,
   paperPnlSummary,
   paperMonthlyBars,
-} from './views/paperpnl.js?v=2.15.1';
+} from './views/paperpnl.js?v=2.15.2';
 
 // 模拟盘自动化：委托 / 条件单 / 网格定投 / 跟单 / 持仓预警 / 复盘（v2.12.0，见 views/paperauto.js）
 import {
@@ -131,7 +131,7 @@ import {
   renderPaperReview,
   paperOrderStatusLabel,
   conditionText,
-} from './views/paperauto.js?v=2.15.1';
+} from './views/paperauto.js?v=2.15.2';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -141,7 +141,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.15.1';
+} from './views/market.js?v=2.15.2';
 
 
 /* =========================================================
@@ -368,13 +368,13 @@ function closeOverlay() {
         });
       }
     } catch { /* 释放失败不影响关闭 */ }
-    // v2.15.1：自动交易面板在弹层里时先搬回页面再移除弹层
+    // v2.15.2：自动交易面板在弹层里时先搬回页面再移除弹层
     restorePaperAutoPanel(layer);
     layer.remove();
     // v2.14.0：叠层下单弹窗关闭后清掉临时标的；持仓详情关闭后清掉详情状态
     if (!root.querySelector('#paperForm')) state.paperTrade = null;
     if (!root.querySelector('.paper-holding-modal')) state.paperHolding = null;
-    // v2.15.1：如果移除的是最后一个弹层（没有 mountOverlay 基座，例如直接从页面打开
+    // v2.15.2：如果移除的是最后一个弹层（没有 mountOverlay 基座，例如直接从页面打开
     // 持仓详情再关闭），必须把 body 的滚动锁恢复，否则主画面纵向滚动条失效。
     if (!root.querySelector('.overlay')) {
       document.body.style.overflow = '';
@@ -386,7 +386,7 @@ function closeOverlay() {
     }
     return;
   }
-  // v2.15.1：基座弹窗关闭前把自动交易面板搬回页面
+  // v2.15.2：基座弹窗关闭前把自动交易面板搬回页面
   restorePaperAutoPanel(root);
   root.innerHTML = '';
   document.body.style.overflow = '';
@@ -952,7 +952,7 @@ function openIntradayChart(secid, date, name) {
       loading.hidden = false;
       loading.textContent = `该日期行情暂不可用：${err.message}`;
     }
-    toast(`分时加载失败：{err.message}`, 'err');
+    toast(`分时加载失败：${err.message}`, 'err');
   });
 }
 
@@ -1501,7 +1501,7 @@ function renderUSMinutes() {
   }
   const minutes = state.usMinutes;
   if (!minutes || minutes.error) {
-    grid.innerHTML = `<div class="empty">${minutes ? `分时加载失败：{esc(minutes.error || '暂无数据')}` : '正在加载热门股分时…'}</div>`;
+    grid.innerHTML = `<div class="empty">${minutes ? `分时加载失败：${esc(minutes.error || '暂无数据')}` : '正在加载热门股分时…'}</div>`;
     return;
   }
   const map = new Map((minutes.items || []).map((x) => [x.symbol, x]));
@@ -1521,7 +1521,7 @@ function renderUSMinutes() {
       ? Number(sess.price) / (1 + Number(sess.pct) / 100)
       : m.prevClose;
     const range = got
-      ? `${got.day.slice(5)} ${got.points[0][0]}–{got.points[got.points.length - 1][0]}`
+      ? `${got.day.slice(5)} ${got.points[0][0]}–${got.points[got.points.length - 1][0]}`
       : `${phaseLabel}暂无成交`;
     return `<div class="us-mini-card" data-us-stock="${esc(x.symbol)}" title="${esc(cleanName(x.name))} ${esc(x.symbol)}">
       <div class="umi-head">
@@ -1872,7 +1872,7 @@ function renderMetalIntraday() {
     return;
   }
   if (data.error) {
-    grid.innerHTML = `<div class="empty">金银分时加载失败：{esc(data.error)}</div>`;
+    grid.innerHTML = `<div class="empty">金银分时加载失败：${esc(data.error)}</div>`;
     return;
   }
   const items = Array.isArray(data.items) ? data.items : [];
@@ -2040,7 +2040,7 @@ async function loadSectorPeriod(force = false) {
       error: err.message,
       updatedAt: Date.now(),
     };
-    if (period !== 'today') toast(`板块资金：{SECTOR_PERIOD_LABEL[period] || period}）：${err.message}`, 'err', 5000);
+    if (period !== 'today') toast(`板块资金（${SECTOR_PERIOD_LABEL[period] || period}）：${err.message}`, 'err', 5000);
   } finally {
     if (state.sectorLoadingPeriod === requestKey) state.sectorLoadingPeriod = false;
     renderSectorPage();
@@ -2081,10 +2081,10 @@ function renderSectorPage() {
   const outflowCount = isNum(stats.outflowCount) ? stats.outflowCount : data.items.filter((x) => x.main < 0).length;
   if (summary) {
     summary.innerHTML = `
-      <div class="summary-card"><div class="sc-label">${esc(label)}主力净流入合计</div><div class="sc-value ${toneClass(netInflow)}">${yiFmt(netInflow)}</div><div class="sc-sub">${data.items.length} 个板块样本 {data.sampleLimited ? ' · 样本' : ''}</div></div>
+      <div class="summary-card"><div class="sc-label">${esc(label)}主力净流入合计</div><div class="sc-value ${toneClass(netInflow)}">${yiFmt(netInflow)}</div><div class="sc-sub">${data.items.length} 个板块样本 ${data.sampleLimited ? ' · 样本' : ''}</div></div>
       <div class="summary-card"><div class="sc-label">净流入 / 净流出</div><div class="sc-value"><span class="tone-up">${inflowCount}</span> <span class="muted">/</span> <span class="tone-down">${outflowCount}</span></div><div class="sc-sub">板块数量对比</div></div>
-      <div class="summary-card"><div class="sc-label">领涨板块 {esc(label)}</div><div class="sc-value">${esc(top ? top.name : '--')}</div><div class="sc-sub ${toneClass(top && top.pct)}">${top ? pctFmt(top.pct) : '--'}</div></div>
-      <div class="summary-card"><div class="sc-label">领跌板块 {esc(label)}</div><div class="sc-value">${esc(worst ? worst.name : '--')}</div><div class="sc-sub ${toneClass(worst && worst.pct)}">${worst ? pctFmt(worst.pct) : '--'}</div></div>`;
+      <div class="summary-card"><div class="sc-label">领涨板块 ${esc(label)}</div><div class="sc-value">${esc(top ? top.name : '--')}</div><div class="sc-sub ${toneClass(top && top.pct)}">${top ? pctFmt(top.pct) : '--'}</div></div>
+      <div class="summary-card"><div class="sc-label">领跌板块 ${esc(label)}</div><div class="sc-value">${esc(worst ? worst.name : '--')}</div><div class="sc-sub ${toneClass(worst && worst.pct)}">${worst ? pctFmt(worst.pct) : '--'}</div></div>`;
   }
   sectorTreemap($('#sectorTreemap'), data.items);
   sectorFlowBar($('#sectorBar'), data.items, { limit: 10 });
@@ -2094,7 +2094,7 @@ function renderSectorPage() {
   if (data.note && $('#sectorHotMeta')) {
     $('#sectorHotMeta').textContent = data.note;
   } else if ($('#sectorHotMeta')) {
-    $('#sectorHotMeta').textContent = `${data.items.length} 个板块· {esc(label)}主力净额排序 · 点击展开行情`;
+    $('#sectorHotMeta').textContent = `${data.items.length} 个板块· ${esc(label)}主力净额排序 · 点击展开行情`;
   }
 }
 
@@ -2312,7 +2312,7 @@ function renderVerdict() {
   const copy = $('#copyStrategy');
   if (copy) {
     copy.addEventListener('click', async () => {
-      const text = `${a.review.title}\n${a.review.summary}\n\n${a.plan.title}\n${a.plan.summary}\n\n仓位：{a.position.text}\n${a.disclaimer}`;
+      const text = `${a.review.title}\n${a.review.summary}\n\n${a.plan.title}\n${a.plan.summary}\n\n仓位：${a.position.text}\n${a.disclaimer}`;
       try {
         await navigator.clipboard.writeText(text);
         toast('策略摘要已复制', 'ok');
@@ -2353,7 +2353,7 @@ function renderPlanPanel() {
   const checklist = p.checklist || [];
   el.innerHTML = `
     <div class="panel-head"><div><div class="eyebrow">NEXT SESSION</div><h2>${esc(p.title)}</h2></div><span class="badge tone-${state.advice.rating.tone}">${esc(state.advice.rating.label)}</span></div>
-    <div class="stance-row"><span class="badge">${esc(p.stance)}</span><span class="badge">${esc(state.advice.nextDate)}</span><span class="badge">方向：{esc(p.direction || state.advice.rating.label)}</span></div>
+    <div class="stance-row"><span class="badge">${esc(p.stance)}</span><span class="badge">${esc(state.advice.nextDate)}</span><span class="badge">方向：${esc(p.direction || state.advice.rating.label)}</span></div>
     <p class="review-summary">${esc(p.summary)}</p>
     <div class="modal-section-title">如果…就？</div>
     <div class="plan-rules">${rules.map((r) => `<div class="rule-row"><span class="rule-if">如果</span><div class="rule-body"><b>${esc(r.if)}</b><em>就 ${esc(r.then)}</em></div></div>`).join('')}</div>
@@ -2500,8 +2500,8 @@ function renderPortfolioAdvice() {
   if (fundCount) {
     if (etfFlow > 0) suggestions.push(`自选 ETF 合计主力净流入 ${yiFmt(etfFlow)}，资金面偏正；可继续观察连续性。`);
     else if (etfFlow < 0) suggestions.push(`自选 ETF 合计主力净流出 ${yiFmt(Math.abs(etfFlow))}，资金面偏弱；暂不急于补仓。`);
-    if (avgFund !== null) suggestions.push(`自选基金平均日涨跌 ${pctFmt(avgFund)}（{avgFund >= 0 ? '组合当日偏正' : '组合当日承压'}；场外基金注意 T+1 净值。`);
-    if (catText) suggestions.push(`自选基金覆盖：${catText}，{catCounts.sector && !catCounts.bond ? '行业基金占比偏高、波动集中，建议补充债基或宽基降低相关性；' : '结构相对分散，继续按类别控制单一行业暴露。'}`);
+    if (avgFund !== null) suggestions.push(`自选基金平均日涨跌 ${pctFmt(avgFund)}（${avgFund >= 0 ? '组合当日偏正' : '组合当日承压'}；场外基金注意 T+1 净值。`);
+    if (catText) suggestions.push(`自选基金覆盖：${catText}，${catCounts.sector && !catCounts.bond ? '行业基金占比偏高、波动集中，建议补充债基或宽基降低相关性；' : '结构相对分散，继续按类别控制单一行业暴露。'}`);
     if (!catCounts.bond) suggestions.push('自选基金里还没有债基/货币基金，建议用 10%–20% 仓位做防守，降低组合回撤。');
     if (!catCounts.gold) suggestions.push('可补充少量黄金 商品基金作为对冲，但不宜追涨，建议分批。');
     const weakFund = [...fundRows].filter((x) => Number.isFinite(x.pctN)).sort((x, y) => x.pctN - y.pctN)[0];
@@ -2966,10 +2966,10 @@ function toggleMonitorSector(row) {
   const idx = state.monitorSectors.findIndex((s) => s.code === row.code);
   if (idx >= 0) {
     state.monitorSectors.splice(idx, 1);
-    toast(`已移出监测池：{row.name}`, 'info');
+    toast(`已移出监测池：${row.name}`, 'info');
   } else {
     state.monitorSectors.push({ code: row.code, name: row.name, type: row.type, score: Number(row.score) || 0, at: Date.now() });
-    toast(`已纳入监测池：{row.name}`, 'ok');
+    toast(`已纳入监测池：${row.name}`, 'ok');
   }
   saveMonitorSectors();
   renderBattleSectors();
@@ -2982,7 +2982,7 @@ async function exportSectorBlk(row) {
     downloadText(data.filename || `${row.name}_${row.code}.blk`, data.content || '');
     toast(`${data.partial ? '已导出盘中涨停成分' : '已导出完整板块'} ${data.count} 条 · ${data.filename}${data.partial ? '（全量成分接口限流）' : ''}`, data.partial ? 'warn' : 'ok', 5200);
   } catch (err) {
-    toast(`导出失败：{err.message}`, 'err', 5000);
+    toast(`导出失败：${err.message}`, 'err', 5000);
   }
 }
 
@@ -3186,7 +3186,7 @@ function renderLadder() {
           <div class="ladder-card" data-stock-secid="${esc(x.secid)}">
             <div class="lc-top"><span class="lc-name" title="${esc(x.name)}">${esc(cleanName(x.name))}</span>${x.oneWord ? '<span class="lc-word">一字</span>' : ''}</div>
             <div class="lc-meta">封单 <b>${x.sealFundYi === null ? '--' : nf(x.sealFundYi, 2)}亿</b><br>首封 <b>${esc(x.firstSeal)}</b> · 炸板 <b>${x.breakCount}</b></div>
-            <div class="lc-meta">${x.statDays ? `${x.statDays}板{x.statBoards}板` : '--'} · ${esc(x.industry || '')}</div>
+            <div class="lc-meta">${x.statDays ? `${x.statDays}板${x.statBoards}板` : '--'} · ${esc(x.industry || '')}</div>
             <div class="lc-fund ${toneClass(x.pct)}">${pctFmt(x.pct)} · ${x.price === null ? '--' : nf(x.price, 2)}</div>
           </div>`).join('') : '<div class="ladder-empty">—</div>'}
       </div>`).join('')}</div>`;
@@ -3199,7 +3199,7 @@ function renderLadder() {
           <span class="pr-name">${esc(cleanName(x.name))}<span>${esc(x.firstSeal)} 首封 · ${esc(x.industry || '')}</span></span>
           <span class="pr-num ${toneClass(x.pct)}">${pctFmt(x.pct)}</span>
           <span class="pr-num">${x.breakCount} 次</span>
-          <span class="pr-num">${x.statDays ? `${x.statDays}板{x.statBoards}板` : '--'}</span>
+          <span class="pr-num">${x.statDays ? `${x.statDays}板${x.statBoards}板` : '--'}</span>
         </div>`).join('') : '<div class="empty">今日无炸板</div>'}</div>`;
   }
   const dt = $('#limitDownPanel');
@@ -3341,12 +3341,12 @@ function renderTenDay() {
   if (data.pending) {
     const p = data.progress || {};
     status.className = 'ten-day-status';
-    status.textContent = `正在扫描近10 日数据…${p.progress || 0}%（{p.done || 0}/${p.total || 0}）`;
+    status.textContent = `正在扫描近10 日数据…${p.progress || 0}%（${p.done || 0}/${p.total || 0}）`;
     return;
   }
   if (data.error) {
     status.className = 'ten-day-status err';
-    status.textContent = `扫描失败：{data.error}`;
+    status.textContent = `扫描失败：${data.error}`;
     return;
   }
   status.className = 'ten-day-status';
@@ -4048,7 +4048,7 @@ function renderPaper() {
 }
 
 /* =========================================================
-   自动交易子窗口（v2.15.1）
+   自动交易子窗口（v2.15.2）
    ---------------------------------------------------------
    把页面上的 #paperAutoPanel 临时搬进弹窗：同一份 DOM、同一批事件监听，
    关闭时按注释锚点搬回原位。这样不用复制一套表单（id 不能重复）。
@@ -4150,7 +4150,7 @@ function renderPaperRanking() {
   const me = state.auth && state.auth.username;
   const rankRows = items.map((item, i) => {
     const heldItems = (item.positions || []).slice(0, 3);
-    // v2.15.1：手机上「持仓」列只留第一只（否则一行里 3 只标的会把整行撑到 150px，
+    // v2.15.2：手机上「持仓」列只留第一只（否则一行里 3 只标的会把整行撑到 150px，
     // 固定的前三列跟着出现大片空白），其余数量用「共 N 只」提示，完整清单在悬浮 / 看持仓里。
     const held = heldItems.length
       ? `<div class="paper-rank-helds">${heldItems.map((p) => `<span class="paper-rank-held">${esc(cleanName(p.name) || p.code)} <span class="t-sub">${nf(p.shares, 0)} 股${p.priceMode === 'prevClose' ? ' · 昨收' : ''}</span>${(item.positionCount || 0) > 1 && p === heldItems[0] ? `<span class="paper-rank-more"> · 共 ${item.positionCount} 只</span>` : ''}</span>`).join('')}</div>`
@@ -5046,7 +5046,7 @@ async function renderPaperHoldingChart() {
     const candles = (k && k.candles) || [];
     if (candles.length < 2) { box.innerHTML = '<div class="empty small">暂无 K 线数据</div>'; return; }
     candleChart(box, k, {
-      // v2.15.1：五日默认铺满 5 个交易日（原来默认只显示后 40%，要手动缩小才看全）
+      // v2.15.2：五日默认铺满 5 个交易日（原来默认只显示后 40%，要手动缩小才看全）
       zoomStart: tab === 'five' ? 0 : 55,
       indicator: 'none',
       marks: paperHoldingMarks(h.secid, tab, candles),
@@ -5084,7 +5084,7 @@ function openPaperHolding(secid, name, code) {
       <div id="paperHoldingChart" class="modal-chart paper-holding-chart"></div>
       <p class="muted small paper-holding-legend"><span class="tag in">B</span> 买入点 <span class="tag out">S</span> 卖出点 · 分时只标注今日成交；五日 / 日K / 月K 标注历史成交。分时页可直接下单，成交后本页自动刷新。</p>
     </div>`;
-  // v2.15.1：从页面直接打开时没有下层弹窗，用 mountOverlay 做基座（关闭时会恢复滚动）；
+  // v2.15.2：从页面直接打开时没有下层弹窗，用 mountOverlay 做基座（关闭时会恢复滚动）；
   // 只有在别的弹窗之上打开才用叠加层，避免把下层弹窗顶掉。
   const root = $('#overlayRoot');
   const overlay = root && root.querySelector('.overlay') ? pushOverlay(holdingHtml) : mountOverlay(holdingHtml);
@@ -6056,7 +6056,7 @@ function renderFundSectorView() {
   const topFlow = [...list].sort((a, b) => b.etfNet - a.etfNet)[0];
   const topPct = [...list].sort((a, b) => (b.etfAvgPct || -999) - (a.etfAvgPct || -999))[0];
   const sortLabel = { flow: '主力净流入', pct: 'ETF 平均涨跌', month: '场外基金' }[key];
-  if (meta) meta.textContent = `${list.length} 个板块 · ${data.date || '--'} · 按 {sortLabel}排序 · 60 秒刷新`;
+  if (meta) meta.textContent = `${list.length} 个板块 · ${data.date || '--'} · 按 ${sortLabel}排序 · 60 秒刷新`;
   if ($('#fundSectorCount')) $('#fundSectorCount').textContent = `${list.length} 个板块 · ETF ${data.etfCount} 只/ 场外基金 ${data.stockCount} 只`;
   summary.innerHTML = `
     <div class="summary-card"><div class="sc-label">板块 ETF 主力净流入</div><div class="sc-value ${toneClass(data.netInflow)}">${yiFmt(data.netInflow)}</div><div class="sc-sub">ETF 合计 · ${data.date || '--'}</div></div>
@@ -6314,7 +6314,7 @@ function renderBondFund() {
   const up = items.filter((x) => (Number(x.day) || 0) > 0).length;
   const down = items.filter((x) => (Number(x.day) || 0) < 0).length;
   const top = items[0];
-  if (meta) meta.textContent = `${d.count || items.length} 只 · ${d.date || '--'} · 按 {sortLabel}排序`;
+  if (meta) meta.textContent = `${d.count || items.length} 只 · ${d.date || '--'} · 按 ${sortLabel}排序`;
   if (summary) summary.innerHTML = `
     <div class="summary-card"><div class="sc-label">TOP30 平均日涨跌</div><div class="sc-value ${toneClass(avgDay)}">${pctFmt(avgDay)}</div><div class="sc-sub">债券型样本</div></div>
     <div class="summary-card"><div class="sc-label">上涨 / 下跌</div><div class="sc-value"><span class="tone-up">${up}</span> <span class="muted">/</span> <span class="tone-down">${down}</span></div><div class="sc-sub">样本内基金数量</div></div>
@@ -6341,7 +6341,7 @@ function renderStockFund() {
   const sortLabel = { day: '近1日', week: '近1周', month: '近1月', month3: '近3月', month6: '近6月', year: '近1年' }[state.stockFundSort] || '近1日';
   if (meta) {
     meta.innerHTML = f
-      ? `${esc(f.typeLabel)} · ${f.count} 只 · 展示：${(f.items || []).length} · ${esc(f.date || '--')} · 按 {sortLabel}排序`
+      ? `${esc(f.typeLabel)} · ${f.count} 只 · 展示：${(f.items || []).length} · ${esc(f.date || '--')} · 按 ${sortLabel}排序`
       : '正在加载股票型基金情报…';
   }
   if (!f) {
@@ -6600,7 +6600,7 @@ function openStockFund(code, name) {  if (!code) return;
   api(`/api/funds/stock-detail?code=${encodeURIComponent(code)}`).then((data) => {
     renderStockFundModal(data, name);
   }).catch((err) => {
-    toast(`基金情报加载失败：{err.message}`, 'err');
+    toast(`基金情报加载失败：${err.message}`, 'err');
     closeOverlay();
   });
 }
@@ -6636,7 +6636,7 @@ function renderStockFundModal(data, fallbackName) {
     <div class="modal-body-grid">
       <div>
         <div id="stockFundChart" style="height:330px"></div>
-        <div class="panel-head" style="margin-top:10px"><div><h3>前十大重仓股</h3><span class="muted small">${basic.theme ? `主题：{esc(basic.theme)}` : ''}</span></div><span class="badge">${holdings.length} 只</span></div>
+        <div class="panel-head" style="margin-top:10px"><div><h3>前十大重仓股</h3><span class="muted small">${basic.theme ? `主题：${esc(basic.theme)}` : ''}</span></div><span class="badge">${holdings.length} 只</span></div>
         <div class="table-scroll"><table class="holding-table">
           <thead><tr><th>股票</th><th>占净值</th><th>今日涨跌</th><th>较上期</th></tr></thead>
           <tbody>${holdings.map((h) => {
@@ -7566,7 +7566,7 @@ async function openFund(code, name, type) {
     const data = await api(`/api/funds/detail?code=${encodeURIComponent(code)}&type=${kind}`);
     renderFundModal(data, name);
   } catch (err) {
-    toast(`基金详情加载失败：{err.message}`, 'err');
+    toast(`基金详情加载失败：${err.message}`, 'err');
     closeOverlay();
   }
 }
@@ -8118,7 +8118,7 @@ async function openSector(code, name) {
       </table></div>` : `<div class="empty">成分股明细接口暂时受限；<br><button class="text-link mt8" data-close data-goto="china">查看全市场个股资金榜 →</button></div>`}`;
     if (flow && flow.points && flow.points.length) flowLine($('#sectorDrawerFlow'), flow);
   } catch (err) {
-    toast(`板块详情加载失败：{err.message}`, 'err');
+    toast(`板块详情加载失败：${err.message}`, 'err');
     closeOverlay();
   }
 }
@@ -9403,7 +9403,7 @@ function handleLoadError(label, err) {
   const last = state.errors.get(label) || 0;
   if (Date.now() - last > 30000) {
     state.errors.set(label, Date.now());
-    toast(`${label}加载失败：{err.message}`, 'err', 5000);
+    toast(`${label}加载失败：${err.message}`, 'err', 5000);
   }
   setFreshness('stale', `${label}异常`);
 }
@@ -10279,7 +10279,7 @@ function bindEvents() {
       if (!item) { toast('没有找到匹配的股票', 'warn'); return; }
       addWatch(item);
       addWatchInput.value = '';
-    } catch (err) { toast(`搜索失败：{err.message}`, 'err'); }
+    } catch (err) { toast(`搜索失败：${err.message}`, 'err'); }
   };
   addWatchBtn && addWatchBtn.addEventListener('click', addFromInput);
   addWatchInput && addWatchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addFromInput(); });
@@ -10648,7 +10648,7 @@ export {
   // v2.14.0：持仓个股详情（分时 / 五日 / 日K / 月K + 买卖点）与自选股直接买入
   openPaperHolding, paperHoldingMarks, paperHoldingKpisHtml, renderPaperHoldingChart,
   refreshPaperHoldingHeader, openPaperBuyFromWatch,
-  // v2.15.1：模拟买入旁边的「自动交易」子窗口
+  // v2.15.2：模拟买入旁边的「自动交易」子窗口
   openPaperAutoModal, restorePaperAutoPanel,
   // v2.7.0：叠层（个股详情之上再开 F10 / 资讯）与席位明细区块
   mountOverlay, pushOverlay, topLayer, closeOverlay, renderSeatsBlock, openStrategyInNewTab,
