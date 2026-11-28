@@ -2557,6 +2557,42 @@ test('v2.14.0 历史买卖点能映射到分时 / 五日 / 日K / 月K 的 X 轴
   app.state.paper = prev;
 });
 
+test('DOM：v2.15.0 持仓详情「五日」默认铺满 5 天、只标日期并按日分割', async () => {
+  const prev = app.state.paper;
+  const prevTab = app.state.paperHoldingTab;
+  app.state.paper = paperFixture(2);
+  const oldFetch = globalThis.fetch;
+  const days = ['2026-11-20', '2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26'];
+  const candles = days.flatMap((d) => ['09:35', '09:40', '09:45'].map((hm) => ({
+    d: `${d} ${hm}`, o: 1, h: 2, l: 0.5, c: 1.5, v: 100, a: 1000, pct: 0.2,
+  })));
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/api/kline')) {
+      return new Response(JSON.stringify({ code: '600519', name: '贵州茅台', candles }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    app.state.paperHoldingTab = 'five';
+    app.openPaperHolding('1.600519', '贵州茅台', '600519');
+    await new Promise((r) => setTimeout(r, 120));
+    const chart = document.querySelector('#paperHoldingChart');
+    const inst = chart && window.echarts.getInstanceByDom(chart);
+    const opt = inst && inst.lastOption;
+    assert.ok(opt, '五日图应该渲染出 ECharts 配置');
+    assert.equal(opt.dataZoom[0].start, 0, '默认显示全部 5 天（不用手动缩小）');
+    assert.equal(opt.series[0].markLine.data.length, days.length - 1, '4 个换天位置 → 4 条竖向分割线');
+    assert.equal(opt.xAxis[0].axisLabel.formatter(`${days[0]} 09:35`), days[0].slice(5), 'X 轴只显示日期');
+  } finally {
+    globalThis.fetch = oldFetch;
+    app.closeOverlay();
+    app.state.paper = prev;
+    app.state.paperHoldingTab = prevTab;
+  }
+});
+
 test('DOM：v2.15.0 手机排行榜保留周期列，整表横向滑动、前三列固定', () => {
   const prevRank = app.state.paperRank;
   const prevOpen = app.state.paperRankOpen;
