@@ -1409,8 +1409,13 @@ async function handleApi(req, res, url) {
     return paperTrade(user, req.body || {});
   }
   if (p === '/api/paper/reset' && req.method === 'POST') {
+    // v2.14.0：客户端不再提供「重置账户」，统一由后台管理操作。
+    // 普通用户直接拒绝（管理员仍可用 /api/admin/paper/reset）。
     const user = currentUser(req);
     if (!user) throw Object.assign(new Error('未登录'), { status: 401 });
+    if (user.role !== 'admin' && user.role !== 'super') {
+      throw Object.assign(new Error('模拟账户只能由管理员在后台统一重置'), { status: 403 });
+    }
     return resetPaper(user);
   }
   /* ---------------------------------------------------------

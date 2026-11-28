@@ -146,7 +146,7 @@ test('模拟交易：股数校验在取行情之前就拦下（不依赖网络�
   });
 });
 
-test('模拟交易：重置账户清空持仓与成交', async () => {
+test('模拟交易：管理员仍可重置账户（客户端入口已移除）', async () => {
   await withApp(async (c) => {
     const r = await c.req('/api/paper/reset', { method: 'POST', json: {} });
     assert.equal(r.status, 200);
@@ -501,7 +501,10 @@ test('v2.11.0 增量资金：全部账户加等额资金、本金口径、批次
   assert.equal(u.injected, 1000);
   assert.equal(u.principal, 1001000);
 
-  const reset = await b.post('/api/paper/reset', {});
+  // v2.14.0：客户端重置入口已移除，普通用户调用也要 403；统一由后台重置
+  const deniedReset = await b.post('/api/paper/reset', {});
+  assert.equal(deniedReset.status, 403, '普通用户不能自行重置模拟账户');
+  const reset = await a.post('/api/admin/paper/reset', { id: u.id });
   assert.equal(reset.status, 200);
   const reopened = await b.get('/api/paper');
   assert.equal(reopened.body.injected, 0);

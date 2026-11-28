@@ -44,6 +44,8 @@ import {
   esc,
   safeUrl,
   timeText,
+  hintIcon,
+  setNoteTip,
 } from './util.js?v=2.13.1';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）

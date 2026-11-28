@@ -182,3 +182,32 @@ test('账号：勾选「7 天免登录」后跨日仍有效，且后台记录能
   const hit = (logs.body.logins || []).filter((x) => x.username === 'alice' && x.ok && x.reason === '7 天免登录');
   assert.ok(hit.length >= 1, '登录记录应标注「7 天免登录」');
 });
+
+test('账号：SQLite 模式也持久化 remember，跨日仍免登录（v2.14.0 回归）', async (t) => {
+  // 线上用 STORE=sqlite。旧版 sessions 表没有 remember 列，读会话时标记丢失，
+  // 于是「7 天免登录」第二天仍被当成自然日会话清掉——用户每天都要重新输密码。
+  const { DatabaseSync } = await import('node:sqlite');
+  const app = await startApp({ mode: 'sqlite' });
+  t.after(() => app.stop());
+  await bootstrapAdmin(app, 'alice', 'alice12345');
+
+  const c = app.client();
+  const login = await c.post('/api/auth/login', { username: 'alice', password: 'alice12345', remember: true });
+  assert.equal(login.status, 200);
+
+  // 库里必须真的存下 remember=1
+  const db = new DatabaseSync(join(app.dataDir, 'gp.sqlite'));
+  try {
+    const row = db.prepare('SELECT MAX(remember) AS remember FROM sessions').get();
+    assert.equal(Number(row && row.remember), 1, 'sessions.remember 应落库为 1');
+
+    // 把会话创建时间改成「昨天」，模拟跨 0 点；勾了 7 天免登录的会话仍应有效
+    db.prepare('UPDATE sessions SET created_at = ? WHERE remember = 1').run(Date.now() - 26 * 3600 * 1000);
+  } finally {
+    db.close();
+  }
+  const me = await c.get('/api/auth/me');
+  assert.equal(me.body.user && me.body.user.username, 'alice', 'SQLite 模式下 7 天免登录不应被跨日清掉');
+  const guarded = await c.get('/api/portfolio');
+  assert.equal(guarded.status, 200, '跨日后受保护接口仍可用');
+});

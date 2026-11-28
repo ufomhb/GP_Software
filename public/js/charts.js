@@ -141,6 +141,31 @@ export function candleChart(el, kline, options = {}) {
   const volumes = candles.map((c) => c.v);
   const amount = candles.map((c) => c.a);
   const hasVolume = volumes.some((v) => Number(v) > 0);
+  // v2.14.0：模拟交易买卖点标注（coord 用 X 轴上的日期/时间标签，price 用成交价）
+  const tradeMarks = (Array.isArray(options.marks) ? options.marks : [])
+    .map((m) => ({ at: String((m && m.at) || ''), price: Number(m && m.price), side: m && m.side === 'sell' ? 'sell' : 'buy' }))
+    .filter((m) => m.at && Number.isFinite(m.price) && m.price > 0);
+  const markPointOf = () => (tradeMarks.length ? {
+    symbol: 'pin',
+    symbolSize: 24,
+    symbolOffset: [0, -8],
+    label: {
+      show: true,
+      formatter: (p) => (p.data && p.data.side === 'sell' ? 'S' : 'B'),
+      color: '#0b1220',
+      fontSize: 9,
+      fontWeight: 'bold',
+    },
+    itemStyle: { borderColor: '#0b1220', borderWidth: 1 },
+    emphasis: { scale: 1.1 },
+    data: tradeMarks.map((m) => ({
+      coord: [m.at, m.price],
+      value: m.price,
+      side: m.side,
+      itemStyle: { color: m.side === 'sell' ? C.down : C.up },
+      label: { formatter: m.side === 'sell' ? 'S' : 'B' },
+    })),
+  } : undefined);
   const zoomState = options.zoomStartValue && options.zoomEndValue
     ? { startValue: options.zoomStartValue, endValue: options.zoomEndValue }
     : { start: options.zoomStart ?? 30, end: options.zoomEnd ?? 100 };
@@ -382,6 +407,7 @@ export function candleChart(el, kline, options = {}) {
           borderColor0: C.down,
         },
         emphasis: { itemStyle: { borderWidth: 1.5 } },
+        markPoint: markPointOf(),
       },
       ...maSeries,
       ...bollSeries,
@@ -1315,6 +1341,10 @@ export function intradayChart(el, options = {}) {
     : chartWidth < 520
       ? new Set(['09:30', '10:30', '11:30', '13:30', '14:30', '15:00'])
       : CN_INTRADAY_MARKS;
+  // v2.14.0：分时图买卖点（只有落在当前 X 轴标签上的点才画，避免错位）
+  const tradeMarks = (Array.isArray(options.marks) ? options.marks : [])
+    .map((m) => ({ at: String((m && m.at) || ''), price: Number(m && m.price), side: m && m.side === 'sell' ? 'sell' : 'buy' }))
+    .filter((m) => m.at && axisLabels.includes(m.at) && Number.isFinite(m.price) && m.price > 0);
 
   return setOption(el, {
     animation: false,
@@ -1380,6 +1410,19 @@ export function intradayChart(el, options = {}) {
               data: [{ yAxis: preClose }],
             }
           : undefined,
+        markPoint: tradeMarks.length ? {
+          symbol: 'pin',
+          symbolSize: 24,
+          symbolOffset: [0, -8],
+          itemStyle: { borderColor: '#0b1220', borderWidth: 1 },
+          data: tradeMarks.map((m) => ({
+            coord: [m.at, m.price],
+            value: m.price,
+            side: m.side,
+            itemStyle: { color: m.side === 'sell' ? C.down : C.up },
+            label: { formatter: m.side === 'sell' ? 'S' : 'B', color: '#0b1220', fontSize: 9, fontWeight: 'bold', show: true },
+          })),
+        } : undefined,
       },
       {
         name: '均价',

@@ -78,7 +78,13 @@ function inviteMatches(code, expected) {
 /** 组装会话 Cookie；只有 HTTPS 才加 Secure，否则本机 http 会登录不上 */
 function sessionCookie({ name, token, maxAgeSec, secure }) {
   const parts = [`${name}=${token}`, 'Path=/', 'HttpOnly', 'SameSite=Lax'];
-  if (maxAgeSec !== undefined) parts.push(`Max-Age=${maxAgeSec}`);
+  if (maxAgeSec !== undefined) {
+    parts.push(`Max-Age=${maxAgeSec}`);
+    // v2.14.0：同时下发 Expires，个别移动端浏览器（尤其 iOS 主屏 PWA）只认 Expires。
+    // maxAgeSec=0 表示删除 Cookie，Expires 要到过去时间。
+    const when = maxAgeSec > 0 ? Date.now() + maxAgeSec * 1000 : 0;
+    parts.push(`Expires=${new Date(when).toUTCString()}`);
+  }
   if (secure) parts.push('Secure');
   return parts.join('; ');
 }

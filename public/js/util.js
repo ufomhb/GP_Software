@@ -88,6 +88,26 @@ function timeText(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false });
 }
 
+/**
+ * v2.14.0：说明文字收进「?」小图标，悬停 / 键盘聚焦 / 手机点按都能展开。
+ * 仍把全文放进 aria-label，读屏用户不依赖 hover。
+ */
+function hintIcon(text, label = '说明') {
+  const t = String(text == null ? '' : text).trim();
+  if (!t) return '';
+  return `<span class="hint-tip" tabindex="0" role="note" aria-label="${esc(label)}：${esc(t)}">`
+    + '<span class="hint-q" aria-hidden="true">?</span>'
+    + `<span class="hint-bubble" role="tooltip">${esc(t)}</span></span>`;
+}
+
+/** 把原本直接铺在页面上的「口径说明」整段替换成 ? 图标（用于动态更新的 note 节点） */
+function setNoteTip(el, text) {
+  if (!el) return;
+  const t = String(text == null ? '' : text).trim();
+  el.classList.add('note-tip');
+  el.innerHTML = t ? `${hintIcon(t, '口径说明')}<span class="hint-label">口径说明</span>` : '';
+}
+
 export {
   isNum,
   nf,
@@ -103,4 +123,6 @@ export {
   esc,
   safeUrl,
   timeText,
+  hintIcon,
+  setNoteTip,
 };
