@@ -3,13 +3,13 @@
    委托单 / 条件单（止盈止损）/ 网格 / 定投 / 跟单 / 持仓预警 / 复盘报告。
    只负责 state → DOM 与少量按钮回调（小操作直接走 apiPost，成功后调 opts.reload），
    账本与撮合口径全部在服务端 src/services/paper-*.js。 */
-import { state } from '../core.js?v=2.13.1';
+import { state } from '../core.js?v=2.14.0';
 import {
-  isNum, nf, signedFmt, toneClass, cleanName, esc, timeText, pctFmt,
-} from '../util.js?v=2.13.1';
-import { $, $$, toast } from '../dom.js?v=2.13.1';
-import { apiPost } from '../api.js?v=2.13.1';
-import { fundPnlAreaChart } from '../charts.js?v=2.13.1';
+  isNum, nf, signedFmt, toneClass, cleanName, esc, timeText, pctFmt, hintIcon, setNoteTip,
+} from '../util.js?v=2.14.0';
+import { $, $$, toast } from '../dom.js?v=2.14.0';
+import { apiPost } from '../api.js?v=2.14.0';
+import { fundPnlAreaChart } from '../charts.js?v=2.14.0';
 
 const ORDER_STATUS_LABEL = {
   pending: '挂单中',
@@ -184,7 +184,7 @@ export function renderPaperAuto(opts = {}) {
 
   if (tab === 'condition') {
     box.innerHTML = `
-      <p class="muted small">止盈 / 止损按「持仓收益率」触发，价格条件按现价触发；命中后按市价卖出（0 股 = 可用全部），服务端每分钟检查一次。</p>
+      <p class="note-tip muted small">${hintIcon('止盈 / 止损按「持仓收益率」触发，价格条件按现价触发；命中后按市价卖出（0 股 = 可用全部），服务端每分钟检查一次。', '条件单说明')}<span class="hint-label">条件单说明</span></p>
       <div class="table-scroll"><table class="table paper-cond-table">
         <thead><tr><th>标的</th><th>条件</th><th>动作</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>${conditions.map(conditionRow).join('') || '<tr><td colspan="5"><div class="empty small">还没有条件单。先在持仓里选一只，再填止盈/止损或价格条件。</div></td></tr>'}</tbody>
@@ -238,7 +238,7 @@ export function renderPaperAuto(opts = {}) {
 
   if (tab === 'plan') {
     box.innerHTML = `
-      <p class="muted small">网格：价格每跌一格买「每格股数」，每涨一格卖同样股数（一次 tick 只走一格）；定投：按周期买入固定金额，跳过周末。</p>
+      <p class="note-tip muted small">${hintIcon('网格：价格每跌一格买「每格股数」，每涨一格卖同样股数（一次 tick 只走一格）；定投：按周期买入固定金额，跳过周末。', '网格 / 定投说明')}<span class="hint-label">网格 / 定投说明</span></p>
       <div class="table-scroll tall-table"><table class="table paper-plan-table">
         <thead><tr><th>类型</th><th>标的</th><th>规则</th><th>已执行</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>${planRowsHtml()}</tbody>
@@ -338,7 +338,7 @@ export function renderPaperAuto(opts = {}) {
   if (tab === 'follow') {
     const allowFollow = state.paper.allowFollow !== false;
     box.innerHTML = `
-      <p class="muted small">跟单只复制「一层」：你跟的人成交后，按比例给你买/卖同样的标的（整手取整）；对方关闭跟单或你资金不足时，那一笔自动跳过。</p>
+      <p class="note-tip muted small">${hintIcon('跟单只复制「一层」：你跟的人成交后，按比例给你买/卖同样的标的（整手取整）；对方关闭跟单或你资金不足时，那一笔自动跳过。', '跟单说明')}<span class="hint-label">跟单说明</span></p>
       ${followRowsHtml()}
       <div class="paper-auto-grid mt12">
         <form class="paper-auto-form" id="paperFollowForm" autocomplete="off">
@@ -394,7 +394,7 @@ export function renderPaperAuto(opts = {}) {
 
   // tab === 'alert'
   box.innerHTML = `
-    <p class="muted small">持仓条件预警复用自选股预警的规则与推送通道：可以按「持仓收益率」「账户收益率」「当日涨跌幅」「价格」设阈值，命中后推送并自动失效（可重复添加）。</p>
+    <p class="note-tip muted small">${hintIcon('持仓条件预警复用自选股预警的规则与推送通道：可以按「持仓收益率」「账户收益率」「当日涨跌幅」「价格」设阈值，命中后推送并自动失效（可重复添加）。', '持仓预警说明')}<span class="hint-label">持仓预警说明</span></p>
     ${alertRowsHtml()}
     ${state.paper.alerts && state.paper.alerts.enabled ? `
     <form class="paper-auto-form mt12" id="paperAlertForm" autocomplete="off">
@@ -486,7 +486,7 @@ export function renderPaperReview() {
     box.innerHTML = '<div class="empty">还没有成交，无法统计胜率与盈亏比。先做几笔模拟交易再来看。</div>';
     if (chart) chart.innerHTML = '<div class="empty small">成交后显示权益曲线</div>';
     if (meta) meta.textContent = '没有成交';
-    if (note) note.textContent = '口径：胜率 = 盈利的卖出笔数 / 全部卖出笔数；盈亏比 = 平均盈利单 / 平均亏损单（亏损取绝对值）。';
+    if (note) setNoteTip(note, '胜率 = 盈利的卖出笔数 / 全部卖出笔数；盈亏比 = 平均盈利单 / 平均亏损单（亏损取绝对值）。');
     return;
   }
   const winRate = isNum(data.winRate) ? `${nf(data.winRate, 1)}%` : '--';
@@ -521,6 +521,6 @@ export function renderPaperReview() {
   }
   if (meta) meta.textContent = `共 ${nf(data.trades, 0)} 笔成交 · 权益快照 ${nf(data.equityDays, 0)} 天`;
   if (note) {
-    note.textContent = '口径：胜率 = 盈利的卖出笔数 / 全部卖出笔数；盈亏比 = 平均盈利单 / 平均亏损单（亏损取绝对值）；利润因子 = 总盈利 / 总亏损；最大回撤按「剔除入金后」的日终权益曲线算；集中度 = 单一最大持仓市值 / 总资产。';
+    setNoteTip(note, '胜率 = 盈利的卖出笔数 / 全部卖出笔数；盈亏比 = 平均盈利单 / 平均亏损单（亏损取绝对值）；利润因子 = 总盈利 / 总亏损；最大回撤按「剔除入金后」的日终权益曲线算；集中度 = 单一最大持仓市值 / 总资产。');
   }
 }

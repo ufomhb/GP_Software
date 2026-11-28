@@ -255,20 +255,20 @@ test('DOM：基金页三个持仓/资金流面板都能渲染（拆模块后回�
 /* ---------------------------------------------------------
    自选股操作按钮 / 长按拖拽（v2.1.0 修复）
    --------------------------------------------------------- */
-test('DOM：自选股 5 个操作按钮图标与动作一一对应', () => {
+test('DOM：自选股 6 个操作按钮图标与动作一一对应（v2.14.0 加模拟买入）', () => {
   app.state.watchlist = [{ secid: '1.600519', code: '600519', name: '贵州茅台' }];
   app.state.watchData = {
     items: [{ quote: { secid: '1.600519', code: '600519', name: '贵州茅台', price: 1500, pct: 1.1, mainYi: 2 }, advice: null }],
   };
   app.renderWatchTable();
   const btns = [...document.querySelectorAll('#watchTable .watch-actions button')];
-  assert.equal(btns.length, 5, '每行应有 5 个操作按钮');
+  assert.equal(btns.length, 6, '每行应有 6 个操作按钮');
   // 曾经出现「两个 K、两个 ×」的图标错乱，这里锁死图标顺序；
-  // v2.7.0 起顺序与「我的自选基金」对齐：K 在最前，↑↓ 居中，× 最后
-  assert.deepEqual(btns.map((b) => b.textContent.trim()), ['K', '↑', '↓', '警', '×']);
-  assert.deepEqual(btns.map((b) => b.getAttribute('data-watch-action')), ['chart', 'up', 'down', 'alert', 'remove']);
+  // v2.14.0 起最前面是「买」（直接模拟买入），其后与「我的自选基金」对齐：K、↑↓、警、×
+  assert.deepEqual(btns.map((b) => b.textContent.trim()), ['买', 'K', '↑', '↓', '警', '×']);
+  assert.deepEqual(btns.map((b) => b.getAttribute('data-watch-action')), ['buy', 'chart', 'up', 'down', 'alert', 'remove']);
   // 「移出自选」按钮的 title 曾因缺一个引号被吃掉，导致按钮点击无效
-  assert.equal(btns[4].getAttribute('title'), '移出自选');
+  assert.equal(btns[5].getAttribute('title'), '移出自选');
 });
 
 test('DOM：长按拖拽能识别行、给出行反馈且松手后不留残影', async () => {
@@ -1007,9 +1007,9 @@ test('DOM：我的自选是表格式列表，与自选基金同一套结构', ()
   assert.match(row.textContent, /白酒/, '行业列');
   assert.match(row.textContent, /偏强/, '评级徽标');
   assert.equal(table.querySelectorAll('img').length, 0, '行业等上游文本必须被转义，不能注入标签');
-  // 5 个操作按钮顺序与基金表一致（K 在前、× 在最后；历史上出过重复图标）
+  // 6 个操作按钮顺序：买在前、K 随后、× 在最后；历史上出过重复图标
   const btns = [...row.querySelectorAll('.fund-watch-actions button')];
-  assert.deepEqual(btns.map((b) => b.dataset.watchAction), ['chart', 'up', 'down', 'alert', 'remove']);
+  assert.deepEqual(btns.map((b) => b.dataset.watchAction), ['buy', 'chart', 'up', 'down', 'alert', 'remove']);
 });
 
 test('DOM：新股申购日历（ipo）与转债申购日历（cbapply）能渲染', () => {
@@ -1408,7 +1408,8 @@ test('DOM：模拟买卖股数输入不再用 step 原生校验，100 股可直�
 test('DOM：基金两个面板都标出「今日盈亏」当前口径与时间点说明', () => {
   const loginHtml = readFileSync(join(ROOT, 'public', 'login.html'), 'utf8');
   assert.equal(/每天登录会被记录/.test(loginHtml), false, '登录页不该再出现「每天登录会被记录」');
-  assert.match(loginHtml, /公用电脑请勿勾选/);
+  assert.match(loginHtml, /默认勾选/);
+  assert.match(loginHtml, /7 天内不用再输密码/);
 
   const prevWatch = app.state.fundWatchlist;
   const prevHold = app.state.fundHoldings;
@@ -2442,4 +2443,154 @@ test('DOM：v2.12.0 排行榜带今日/本周/本月/今年/回撤列，可按�
   app.state.paperRank = prevRank;
   app.state.paperRankOpen = prevOpen;
   app.state.paperRankSort = prevSort;
+});
+/* ---------------------------------------------------------
+   v2.14.0：模拟交易功能优化（买入入口 / 持仓图表 / 成交折叠 / 手机排行 / 说明图标）
+   --------------------------------------------------------- */
+
+function paperFixture(tradeCount = 1) {
+  const base = Date.now();
+  return {
+    initial: 1000000, cash: 800000, marketValue: 160000, total: 1010000,
+    profit: 10000, profitPct: 1,
+    rules: { fees: { rate: 0.00025, min: 5, taxRate: 0.0005, slippageBps: 0 }, trading: { t1: true, limitCheck: true, suspend: true } },
+    positions: [{
+      secid: '1.600519', code: '600519', name: '贵州茅台', shares: 100, available: 100,
+      cost: 1500, price: 1600, pct: 1.2, marketValue: 160000, profit: 10000, profitPct: 6.25,
+      realizedAmount: null, realizedPct: null,
+    }],
+    trades: Array.from({ length: tradeCount }, (_, i) => ({
+      id: `t${i}`, ts: base - i * 60000, secid: '1.600519', code: '600519', name: '贵州茅台',
+      side: i % 2 ? 'sell' : 'buy', price: 1500 + i, shares: 100, amount: 150000, fee: 37.5,
+      realized: i % 2 ? 250 : null, realizedPct: i % 2 ? 1.2 : null, note: '',
+      signal: { score: 62, rating: '偏强' },
+    })),
+    updatedAt: base,
+  };
+}
+
+test('DOM：v2.14.0 持仓行有买入按钮、点击股票名打开详情，且不再有客户端重置入口', () => {
+  const prev = app.state.paper;
+  app.state.paper = paperFixture(2);
+  app.renderPaper();
+  const box = document.querySelector('#paperPanel');
+  assert.equal(box.querySelector('#paperResetBtn'), null, '客户端不应再有「重置账户」按钮');
+  assert.doesNotMatch(box.textContent, /重置账户/, '文案里也不应出现重置入口');
+  assert.ok(box.querySelector('[data-paper-buy]'), '卖出旁边要有买入按钮');
+  assert.equal(box.querySelector('[data-paper-buy]').textContent.trim(), '买入');
+  assert.ok(box.querySelector('[data-paper-open]'), '点击持仓个股应能打开图表详情');
+  assert.ok(box.querySelectorAll('.hint-tip').length >= 2, '说明文字应收进 ? 图标');
+  app.state.paper = prev;
+});
+
+test('DOM：v2.14.0 最近成交默认只显示最新 5 条，可展开 / 收起', () => {
+  const prev = app.state.paper;
+  const prevOpen = app.state.paperTradesOpen;
+  app.state.paperTradesOpen = false;
+  app.state.paper = paperFixture(8);
+  app.renderPaper();
+  let box = document.querySelector('#paperPanel');
+  assert.equal(box.querySelectorAll('.paper-trade-table tbody tr').length, 5, '默认 5 条');
+  const toggle = box.querySelector('#paperTradesToggle');
+  assert.ok(toggle, '超过 5 条时要给展开按钮');
+  assert.match(toggle.textContent, /展开全部 8 条/);
+  toggle.click();
+  box = document.querySelector('#paperPanel');
+  assert.equal(box.querySelectorAll('.paper-trade-table tbody tr').length, 8, '展开后显示全部');
+  assert.match(box.querySelector('#paperTradesToggle').textContent, /收起/);
+  box.querySelector('#paperTradesToggle').click();
+  assert.equal(document.querySelectorAll('#paperPanel .paper-trade-table tbody tr').length, 5, '再点收回 5 条');
+  app.state.paper = prev;
+  app.state.paperTradesOpen = prevOpen;
+});
+
+test('DOM：v2.14.0 持仓个股详情有四周期 tab、买卖按钮和图表容器', () => {
+  const prev = app.state.paper;
+  app.state.paper = paperFixture(3);
+  app.state.paperHoldingTab = 'minute';
+  app.openPaperHolding('1.600519', '贵州茅台', '600519');
+  const modal = document.querySelector('.paper-holding-modal');
+  assert.ok(modal, '应打开持仓详情弹窗');
+  assert.match(modal.textContent, /贵州茅台/);
+  const tabs = [...modal.querySelectorAll('[data-paper-holding-tab]')].map((b) => b.textContent.trim());
+  assert.deepEqual(tabs, ['分时', '五日', '日K', '月K']);
+  assert.ok(modal.querySelector('#paperHoldingBuy'), '分时页可直接买入');
+  assert.ok(modal.querySelector('#paperHoldingSell'), '分时页可直接卖出');
+  assert.ok(modal.querySelector('#paperHoldingChart'), '要有图表容器');
+  assert.ok(modal.querySelector('#paperHoldingKpis'), '要有持仓成本 / 浮盈信息');
+  app.closeOverlay();
+  app.state.paper = prev;
+});
+
+test('v2.14.0 历史买卖点能映射到分时 / 五日 / 日K / 月K 的 X 轴', () => {
+  const prev = app.state.paper;
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+  const ts = Date.parse(`${today}T10:31:00+08:00`);
+  app.state.paper = { trades: [
+    { ts, secid: '1.600519', side: 'buy', price: 1500 },
+    { ts: Date.parse('2026-11-20T14:05:00+08:00'), secid: '1.600519', side: 'sell', price: 1580 },
+  ] };
+
+  // 分时：只标今日，取 HH:MM
+  const minute = app.paperHoldingMarks('1.600519', 'minute', [{ d: `${today} 10:31` }]);
+  assert.deepEqual(minute, [{ at: '10:31', price: 1500, side: 'buy' }]);
+
+  // 后面的周期用例只留 11-20 那笔卖出，避免今天的买入落到最后一根 K 线上
+  app.state.paper = { trades: [{ ts: Date.parse('2026-11-20T14:05:00+08:00'), secid: '1.600519', side: 'sell', price: 1580 }] };
+
+  // 五日：取该分钟之后（含）的第一根 5 分钟线
+  const five = app.paperHoldingMarks('1.600519', 'five', [
+    { d: '2026-11-20 14:00' }, { d: '2026-11-20 14:05' },
+  ]);
+  assert.equal(five.length, 1);
+  assert.equal(five[0].at, '2026-11-20 14:05');
+  assert.equal(five[0].side, 'sell');
+
+  // 日K：命中同一天的日线
+  const day = app.paperHoldingMarks('1.600519', 'day', [{ d: '2026-11-20' }, { d: '2026-11-21' }]);
+  assert.equal(day[0].at, '2026-11-20');
+
+  // 月K：命中同月的月线
+  const month = app.paperHoldingMarks('1.600519', 'month', [{ d: '2026-10-01' }, { d: '2026-11-01' }]);
+  assert.equal(month[0].at, '2026-11-01');
+  app.state.paper = prev;
+});
+
+test('DOM：v2.14.0 手机排行榜在用户名下带今日/本周/本月/今年收益标签', () => {
+  const prevRank = app.state.paperRank;
+  const prevOpen = app.state.paperRankOpen;
+  const prevSort = app.state.paperRankSort;
+  app.state.paperRankOpen = true;
+  app.state.paperRank = { items: [{
+    username: 'AAA', total: 1100000, profit: 100000, profitPct: 10,
+    todayPct: 1.2, weekPct: 2.3, monthPct: 3.4, yearPct: 4.5, mdd: 8.1,
+    equityDays: 30, positionCount: 0, positions: [], updatedAt: 1,
+  }], updatedAt: Date.now() };
+  app.state.paperRankSort = 'total';
+  app.renderPaperRanking();
+  const chips = document.querySelector('#paperRankBody .paper-rank-periods');
+  assert.ok(chips, '手机端用户名下要有周期收益标签');
+  assert.match(chips.textContent, /今日/);
+  assert.match(chips.textContent, /本周/);
+  assert.match(chips.textContent, /本月/);
+  assert.match(chips.textContent, /今年/);
+  assert.match(chips.textContent, /1\.20%/);
+  app.state.paperRank = prevRank;
+  app.state.paperRankOpen = prevOpen;
+  app.state.paperRankSort = prevSort;
+});
+
+test('DOM：v2.14.0 模拟买入弹窗直接列出自选股（超过 6 只也能选）', () => {
+  const prevPaper = app.state.paper;
+  const prevWatch = app.state.watchlist;
+  app.state.paper = paperFixture(1);
+  app.state.watchlist = Array.from({ length: 8 }, (_, i) => ({ secid: `1.60000${i}`, code: `60000${i}`, name: `股票${i}` }));
+  app.openPaperTrade('buy');
+  const form = document.querySelector('#paperForm');
+  assert.ok(form, '应打开买入弹窗');
+  assert.equal(form.querySelectorAll('[data-paper-pick]').length, 8, '自选股应全部列出');
+  assert.match(form.textContent, /从自选股选择（8 只/);
+  app.closeOverlay();
+  app.state.paper = prevPaper;
+  app.state.watchlist = prevWatch;
 });

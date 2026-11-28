@@ -1,9 +1,9 @@
 /* 基金页渲染（P2 从 app.js 抽出，第一个按视图拆的模块）
    只负责把 state 里的数据渲染成 DOM；数据加载与交互仍留在 app.js。
    依赖：core.js（state）、util.js（格式化/转义）、dom.js（$）。 */
-import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.13.1';
-import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.13.1';
-import { $ } from '../dom.js?v=2.13.1';
+import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.14.0';
+import { isNum, nf, priceFmt, pctFmt, signedFmt, yiFmt, toneClass, cleanName, esc } from '../util.js?v=2.14.0';
+import { $ } from '../dom.js?v=2.14.0';
 
 
 function fundCategoryOf(name = '') {

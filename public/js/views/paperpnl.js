@@ -5,10 +5,10 @@
    - fundCalendarBuckets：日 / 月 / 年分桶；
    - pnlcalendar.js 的 calendarGridHtml：日历网格 DOM；
    - fundPnlAreaChart / fundPnlMonthlyBars：资产曲线与月度柱。 */
-import { state } from '../core.js?v=2.13.1';
-import { isNum, nf, signedFmt, toneClass, cleanName, esc, timeText } from '../util.js?v=2.13.1';
-import { $ } from '../dom.js?v=2.13.1';
-import { fundPnlAreaChart, fundPnlMonthlyBars } from '../charts.js?v=2.13.1';
+import { state } from '../core.js?v=2.14.0';
+import { isNum, nf, signedFmt, toneClass, cleanName, esc, timeText, setNoteTip } from '../util.js?v=2.14.0';
+import { $ } from '../dom.js?v=2.14.0';
+import { fundPnlAreaChart, fundPnlMonthlyBars } from '../charts.js?v=2.14.0';
 import {
   round2,
   shanghaiDateKey,
@@ -16,8 +16,8 @@ import {
   fundCalendarBuckets,
   rangeBaseDate,
   sumPnlAfter,
-} from './fundpnl.js?v=2.13.1';
-import { calendarGridHtml } from './pnlcalendar.js?v=2.13.1';
+} from './fundpnl.js?v=2.14.0';
+import { calendarGridHtml } from './pnlcalendar.js?v=2.14.0';
 
 const CALENDAR_UNITS = ['day', 'month', 'year'];
 
@@ -252,7 +252,7 @@ export function renderPaperPnlCalendar() {
       'v2.12.0 起除权日按后台录入的分红除权事件入账（现金分红进现金、送转股增加股数），不再凭空出现单日浮亏。',
       data.estimated || (data.missing && data.missing.length) ? '有标的取不到日线，已按成本价估值。' : '',
     ].filter(Boolean);
-    note.textContent = parts.join(' ');
+    setNoteTip(note, parts.join(' '));
   }
 }
 
@@ -265,7 +265,7 @@ export function renderPaperRealized() {
   if (!rows.length) {
     box.innerHTML = '<div class="empty">卖出任意一只个股后，这里会记录它的累计收益金额与累计收益率（清仓后也保留）。</div>';
     if (meta) meta.textContent = '还没有卖出记录';
-    if (note) note.textContent = '口径：已实现 =（卖出金额 − 佣金 − 印花税）− 卖出股数 × 移动加权成本；累计收益率 = 累计已实现 / 累计已卖出成本。';
+    if (note) setNoteTip(note, '已实现 =（卖出金额 − 佣金 − 印花税）− 卖出股数 × 移动加权成本；累计收益率 = 累计已实现 / 累计已卖出成本。');
     return;
   }
   const complete = rows.filter((r) => !r.incomplete);
@@ -294,6 +294,6 @@ export function renderPaperRealized() {
     meta.textContent = `已统计 ${rows.length} 只${rows.length !== complete.length ? `（${rows.length - complete.length} 只历史不完整，未计入合计）` : ''} · 合计已实现 ${signedFmt(totalRealized, 2)} 元${totalPct === null ? '' : `（${totalPct >= 0 ? '+' : ''}${nf(totalPct, 2)}%）`}`;
   }
   if (note) {
-    note.textContent = `口径：已实现 =（卖出金额 − 佣金 − 印花税）− 卖出股数 × 移动加权成本（买入佣金已摊进成本）；累计收益率 = 累计已实现 / 累计已卖出成本。「含浮盈总盈亏」只对仍持仓的标的显示，= 累计已实现 + 当前浮盈。`;
+    setNoteTip(note, '已实现 =（卖出金额 − 佣金 − 印花税）− 卖出股数 × 移动加权成本（买入佣金已摊进成本）；累计收益率 = 累计已实现 / 累计已卖出成本。「含浮盈总盈亏」只对仍持仓的标的显示，= 累计已实现 + 当前浮盈。');
   }
 }

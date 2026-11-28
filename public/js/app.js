@@ -26,7 +26,7 @@ import {
   intradayCompareChart,
   compareTrendChart,
   COLORS,
-} from './charts.js?v=2.13.1';
+} from './charts.js?v=2.14.0';
 
 // 纯格式化/转义工具（见 util.js）
 import {
@@ -46,11 +46,11 @@ import {
   timeText,
   hintIcon,
   setNoteTip,
-} from './util.js?v=2.13.1';
+} from './util.js?v=2.14.0';
 
 // DOM 小工具与 HTTP 封装（见 dom.js / api.js）
-import { $, $$, toast, debounce } from './dom.js?v=2.13.1';
-import { redirectToLogin, api, apiPost } from './api.js?v=2.13.1';
+import { $, $$, toast, debounce } from './dom.js?v=2.14.0';
+import { redirectToLogin, api, apiPost } from './api.js?v=2.14.0';
 
 // 版本号、存储键、本地存储与全局状态（见 core.js）
 import {
@@ -63,7 +63,7 @@ import {
   scopedKey, applyAccountScope, migrateLegacyStore, loadJSON, saveJSON,
   state, loadScopedState,
   ALERT_KINDS, ALERT_KIND_LABEL, ALERT_OP_LABEL, normalizeAlerts, isTrendAlert,
-} from './core.js?v=2.13.1';
+} from './core.js?v=2.14.0';
 
 // 基金页渲染（见 views/funds.js）
 import {
@@ -80,7 +80,7 @@ import {
   renderFundWatchTable,
   renderFundHoldSummary,
   renderFundHoldTable,
-} from './views/funds.js?v=2.13.1';
+} from './views/funds.js?v=2.14.0';
 
 // 基金页新增子页渲染（v2.10.0：涨跌分布 / 板块总览 / 场外基金四榜，见 views/fundpanes.js）
 import {
@@ -90,7 +90,7 @@ import {
   renderFundBoard,
   renderFundBoardCompareBar,
   sortFundThemes,
-} from './views/fundpanes.js?v=2.13.1';
+} from './views/fundpanes.js?v=2.14.0';
 
 // 自选基金：多组合 / 今日 TOP5 / 盈亏日历 / 组合 vs 上证（v2.10.0）
 import {
@@ -100,7 +100,7 @@ import {
   renderFundVsIndex,
   activePortfolio,
   activeHoldings,
-} from './views/fundwatch.js?v=2.13.1';
+} from './views/fundwatch.js?v=2.14.0';
 import {
   computeFundPnl,
   computeFundDailyPnl,
@@ -112,7 +112,7 @@ import {
   portfolioVsIndex,
   intradayVsIndex,
   fundTopMovers,
-} from './views/fundpnl.js?v=2.13.1';
+} from './views/fundpnl.js?v=2.14.0';
 
 // 模拟盘盈亏日历 / 资产曲线 / 个股累计收益（v2.11.0，见 views/paperpnl.js）
 import {
@@ -122,7 +122,7 @@ import {
   paperCalendarBuckets,
   paperPnlSummary,
   paperMonthlyBars,
-} from './views/paperpnl.js?v=2.13.1';
+} from './views/paperpnl.js?v=2.14.0';
 
 // 模拟盘自动化：委托 / 条件单 / 网格定投 / 跟单 / 持仓预警 / 复盘（v2.12.0，见 views/paperauto.js）
 import {
@@ -131,7 +131,7 @@ import {
   renderPaperReview,
   paperOrderStatusLabel,
   conditionText,
-} from './views/paperauto.js?v=2.13.1';
+} from './views/paperauto.js?v=2.14.0';
 
 // 全景页行情渲染（v2.4.0 从 app.js 拆出，见 views/market.js）
 import {
@@ -141,7 +141,7 @@ import {
   renderIndexGrid, renderAssetRibbon,
   renderSectorPanel, renderPulse,
   renderNewsList, renderDashWatch, renderSessions, renderGlobalMini,
-} from './views/market.js?v=2.13.1';
+} from './views/market.js?v=2.14.0';
 
 
 /* =========================================================
@@ -358,15 +358,20 @@ function closeOverlay() {
   const layer = topLayer();
   if (layer) {
     layer.remove();
+    // v2.14.0：叠层下单弹窗关闭后清掉临时标的；持仓详情关闭后清掉详情状态
+    if (!root.querySelector('#paperForm')) state.paperTrade = null;
+    if (!root.querySelector('.paper-holding-modal')) state.paperHolding = null;
     return;
   }
-  const wasDetail = parseHashRoute().detail;
   root.innerHTML = '';
   document.body.style.overflow = '';
+  state.paperHolding = null;
   // 详情弹窗关闭后清掉「当前个股」标记，避免指标切换去重绘一个不存在的弹窗
   state.stockModal = null;
   state.usStockModal = null;
+  state.paperHoldingTab = 'minute';
   // 地址栏退回视图级 hash，否则刷新页面还会重新弹出已经关掉的详情
+  const wasDetail = parseHashRoute().detail;
   if (wasDetail) history.replaceState({ view: state.view }, '', `#${state.view}`);
 }
 
@@ -3560,6 +3565,7 @@ function renderWatchTable() {
         <td data-col="rating">${av ? `<span class="badge tone-${av.rating.tone}">${esc(av.rating.label)}</span><div class="t-sub">${esc(av.position.text)}</div>` : '--'}</td>
         <td data-col="industry" class="t-dim">${esc(q.industry || '--')}</td>
         <td><div class="fund-watch-actions watch-actions">
+          <button class="watch-buy" title="模拟买入这只股票" data-watch-action="buy" data-secid="${esc(q.secid)}">买</button>
           <button title="查看 K 线详情" data-watch-action="chart" data-secid="${esc(q.secid)}">K</button>
           <button class="move" title="上移" data-watch-action="up" data-secid="${esc(q.secid)}">↑</button>
           <button class="move" title="下移" data-watch-action="down" data-secid="${esc(q.secid)}">↓</button>
@@ -3873,7 +3879,7 @@ function renderPaper() {
   const tone = d.profit > 0 ? 'tone-up' : d.profit < 0 ? 'tone-down' : 'muted';
   const priceUpdated = d.pricesAsOf ? timeText(d.pricesAsOf) : (d.updatedAt ? timeText(d.updatedAt) : '--:--:--');
   const posRows = (d.positions || []).map((p) => `<tr data-paper-secid="${esc(p.secid)}">
-    <td><span class="t-name">${esc(cleanName(p.name))}</span><span class="t-sub">${esc(p.code)}</span></td>
+    <td><button class="text-link paper-pos-name" data-paper-open="${esc(p.secid)}" data-paper-code="${esc(p.code || '')}" data-paper-name="${esc(p.name || '')}" title="查看分时 / 五日 / 日K / 月K，并标注历史买卖点">${esc(cleanName(p.name))}</button><span class="t-sub">${esc(p.code)}</span></td>
     <td>${nf(p.shares, 0)}${p.locked ? `<div class="t-sub">可卖 ${nf(p.available, 0)}（T+1）</div>` : ''}</td>
     <td>${nf(p.cost, 3)}</td>
     <td>${nf(p.price, 3)}${p.priceMode === 'prevClose' ? '<div class="t-sub">昨收</div>' : p.priceMode === 'cost' ? '<div class="t-sub">按成本估</div>' : ''}</td>
@@ -3882,10 +3888,14 @@ function renderPaper() {
     <td class="${toneClass(p.profit)}">${nf(p.profit, 0)}<div class="t-sub only-mobile">${p.profitPct === null ? '--' : `${nf(p.profitPct, 2)}%`}</div></td>
     <td class="${toneClass(p.profitPct)}">${p.profitPct === null ? '--' : `${nf(p.profitPct, 2)}%`}</td>
     <td class="${toneClass(p.realizedAmount)}">${p.realizedAmount === null || p.realizedAmount === undefined ? '--' : `${signedFmt(p.realizedAmount, 2)}${p.realizedPct === null || p.realizedPct === undefined ? '' : `<div class="t-sub">${nf(p.realizedPct, 2)}%</div>`}`}</td>
-    <td><button class="text-link" data-paper-sell="${esc(p.secid)}" data-paper-name="${esc(p.name)}" data-paper-shares="${p.available !== undefined ? p.available : p.shares}">卖出</button></td>
+    <td><div class="paper-pos-actions"><button class="text-link" data-paper-buy="${esc(p.secid)}" data-paper-code="${esc(p.code || '')}" data-paper-name="${esc(p.name || '')}" title="继续买入这只股票">买入</button><button class="text-link" data-paper-sell="${esc(p.secid)}" data-paper-name="${esc(p.name)}" data-paper-shares="${p.available !== undefined ? p.available : p.shares}">卖出</button></div></td>
   </tr>`).join('') || '<tr><td colspan="10"><div class="empty">还没有模拟持仓。点「模拟买入」按最新价建仓。</div></td></tr>';
 
-  const tradeRows = (d.trades || []).slice(0, 20).map((t) => `<tr>
+  const trades = Array.isArray(d.trades) ? d.trades : [];
+  const tradeLimit = 5;
+  const showAllTrades = !!state.paperTradesOpen;
+  const visibleTrades = showAllTrades ? trades.slice(0, 200) : trades.slice(0, tradeLimit);
+  const tradeRows = visibleTrades.map((t) => `<tr>
     <td>${esc(timeText(t.ts))}</td>
     <td><span class="tag ${t.side === 'buy' ? 'in' : 'out'}">${t.side === 'buy' ? '买' : '卖'}</span></td>
     <td><span class="t-name">${esc(cleanName(t.name))}</span><span class="t-sub">${esc(t.code)}</span></td>
@@ -3908,12 +3918,11 @@ function renderPaper() {
       <div>
         <div class="eyebrow">PAPER TRADING</div>
         <h3>模拟交易 · 账户与信号留痕</h3>
-        <span class="muted small">${esc(ruleText)}；仅用于复盘，不是实盘</span>
+        <span class="muted small">仅用于复盘，不是实盘 ${hintIcon(ruleText, '模拟交易规则')}</span>
       </div>
       <div class="head-actions">
         <button class="btn primary small" id="paperBuyBtn">模拟买入</button>
         <button class="text-link" id="paperExportBtn">导出成交 CSV</button>
-        <button class="text-link" id="paperResetBtn">重置账户</button>
       </div>
     </div>
     <div class="fund-summary-grid paper-kpis">
@@ -3926,41 +3935,50 @@ function renderPaper() {
       <thead><tr><th>持仓</th><th>股数</th><th>成本</th><th>现价</th><th>当日涨跌 / 盈亏</th><th>市值</th><th>浮盈</th><th>收益率</th><th>已实现</th><th></th></tr></thead>
       <tbody>${posRows}</tbody>
     </table></div>
-    <div class="modal-section-title">最近成交（含成交时的大盘评分与卖出已实现）</div>
+    <div class="modal-section-title paper-trade-head">
+      <span>最近成交 <span class="muted small">${trades.length ? `最新 ${Math.min(visibleTrades.length, tradeLimit)} 条 / 共 ${trades.length} 条` : ''}</span></span>
+      <span class="paper-trade-head-tools">${hintIcon('成交列表含成交时的大盘评分与卖出已实现收益。默认只显示最新 5 条，点右侧按钮展开全部。', '成交列表说明')}${trades.length > tradeLimit ? `<button class="btn small" id="paperTradesToggle" aria-expanded="${showAllTrades ? 'true' : 'false'}">${showAllTrades ? '收起' : `展开全部 ${trades.length} 条`}</button>` : ''}</span>
+    </div>
     <div class="table-scroll tall-table"><table class="table paper-trade-table">
       <thead><tr><th>时间</th><th>方向</th><th>标的</th><th>价</th><th>股数</th><th>金额</th><th>费用</th><th>已实现</th><th>信号</th></tr></thead>
       <tbody>${tradeRows}</tbody>
     </table></div>
-    ${d.injected ? `<p class="muted small mt8">增量资金：累计追加 ${nf(d.injected, 0)} 元（本金 ${nf(d.principal, 0)} 元，收益率按本金计算）${(d.capital && d.capital.events && d.capital.events[0]) ? ` · 最近一次 ${esc(timeText(d.capital.events[0].at))} +${nf(d.capital.events[0].amount, 0)} 元` : ''}</p>` : ''}
+    ${d.injected ? `<p class="muted small mt8">增量资金：累计追加 ${nf(d.injected, 0)} 元（本金 ${nf(d.principal, 0)} 元，收益率按本金计算）${(d.capital && d.capital.events && d.capital.events[0]) ? ` · 最近一次 ${esc(timeText(d.capital.events[0].at))} +${nf(d.capital.events[0].amount, 0)} 元` : ''} ${hintIcon('追加资金会同步增加本金与现金，累计盈亏不会被抬高；收益率分母是「初始资金 + 累计追加资金」。', '增量资金说明')}</p>` : ''}
     <div class="modal-section-title paper-rank-head">
       <span>模拟账户排行榜 · 全体用户</span>
-      <button class="btn small" id="paperRankToggle" aria-expanded="${state.paperRankOpen ? 'true' : 'false'}">${state.paperRankOpen ? '收起排行榜' : '展开排行榜'}</button>
+      <span class="paper-rank-head-tools">${hintIcon('所有登录用户都能看到彼此的模拟持仓、总资产与今日 / 本周 / 本月 / 今年收益；仅模拟盘，不含真实资金。默认收起，点右侧按钮再显示。', '排行榜说明')}<button class="btn small" id="paperRankToggle" aria-expanded="${state.paperRankOpen ? 'true' : 'false'}">${state.paperRankOpen ? '收起排行榜' : '展开排行榜'}</button></span>
     </div>
-    <p class="muted small">所有登录用户都能看到彼此的模拟持仓与总资产；仅模拟盘，不含真实资金。默认收起，点「展开排行榜」再显示。</p>
     <div id="paperRankBody" ${state.paperRankOpen ? '' : 'hidden'}><div class="empty small">展开后加载排行榜…</div></div>`;
 
   const buyBtn = $('#paperBuyBtn');
   if (buyBtn) buyBtn.addEventListener('click', () => openPaperTrade('buy'));
-  const resetBtn = $('#paperResetBtn');
-  if (resetBtn) resetBtn.addEventListener('click', async () => {
-    const initial = Number((state.paper || {}).initial) || 1000000;
-    if (!confirm(`确定把模拟账户重置为 ${nf(initial, 0)} 元、清空持仓、成交与累计收益记录？`)) return;
-    try {
-      await apiPost('/api/paper/reset', {});
-      state.paperPnl = null;
-      state.paperPnlAt = 0;
-      await loadPaper(true);
-      if (state.paperRankOpen) loadPaperRanking(true);
-      toast('模拟账户已重置', 'ok');
-    } catch (err) {
-      toast(`重置失败：${err.message}`, 'err');
-    }
-  });
   const exportBtn = $('#paperExportBtn');
   if (exportBtn) exportBtn.addEventListener('click', exportPaperTradesCsv);
+  const tradesToggle = $('#paperTradesToggle');
+  if (tradesToggle) {
+    tradesToggle.addEventListener('click', () => {
+      state.paperTradesOpen = !state.paperTradesOpen;
+      renderPaper();
+    });
+  }
   $$('[data-paper-sell]', el).forEach((b) => b.addEventListener('click', () => {
     openPaperTrade('sell', { secid: b.dataset.paperSell, name: b.dataset.paperName, shares: Number(b.dataset.paperShares) });
   }));
+  $$('[data-paper-buy]', el).forEach((b) => b.addEventListener('click', () => {
+    openPaperTrade('buy', { secid: b.dataset.paperBuy, code: b.dataset.paperCode, name: b.dataset.paperName });
+  }));
+  $$('[data-paper-open]', el).forEach((b) => b.addEventListener('click', () => {
+    openPaperHolding(b.dataset.paperOpen, b.dataset.paperName, b.dataset.paperCode);
+  }));
+  // 整行可点：点持仓行任意空白处也能打开图表详情（买卖按钮除外）
+  $$('.paper-pos-table tbody tr[data-paper-secid]', el).forEach((tr) => {
+    tr.classList.add('is-clickable');
+    tr.addEventListener('click', (e) => {
+      if (e.target.closest('[data-paper-buy],[data-paper-sell],[data-paper-open]')) return;
+      const open = tr.querySelector('[data-paper-open]');
+      if (open) openPaperHolding(open.dataset.paperOpen, open.dataset.paperName, open.dataset.paperCode);
+    });
+  });
   // v2.11.0：盈亏日历 / 个股累计收益随账户面板一起重绘（日历首次按需拉一次日线历史）
   renderPaperPnlCalendar();
   renderPaperRealized();
@@ -4062,9 +4080,13 @@ function renderPaperRanking() {
     // 0 收益不标正负号，避免 -0 显示成 +0.00%
     const pctVal = Number(item.profitPct) || 0;
     const pctText = Math.abs(pctVal) < 0.005 ? '0.00%' : `${pctVal > 0 ? '+' : ''}${pctVal.toFixed(2)}%`;
+    // v2.14.0：手机上原来的今日/本周/本月/今年列被 CSS 隐藏，改为在用户名下用紧凑标签展示
+    const periodChips = `<div class="paper-rank-periods only-mobile">${[
+      ['今日', item.todayPct], ['本周', item.weekPct], ['本月', item.monthPct], ['今年', item.yearPct],
+    ].map(([label, value]) => `<span class="prp"><i>${label}</i>${pctCellHtml(value)}</span>`).join('')}</div>`;
     return `<tr class="${item.username === me ? 'is-me' : ''}">
       <td class="num">${i + 1}</td>
-      <td><span class="t-name">${esc(item.username)}</span>${item.username === me ? ' <span class="badge">我</span>' : ''}</td>
+      <td><span class="t-name">${esc(item.username)}</span>${item.username === me ? ' <span class="badge">我</span>' : ''}${periodChips}</td>
       <td class="t-price">${nf(item.total, 2)}</td>
       <td class="t-chg ${toneClass(item.profit)}">${signedFmt(item.profit, 2)}</td>
       <td class="t-chg ${toneClass(pctVal)}">${pctText}</td>
@@ -4475,8 +4497,10 @@ function pickPaperSymbol(item, { presetShares = 0 } = {}) {
   loadPaperQuote(t.target.secid);
 }
 
-/** 打开买入/卖出弹窗 */
-function openPaperTrade(side = 'buy', preset = {}) {
+/** 打开买入/卖出弹窗
+ *  opts.stack=true 时叠在当前弹窗之上（持仓详情里直接买/卖，不销毁详情）
+ *  opts.onDone 在成交成功、账户刷新后调用（持仓详情用来刷新成本和买卖点） */
+function openPaperTrade(side = 'buy', preset = {}, opts = {}) {
   const isSell = side === 'sell';
   const d = state.paper || {};
   const trading = (d.rules && d.rules.trading) || { t1: true, limitCheck: true, suspend: true };
@@ -4498,14 +4522,22 @@ function openPaperTrade(side = 'buy', preset = {}) {
     limitPrice: null,
     validDays: Number((d.rules && d.rules.order && d.rules.order.validDays) || 1),
   };
+  // v2.14.0：买入弹窗直接列出自选股（最多 24 只），不用每次去搜索；
+  // 卖出仍按持仓取前 6 只做快捷入口。
+  const watchPicks = (state.watchlist || [])
+    .filter((w) => w && w.secid)
+    .map((w) => ({ secid: w.secid, code: w.code, name: w.name, extra: '' }));
   const picks = (isSell
     ? ((d.positions || []).map((p) => ({ secid: p.secid, code: p.code, name: p.name, extra: `${nf(p.shares, 0)} 股` })))
-    : ((state.watchlist || []).map((w) => ({ secid: w.secid, code: w.code, name: w.name, extra: '' })))
-  ).slice(0, 6);
+    : watchPicks
+  ).slice(0, isSell ? 6 : 24);
+  const picksTitle = isSell
+    ? '持仓快捷卖出'
+    : (watchPicks.length ? `从自选股选择（${watchPicks.length} 只，可左右滑动）` : '');
   const chips = picks.map((p) => `<button type="button" class="paper-pick" data-paper-pick="${esc(p.secid)}" data-paper-code="${esc(p.code || '')}" data-paper-name="${esc(p.name || '')}">
       <span>${esc(cleanName(p.name) || p.code || p.secid)}</span>${p.extra ? `<small>${esc(p.extra)}</small>` : `<small>${esc(p.code || '')}</small>`}
     </button>`).join('');
-  mountOverlay(`
+  const overlayHtml = `
     <div class="modal modal-md paper-trade-modal">
       <div class="modal-head">
         <div class="modal-title"><h2>模拟${isSell ? '卖出' : '买入'}</h2><span class="muted small">按最新价成交，佣金万 2.5（最低 5 元）${isSell ? ' + 印花税万 5' : ''}</span></div>
@@ -4519,6 +4551,7 @@ function openPaperTrade(side = 'buy', preset = {}) {
           </label>
           <div id="paperSymbolPop" class="search-pop paper-symbol-pop" hidden></div>
         </div>
+        ${picksTitle ? `<div class="paper-picks-title muted small">${esc(picksTitle)}</div>` : ''}
         <div class="paper-picks">${chips || `<span class="muted small">${isSell ? '还没有模拟持仓' : '自选股为空，可直接搜索任意 A 股 / ETF'}</span>`}</div>
         <div class="paper-quote" id="paperQuote"><div class="empty small">先输入股票代码或名称，选中标的后显示实时报价与分时</div></div>
         <div id="paperIntraday" class="paper-intraday"></div>
@@ -4555,12 +4588,13 @@ function openPaperTrade(side = 'buy', preset = {}) {
           <button class="btn primary" type="submit" id="paperSubmit">确认${isSell ? '卖出' : '买入'}</button>
         </div>
       </form>
-    </div>`);
-  const form = $('#paperForm');
+    </div>`;
+  const ov = opts.stack ? pushOverlay(overlayHtml) : mountOverlay(overlayHtml);
+  const form = ov ? $('#paperForm') : null;
   if (!form) return;
 
   // 快捷标的
-  $$('[data-paper-pick]').forEach((btn) => btn.addEventListener('click', () => {
+  $$('[data-paper-pick]', ov).forEach((btn) => btn.addEventListener('click', () => {
     pickPaperSymbol({
       secid: btn.dataset.paperPick,
       code: btn.dataset.paperCode,
@@ -4723,6 +4757,10 @@ function openPaperTrade(side = 'buy', preset = {}) {
       closeOverlay();
       renderPaper();
       if (state.paperRankOpen) loadPaperRanking(true);
+      // 持仓详情里叠开的下单弹窗：成交后刷新详情里的持仓成本与买卖点
+      if (typeof opts.onDone === 'function') {
+        try { opts.onDone(res); } catch { /* 回调失败不影响下单结果提示 */ }
+      }
       if (res.duplicate) {
         const done = res.trade || (res.order && res.order.filledShares ? res.order : null);
         toast(done
@@ -4751,6 +4789,223 @@ function openPaperTrade(side = 'buy', preset = {}) {
       btn.textContent = `确认${isSell ? '卖出' : '买入'}`;
     }
   });
+}
+
+/** 自选股列表里直接模拟买入（v2.14.0）：账户还没加载时先拉一次 */
+async function openPaperBuyFromWatch(secid) {
+  if (!secid) return;
+  const item = ((state.watchData && state.watchData.items) || [])
+    .find((x) => x && x.quote && x.quote.secid === secid);
+  const w = (state.watchlist || []).find((x) => x.secid === secid);
+  const meta = {
+    secid,
+    code: (item && item.quote.code) || (w && w.code) || '',
+    name: (item && item.quote.name) || (w && w.name) || '',
+  };
+  if (!state.paper) {
+    toast('正在加载模拟账户…', 'info', 1500);
+    try { await loadPaper(true); } catch { /* 下面统一提示 */ }
+  }
+  if (!state.paper) { toast('模拟账户加载失败，请到「模拟交易」板块重试', 'err'); return; }
+  openPaperTrade('buy', meta);
+}
+
+/* =========================================================
+   持仓个股详情（v2.14.0）：分时 / 五日 / 日K / 月K + 历史买卖点
+   ---------------------------------------------------------
+   点击持仓行里的股票名打开；分时 tab 里可以直接买入 / 卖出（叠层下单，
+   成交后刷新持仓成本与买卖点标注，不销毁当前详情弹窗）。
+   ========================================================= */
+
+const PAPER_HOLDING_TABS = [
+  { key: 'minute', label: '分时', hint: '今日 1 分钟分时' },
+  { key: 'five', label: '五日', hint: '最近 5 个交易日的 5 分钟线' },
+  { key: 'day', label: '日K', hint: '日 K 线' },
+  { key: 'month', label: '月K', hint: '月 K 线' },
+];
+
+/** 成交时间 → 上海时区 HH:MM */
+function paperTradeClock(ts) {
+  try {
+    return new Date(Number(ts)).toLocaleTimeString('zh-CN', {
+      hour12: false, timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit',
+    });
+  } catch { return ''; }
+}
+
+function paperHoldingPosition(secid) {
+  return ((state.paper && state.paper.positions) || []).find((p) => p.secid === secid) || null;
+}
+
+/**
+ * 把该标的的历史成交映射到当前图表的 X 轴标签上。
+ * mode: minute（今日分钟）/ five（5 分钟）/ day（日）/ month（月）
+ * 返回 [{ at, price, side }]，at 必须与 ECharts category 轴的值完全一致。
+ */
+function paperHoldingMarks(secid, mode, candles) {
+  const rows = (candles || []).map((c) => String(c.d));
+  if (!rows.length) return [];
+  const trades = ((state.paper && state.paper.trades) || [])
+    .filter((t) => t && t.secid === secid && Number(t.ts) > 0 && Number(t.price) > 0)
+    .slice()
+    .sort((a, b) => Number(a.ts) - Number(b.ts));
+  if (!trades.length) return [];
+  const keyOf = (text) => (mode === 'month' ? text.slice(0, 7) : mode === 'day' ? text.slice(0, 10) : text.slice(0, 16));
+  const seriesKeys = rows.map(keyOf);
+  const today = shanghaiTodayKey();
+  const marks = [];
+  for (const t of trades) {
+    const date = shanghaiDateKey(t.ts);
+    if (!date) continue;
+    if (mode === 'minute') {
+      if (date !== today) continue;
+      let hhmm = paperTradeClock(t.ts);
+      if (hhmm < '09:30') hhmm = '09:30';
+      else if (hhmm > '11:30' && hhmm < '13:00') hhmm = '11:30';
+      else if (hhmm > '15:00') hhmm = '15:00';
+      marks.push({ at: hhmm, price: Number(t.price), side: t.side });
+      continue;
+    }
+    const stamp = mode === 'five' ? `${date} ${paperTradeClock(t.ts)}` : date;
+    const key = keyOf(stamp);
+    let idx = seriesKeys.findIndex((k) => k >= key);
+    if (idx < 0) idx = rows.length - 1;
+    marks.push({ at: rows[idx], price: Number(t.price), side: t.side });
+  }
+  // 同一根 K 线 / 同一分钟里同方向同价格只画一个点，最多保留最近 120 个
+  const seen = new Set();
+  const out = [];
+  for (const m of marks) {
+    const k = `${m.at}|${m.side}|${m.price}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(m);
+  }
+  return out.slice(-120);
+}
+
+function paperHoldingKpisHtml(secid) {
+  const pos = paperHoldingPosition(secid);
+  if (!pos) {
+    return `<div class="paper-holding-empty">该标的当前没有持仓（清仓后仍可查看历史买卖点）。</div>`;
+  }
+  return `<div class="paper-holding-kpi"><span>持仓</span><b>${nf(pos.shares, 0)} 股</b>${pos.locked ? `<i>可卖 ${nf(pos.available, 0)}</i>` : ''}</div>
+    <div class="paper-holding-kpi"><span>成本</span><b>${nf(pos.cost, 3)}</b></div>
+    <div class="paper-holding-kpi"><span>现价</span><b class="${toneClass(pos.pct)}">${nf(pos.price, 3)}</b>${pos.pct === null || pos.pct === undefined ? '' : `<i class="${toneClass(pos.pct)}">${pctFmt(pos.pct)}</i>`}</div>
+    <div class="paper-holding-kpi"><span>市值</span><b>${nf(pos.marketValue, 0)}</b></div>
+    <div class="paper-holding-kpi"><span>浮盈</span><b class="${toneClass(pos.profit)}">${signedFmt(pos.profit, 2)}</b>${pos.profitPct === null || pos.profitPct === undefined ? '' : `<i class="${toneClass(pos.profitPct)}">${nf(pos.profitPct, 2)}%</i>`}</div>`;
+}
+
+function refreshPaperHoldingHeader() {
+  const h = state.paperHolding;
+  const box = $('#paperHoldingKpis');
+  if (!h || !box) return;
+  box.innerHTML = paperHoldingKpisHtml(h.secid);
+  const sellBtn = $('#paperHoldingSell');
+  if (sellBtn) sellBtn.disabled = !paperHoldingPosition(h.secid);
+}
+
+async function renderPaperHoldingChart() {
+  const h = state.paperHolding;
+  const box = $('#paperHoldingChart');
+  if (!h || !box) return;
+  const tab = PAPER_HOLDING_TABS.some((x) => x.key === state.paperHoldingTab) ? state.paperHoldingTab : 'minute';
+  box.innerHTML = '<div class="empty small">正在加载图表…</div>';
+  try {
+    if (tab === 'minute') {
+      const date = shanghaiTodayKey();
+      const data = await api(`/api/intraday?secid=${encodeURIComponent(h.secid)}&date=${encodeURIComponent(date)}`, 20000);
+      if (!document.body.contains(box) || state.paperHolding !== h || state.paperHoldingTab !== 'minute') return;
+      const candles = (data && data.candles) || [];
+      if (candles.length < 2) {
+        box.innerHTML = `<div class="empty small">暂无今日分时（可能未开盘或休市）${data && data.periodLabel ? ` · ${esc(data.periodLabel)}` : ''}</div>`;
+        return;
+      }
+      intradayChart(box, {
+        candles,
+        preClose: Number(data.preClose),
+        fullSession: true,
+        marks: paperHoldingMarks(h.secid, 'minute', candles),
+      });
+      return;
+    }
+    const cfg = { five: [5, 260], day: [101, 180], month: [103, 120] }[tab] || [101, 180];
+    const k = await getKlineCached(h.secid, cfg[0], cfg[1]);
+    if (!document.body.contains(box) || state.paperHolding !== h || state.paperHoldingTab !== tab) return;
+    const candles = (k && k.candles) || [];
+    if (candles.length < 2) { box.innerHTML = '<div class="empty small">暂无 K 线数据</div>'; return; }
+    candleChart(box, k, {
+      zoomStart: tab === 'five' ? 60 : 55,
+      indicator: 'none',
+      marks: paperHoldingMarks(h.secid, tab, candles),
+    });
+  } catch (err) {
+    if (document.body.contains(box)) box.innerHTML = `<div class="empty small">图表加载失败：${esc(err.message)}</div>`;
+  }
+}
+
+/** 点击持仓里的股票：打开分时 / 五日 / 日K / 月K 详情（可叠层下单调仓） */
+function openPaperHolding(secid, name, code) {
+  if (!secid) return;
+  const pos = paperHoldingPosition(secid);
+  const displayName = cleanName(name || (pos && pos.name) || '') || secid;
+  const displayCode = code || (pos && pos.code) || '';
+  state.paperHolding = { secid: String(secid), name: displayName, code: String(displayCode) };
+  if (!PAPER_HOLDING_TABS.some((x) => x.key === state.paperHoldingTab)) state.paperHoldingTab = 'minute';
+  const overlay = pushOverlay(`
+    <div class="modal modal-md paper-holding-modal">
+      <div class="modal-head">
+        <div class="modal-title"><h2>${esc(displayName)}</h2><span class="code">${esc(displayCode)} · ${esc(secid)}</span></div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="paper-holding-kpis" id="paperHoldingKpis">${paperHoldingKpisHtml(secid)}</div>
+      <div class="modal-kline-tools paper-holding-tools">
+        <div class="seg seg-sm" id="paperHoldingSeg" role="tablist">
+          ${PAPER_HOLDING_TABS.map((t) => `<button type="button" data-paper-holding-tab="${t.key}" class="${state.paperHoldingTab === t.key ? 'is-active' : ''}" title="${esc(t.hint)}" role="tab" aria-selected="${state.paperHoldingTab === t.key ? 'true' : 'false'}">${t.label}</button>`).join('')}
+        </div>
+        <div class="paper-holding-actions">
+          <button class="btn small primary" type="button" id="paperHoldingBuy">买入</button>
+          <button class="btn small" type="button" id="paperHoldingSell" ${pos ? '' : 'disabled'} title="${pos ? '卖出这只持仓' : '当前没有可卖持仓'}">卖出</button>
+        </div>
+      </div>
+      <div id="paperHoldingChart" class="modal-chart paper-holding-chart"></div>
+      <p class="muted small paper-holding-legend"><span class="tag in">B</span> 买入点 <span class="tag out">S</span> 卖出点 · 分时只标注今日成交；五日 / 日K / 月K 标注历史成交。分时页可直接下单，成交后本页自动刷新。</p>
+    </div>`);
+  if (!overlay) return;
+
+  const seg = overlay.querySelector('#paperHoldingSeg');
+  if (seg) {
+    seg.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-paper-holding-tab]');
+      if (!btn) return;
+      state.paperHoldingTab = btn.dataset.paperHoldingTab;
+      [...seg.querySelectorAll('[data-paper-holding-tab]')].forEach((b) => {
+        const on = b === btn;
+        b.classList.toggle('is-active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      renderPaperHoldingChart();
+    });
+  }
+  const onDone = () => {
+    refreshPaperHoldingHeader();
+    renderPaperHoldingChart();
+  };
+  const buyBtn = overlay.querySelector('#paperHoldingBuy');
+  if (buyBtn) buyBtn.addEventListener('click', () => {
+    openPaperTrade('buy', { secid, code: displayCode, name: displayName }, { stack: true, onDone });
+  });
+  const sellBtn = overlay.querySelector('#paperHoldingSell');
+  if (sellBtn) sellBtn.addEventListener('click', () => {
+    const p = paperHoldingPosition(secid);
+    openPaperTrade('sell', {
+      secid,
+      code: displayCode,
+      name: displayName,
+      shares: p ? (p.available !== undefined ? p.available : p.shares) : 0,
+    }, { stack: true, onDone });
+  });
+  renderPaperHoldingChart();
 }
 
 /* =========================================================
@@ -9918,6 +10173,7 @@ function bindEvents() {
     if (!btn) return;
     e.stopPropagation();
     const secid = btn.dataset.secid;
+    if (btn.dataset.watchAction === 'buy') { openPaperBuyFromWatch(secid); return; }
     if (btn.dataset.watchAction === 'chart') openStock(secid);
     if (btn.dataset.watchAction === 'up') moveWatch(secid, -1);
     if (btn.dataset.watchAction === 'down') moveWatch(secid, 1);
@@ -10272,6 +10528,9 @@ export {
   renderPaperOrders, renderPaperAuto, renderPaperReview, loadPaperReview,
   paperOrderStatusLabel, conditionText, pctCellHtml, paperTotalShares,
   fundPortfolio,
+  // v2.14.0：持仓个股详情（分时 / 五日 / 日K / 月K + 买卖点）与自选股直接买入
+  openPaperHolding, paperHoldingMarks, paperHoldingKpisHtml, renderPaperHoldingChart,
+  refreshPaperHoldingHeader, openPaperBuyFromWatch,
   // v2.7.0：叠层（个股详情之上再开 F10 / 资讯）与席位明细区块
   mountOverlay, pushOverlay, topLayer, closeOverlay, renderSeatsBlock, openStrategyInNewTab,
   // v2.10.0：基金页新增子页 + 自选基金多组合 / 盈亏日历 / 组合对比（供 dom-smoke 直接渲染与断言）

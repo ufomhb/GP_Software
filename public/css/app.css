@@ -3508,3 +3508,120 @@ tr.is-dim td { opacity: .62; }
   .paper-rank-sort button { padding: 8px 10px; }
   .pnl-calendar-nav button { min-width: 30px; min-height: 30px; }
 }
+
+/* =========================================================
+   v2.14.0：说明文字「?」图标 / 持仓个股图表详情 / 手机端排行周期收益
+   ========================================================= */
+/* 「?」悬停说明：桌面 hover + 键盘 focus + 手机点按聚焦都能展开 */
+.hint-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-left: 6px;
+  outline: none;
+}
+.hint-q {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid rgba(148, 163, 184, .55);
+  color: #9fb2c9;
+  font-size: 10px;
+  line-height: 1;
+  cursor: help;
+  user-select: none;
+}
+.hint-tip:hover .hint-q,
+.hint-tip:focus .hint-q { border-color: #38bdf8; color: #38bdf8; }
+.hint-bubble {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  transform: translateX(-50%);
+  min-width: 200px;
+  max-width: 280px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(10, 18, 30, .98);
+  border: 1px solid rgba(56, 189, 248, .35);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .45);
+  color: #dbe7f6;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: normal;
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .12s;
+  z-index: 30;
+}
+.hint-tip:hover .hint-bubble,
+.hint-tip:focus .hint-bubble { opacity: 1; visibility: visible; }
+.hint-label { color: #7f8fa8; font-size: 11px; margin-left: 4px; }
+.note-tip { display: flex; align-items: center; }
+.paper-rank-head-tools .hint-bubble,
+.paper-trade-head-tools .hint-bubble { left: auto; right: 0; transform: none; }
+
+/* 最近成交标题 + 折叠按钮 */
+.paper-trade-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.paper-trade-head-tools,
+.paper-rank-head-tools { display: inline-flex; align-items: center; gap: 8px; }
+
+/* 持仓表的「买入 / 卖出」并排 */
+.paper-pos-actions { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
+.paper-pos-name { white-space: nowrap; }
+.paper-picks-title { margin: 0 0 4px; }
+.paper-picks { max-height: 92px; overflow-y: auto; }
+
+/* 持仓个股详情：分时 / 五日 / 日K / 月K */
+.paper-holding-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+.paper-holding-kpi {
+  background: rgba(148, 163, 184, .06);
+  border: 1px solid rgba(148, 163, 184, .14);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+.paper-holding-kpi span { display: block; color: #7f8fa8; font-size: 10px; }
+.paper-holding-kpi b { display: block; font-size: 14px; color: #e8f2ff; overflow: hidden; text-overflow: ellipsis; }
+.paper-holding-kpi i { font-style: normal; font-size: 10px; color: #7f8fa8; }
+.paper-holding-empty { color: #7f8fa8; font-size: 12px; }
+.paper-holding-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.paper-holding-actions { display: inline-flex; align-items: center; gap: 6px; }
+.paper-holding-chart { height: 340px; }
+.paper-holding-chart .empty { padding-top: 60px; }
+.paper-holding-legend .tag { margin-right: 2px; }
+
+/* 手机端：排行周期收益以标签形式显示在用户名下（原来的列会被 CSS 隐藏） */
+.paper-rank-periods { display: none; }
+
+@media (max-width: 780px) {
+  .paper-rank-periods { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 4px; }
+  .paper-rank-periods .prp { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: #7f8fa8; }
+  .paper-rank-periods .prp i { font-style: normal; }
+
+  .paper-pos-actions { gap: 8px; }
+  .paper-pos-actions .text-link { padding: 4px 2px; min-height: 26px; }
+
+  .paper-holding-modal { width: 100%; max-width: 100%; max-height: 92vh; overflow-y: auto; }
+  .paper-holding-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .paper-holding-chart { height: 260px; }
+  .paper-holding-tools { gap: 8px; }
+  .paper-holding-actions .btn { min-height: 34px; }
+  .paper-picks { max-height: 118px; }
+}
+
+/* v2.14.0：持仓行整行可点开图表详情（按钮仍优先） */
+.paper-pos-table tbody tr.is-clickable { cursor: pointer; }
+.paper-pos-table tbody tr.is-clickable:hover td { background: rgba(56, 189, 248, .05); }
+.paper-pos-table tbody tr.is-clickable .paper-pos-actions { cursor: default; }

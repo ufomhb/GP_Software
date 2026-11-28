@@ -5,7 +5,7 @@
    - 月：一年 12 格；年：每年 1 格；
    - metric='amount' 显示金额，'rate' 显示收益率。
    只做 DOM；分桶计算由调用方传入（fundCalendarBuckets / paperCalendarBuckets）。 */
-import { isNum, nf, signedFmt, toneClass, esc } from '../util.js?v=2.13.1';
+import { isNum, nf, signedFmt, toneClass, esc } from '../util.js?v=2.14.0';
 
 export const WEEK_LABELS = ['周一', '周二', '周三', '周四', '周五'];
 

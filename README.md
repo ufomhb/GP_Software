@@ -209,6 +209,21 @@ npm run selfcheck                         # 安全基线 39 项 + 存储层 23 �
 - 前端渲染约定：**外部文本进 `innerHTML` 前必须 `esc()`；进 `href`/`src` 前必须再过 `safeUrl()`**（`esc` 挡不住 `javascript:` 协议）。2026-11-15 审计了 225 处模板插值，35 处文本型全部安全，并补了 `safeUrl` 覆盖快讯链接等 2 处 href。
 - CI：`.github/workflows/test.yml` 在 push / PR 时跑语法检查 + `npm test` + 两个 selfcheck。
 
+### v2.14.0 更新（2026-11-28）
+
+> 按 11/28 的 9 条功能优化落地：真正的 7 天免登录、持仓个股四周期图表与买卖点、成交折叠、排行榜周期收益手机可见、自选股直接买入、客户端移除重置、说明收进 ? 图标，并同步做手机端适配。
+
+- **真正的 7 天免登录（修复）**：根因是**线上 SQLite** 的 `sessions` 表只存 `token_hash/user_id/created_at/expires_at`，`remember` 标记在每次 `loadSessions()` 时丢失，于是勾选过的会话第二天仍按「上海自然日失效」被清掉（JSON 模式不会，所以本机与线上表现不一致）。现在 schema **v6** 给 `sessions` 增加 `remember INTEGER NOT NULL DEFAULT 0` 并自动迁移；`saveSessions` 写、`loadSessions` 读；v5 及更早落库的旧会话用有效期反推（TTL > 2 天视为 7 天免登录），升级当次不掉线。`sessionCookie` 同时下发 `Max-Age` 与 `Expires`（个别 iOS 主屏 PWA 只认 Expires），登录页默认勾选「7 天内免登录」（公用电脑可取消）。
+- **持仓行直接加仓**：持仓表最后一列在「卖出」旁新增「买入」，点开预填该标的的下单弹窗，不用每次回到页头点「模拟买入」。
+- **持仓个股详情（分时 / 五日 / 日K / 月K）**：点击持仓里的股票名打开 `paper-holding-modal`，四个 tab 复用 `/api/intraday` 与 `/api/kline`（klt=5 / 101 / 103）；`paperHoldingMarks()` 把该标的的历史成交映射到当前 X 轴标签，`charts.js` 的 `candleChart` / `intradayChart` 新增 `options.marks` 画 B / S 标记（分时只标今日，五日 / 日K / 月K 标历史，最多 120 个）。详情里可直接买入 / 卖出，走叠层（`pushOverlay` + `openPaperTrade(..., {stack:true, onDone})`），成交后原地刷新持仓成本、浮盈和买卖点，不销毁详情。
+- **最近成交折叠**：默认只渲染最新 5 条，超过 5 条给「展开全部 N 条 / 收起」；`state.paperTradesOpen` 记住展开状态，重绘不丢。
+- **排行榜周期收益手机可见**：桌面表格的今日 / 本周 / 本月 / 今年列在 ≤720px 被 CSS 隐藏；现在在用户名下用 `.paper-rank-periods.only-mobile` 紧凑标签展示同样四项（今日 / 本周 / 本月 / 今年），桌面仍用原表格列。
+- **自选股直接模拟买入**：买入弹窗的快捷标的从「前 6 只」放宽到全部自选股（最多 24 只，列表可滚动）；自选股票表每行新增「买」按钮（`data-watch-action="buy"`），账户未加载时先 `loadPaper(true)` 再打开下单弹窗。
+- **客户端移除重置**：删掉 `#paperResetBtn` 与前端调用；`POST /api/paper/reset` 对普通用户返回 403（「模拟账户只能由管理员在后台统一重置」），管理员继续用 `/api/admin/paper/reset`。
+- **说明收进 ? 图标**：`util.js` 新增 `hintIcon()` / `setNoteTip()`；交易规则、成交列表、排行榜、增量资金、条件单、网格定投、跟单、持仓预警、盈亏日历与复盘口径都改成「?」图标，桌面 hover、键盘 focus、手机点按都能展开，全文仍保留在 `aria-label`。
+- **手机端**：持仓详情弹窗全宽、图表 260px、tab 与买卖按钮加大触控区；排行周期标签、成交折叠、持仓买入/卖出并排都不再依赖横向滚动。
+- **测试**：`auth` 新增 SQLite 模式 remember 跨日回归（直接读库确认 `remember=1`，把 `created_at` 改到昨天后 `/api/auth/me` 仍有效）；`dom-smoke` 增至 **92 项**（买入按钮 / 成交折叠 / 详情四 tab / 买卖点映射 / 手机周期标签 / 自选股买入）；`npm test` 全绿。
+
 ### v2.13.1 更新（2026-11-23）
 
 > 模拟交易手机端专项适配：导航定位、表格关键列、自动交易表单、分时图坐标轴。**只在本机 8090 验证，未推 NAS。**
