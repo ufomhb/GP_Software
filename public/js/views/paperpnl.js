@@ -5,10 +5,10 @@
    - fundCalendarBuckets：日 / 月 / 年分桶；
    - pnlcalendar.js 的 calendarGridHtml：日历网格 DOM；
    - fundPnlAreaChart / fundPnlMonthlyBars：资产曲线与月度柱。 */
-import { state } from '../core.js?v=2.15.4';
-import { isNum, nf, signedFmt, toneClass, cleanName, esc, timeText, setNoteTip } from '../util.js?v=2.15.4';
-import { $ } from '../dom.js?v=2.15.4';
-import { fundPnlAreaChart, fundPnlMonthlyBars } from '../charts.js?v=2.15.4';
+import { state } from '../core.js?v=2.15.5';
+import { isNum, nf, signedFmt, toneClass, cleanName, esc, timeText, setNoteTip } from '../util.js?v=2.15.5';
+import { $ } from '../dom.js?v=2.15.5';
+import { fundPnlAreaChart, fundPnlMonthlyBars } from '../charts.js?v=2.15.5';
 import {
   round2,
   shanghaiDateKey,
@@ -16,8 +16,8 @@ import {
   fundCalendarBuckets,
   rangeBaseDate,
   sumPnlAfter,
-} from './fundpnl.js?v=2.15.4';
-import { calendarGridHtml } from './pnlcalendar.js?v=2.15.4';
+} from './fundpnl.js?v=2.15.5';
+import { calendarGridHtml } from './pnlcalendar.js?v=2.15.5';
 
 const CALENDAR_UNITS = ['day', 'month', 'year'];
 

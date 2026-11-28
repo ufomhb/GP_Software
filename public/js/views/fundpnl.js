@@ -7,8 +7,8 @@
    - portfolioVsIndex：组合 vs 上证（本周 / 本月 / 今年 / 全部）
    - fundTopMovers：今日盈亏 TOP5 / 亏损 TOP5
    口径：份额按当前录入值静态加权；不含申赎费；今日盈亏用「我的持仓」同一份实时/估值价。 */
-import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.15.4';
-import { fundHoldingRow } from './funds.js?v=2.15.4';
+import { state, LEGACY_ADDED_DATE } from '../core.js?v=2.15.5';
+import { fundHoldingRow } from './funds.js?v=2.15.5';
 
 function round2(v) {
   const n = Number(v);

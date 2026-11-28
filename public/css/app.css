@@ -3641,16 +3641,16 @@ tr.is-dim td { opacity: .62; }
   .paper-rank-table th,
   .paper-rank-table td { white-space: nowrap; }
 
-  /* 固定三列：宽度写死，left 偏移才能对齐 */
-  .paper-rank-table th:nth-child(1), .paper-rank-table td:nth-child(1) { position: sticky; left: 0; z-index: 2; width: 42px; min-width: 42px; max-width: 42px; }
-  .paper-rank-table th:nth-child(2), .paper-rank-table td:nth-child(2) { position: sticky; left: 42px; z-index: 2; width: 108px; min-width: 108px; max-width: 108px; }
-  .paper-rank-table th:nth-child(3), .paper-rank-table td:nth-child(3) { position: sticky; left: 150px; z-index: 2; width: 108px; min-width: 108px; max-width: 108px; }
+  /* 固定三列：宽度写死，left 偏移才能对齐（手机上尽量窄，给右侧留出可滑动的可视宽度） */
+  .paper-rank-table th:nth-child(1), .paper-rank-table td:nth-child(1) { position: sticky; left: 0; z-index: 2; width: 36px; min-width: 36px; max-width: 36px; padding-left: 4px; padding-right: 4px; }
+  .paper-rank-table th:nth-child(2), .paper-rank-table td:nth-child(2) { position: sticky; left: 36px; z-index: 2; width: 88px; min-width: 88px; max-width: 88px; padding-left: 5px; padding-right: 5px; }
+  .paper-rank-table th:nth-child(3), .paper-rank-table td:nth-child(3) { position: sticky; left: 124px; z-index: 2; width: 100px; min-width: 100px; max-width: 100px; padding-left: 5px; padding-right: 5px; }
   .paper-rank-table th:nth-child(-n+3) { z-index: 3; }
   .paper-rank-table th:nth-child(1), .paper-rank-table td:nth-child(1),
   .paper-rank-table th:nth-child(2), .paper-rank-table td:nth-child(2),
   .paper-rank-table th:nth-child(3), .paper-rank-table td:nth-child(3) { background: var(--panel); }
   .paper-rank-table tr.is-me td:nth-child(-n+3) { background: #10202f; }
-  .paper-rank-table td:nth-child(2) .t-name { display: inline-block; max-width: 74px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+  .paper-rank-table td:nth-child(2) .t-name { display: inline-block; max-width: 56px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
   /* 固定列右侧投影，暗示右边还能滑 */
   .paper-rank-table th:nth-child(3), .paper-rank-table td:nth-child(3) { box-shadow: 6px 0 8px -6px rgba(0, 0, 0, .6); }
 }

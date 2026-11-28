@@ -73,7 +73,7 @@ const PORT = Number(
 const HOST =
   (process.argv.find((a) => a.startsWith('--host=')) || '').split('=')[1] || process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const VERSION = '2.15.4';
+const VERSION = '2.15.5';
 
 /* =========================================================
    P0 安全基线的运行配置（纯函数实现已抽到 src/lib/security.js）
@@ -10040,7 +10040,7 @@ async function paperSweepAccount(user, { now = Date.now(), force = false } = {})
   const hasHistory0 = (snapshot.trades || []).length
     || Object.keys(snapshot.positions || {}).length
     || paperLedger.num(snapshot.capital && snapshot.capital.injected) > 0;
-  // v2.15.4：日终快照只在收盘后写。旧逻辑在 00:00 就给「当天」写一笔（当时拿到的还是
+  // v2.15.5：日终快照只在收盘后写。旧逻辑在 00:00 就给「当天」写一笔（当时拿到的还是
   // 昨天的收盘价），而收盘后的更新又被 needEquity=false 提前 return 掉，导致整条权益曲线
   // 比真实收盘晚一天——「今日收益率」会把一整个交易日的涨幅算到休市日上（如 +14.3%）。
   const afterClose = now >= Date.parse(`${today}T15:00:00+08:00`);
@@ -10248,7 +10248,7 @@ async function paperSweepAccount(user, { now = Date.now(), force = false } = {})
       const totals = paperLedger.accountTotals(account, qmap);
       const todayKey = today;
       const existing = (account.equity || {})[todayKey];
-      // v2.15.4：只在收盘后写当日快照（盘中写入会把「昨天的收盘价」当成今天的日终值）
+      // v2.15.5：只在收盘后写当日快照（盘中写入会把「昨天的收盘价」当成今天的日终值）
       const need = afterClose && (existing === undefined || Math.abs(Number(existing) - totals.total) > 0.01);
       if (need) {
         account.equity = paperAuto.recordEquity(account, todayKey, totals.total).equity;
@@ -10311,7 +10311,7 @@ async function paperSeedEquityFor(user) {
   if (!hasTrades) return 0;
   const series = paperAuto.equitySeries(account);
   const lastSnap = series.length ? series[series.length - 1].d : '';
-  // v2.15.4：历史不足 20 天要补齐；已经很长但最近一次快照停在「前天及更早」也要补
+  // v2.15.5：历史不足 20 天要补齐；已经很长但最近一次快照停在「前天及更早」也要补
   // （例如 15:00 收盘那一刻服务正好没跑，第二天用逐日盈亏重建把缺的那天写回来）。
   const staleGap = Boolean(lastSnap) && lastSnap < paperAuto.dateAddDays(today, -1);
   if (series.length >= PAPER_EQUITY_SEED_MIN_DAYS && !staleGap) return 0;
@@ -10351,7 +10351,7 @@ async function paperEquityBackfill(byId) {
 }
 
 /**
- * v2.15.4：按成交流水 + 日线收盘价重建日终权益快照。
+ * v2.15.5：按成交流水 + 日线收盘价重建日终权益快照。
  * - 修历史：旧逻辑在 00:00 写入「当天」（值还是昨天的收盘），收盘后又被提前 return 拦住，
  *   导致整条曲线晚一天，「今日收益率」会把一个交易日的涨幅算到休市日；
  * - 增量资金后：重建一次，让本周 / 本月 / 今年 / 回撤按新本金重新算。
@@ -11038,7 +11038,7 @@ async function injectPaperCapital(payload = {}) {
   });
   const affected = result._appliedUsers || [];
   delete result._appliedUsers;
-  // v2.15.4：增量资金后异步重建受影响账户的日终权益，
+  // v2.15.5：增量资金后异步重建受影响账户的日终权益，
   // 让本周 / 本月 / 今年与最大回撤按「新本金」重新计算（不阻塞接口响应）
   if (!result.duplicate && affected.length) {
     (async () => {
