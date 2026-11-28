@@ -1,9 +1,9 @@
 {
-  "at": 1795863382242,
+  "at": 1795863889021,
   "ok": true,
   "fromVersion": "2.14.0",
-  "nasVersion": "2.14.0",
-  "previousNasVersion": "2.14.0",
-  "durationMs": 7504,
-  "backup": "gp-before-2.14.0-20261128105615.tar.gz"
+  "nasVersion": "2.14.1",
+  "previousNasVersion": "2.14.1",
+  "durationMs": 7419,
+  "backup": "gp-before-2.14.0-20261128110442.tar.gz"
 }
